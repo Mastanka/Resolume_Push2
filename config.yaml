@@ -15,6 +15,11 @@ encoders:
 
 display_fps: 20
 
+# Record + pad stops that layer. By default via Resolume's "clear layer" call.
+# If that doesn't work in your Arena, set a column that is always empty, e.g. 8,
+# and the bridge will trigger that (empty) clip instead.
+stop_column: null
+
 # What encoders 1-8 control, per layer. More than 8 slots → Page < / Page >.
 #
 #   auto  → slots are filled automatically from the layer + the clip you pressed

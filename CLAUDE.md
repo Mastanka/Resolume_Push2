@@ -57,9 +57,13 @@ python push_resolume_bridge.py --dump 3   # list parameter paths for layer 3 (fo
 | K11 | `Master Encoder` | Selected layer opacity / composition master in MIX |
 | BU1–BU8 | `Upper Row 1..8` (above display) | – |
 | BD1–BD8 | `Lower Row 1..8` (below display) | – |
-| B_1 | `Play` (bottom-left) | – |
-| B_2 | `Record` (above B_1) | – |
+| B_1 | `Play` (bottom-left) | Hold + pad = launch clip (lit green while held) |
+| B_2 | `Record` (above B_1) | Hold + pad = stop layer (lit red while held) |
 | B_3 | `Mix` (right of display) | MIX menu toggle |
+
+## Pads
+
+Plain press = select only. Play (B_1) held + pad = launch. Record (B_2) held + pad = stop layer.
 
 ## Modes
 
@@ -126,7 +130,8 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
   checked against the mock and `--dump`, not every Resolume source/effect type.
 - Big ranges (Transform Position X ±16384) are too coarse at 1 %/tick — handled per slot with `step`/`range`.
 - Polling fetches the full composition 4×/s; fine now, may be heavy with large decks.
-- Empty pads only select; they don't stop/clear the layer.
+- Stop uses `POST /composition/layers/{L}/clear` — unverified on Arena. Fallback: `stop_column: N`
+  in config.yaml triggers (press+release) column N on that layer instead.
 - Only the active deck is visible through the API.
 
 ## Testing workflow
@@ -147,7 +152,7 @@ real Push + Arena, done by Štefan.
 2. Column/scene launch on the 8 buttons right of the pads (`1/32t…1/4`).
 3. Tap Tempo button → Resolume tempo; Tempo encoder → BPM nudge.
 4. Clip thumbnails on the display (REST provides them); Resolume clip colours on pads.
-5. Stop / clear layer (e.g. Delete + pad, or Mute row).
+5. ~~Stop / clear layer~~ — done (Record + pad).
 6. Touchstrip → composition master or crossfader.
 7. Upper/Lower Row buttons: layer bypass/solo, effect bypass toggles.
 8. Pad blink on BPM (send MIDI clock so Push animations sync to Resolume tempo).

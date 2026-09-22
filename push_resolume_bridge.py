@@ -4,8 +4,9 @@ Push 2 -> Resolume Arena bridge
 ===============================
 
 Pads      8x8 clip grid. Bottom pad row = lowest visible layer (same as Resolume).
-          Press = connect clip, release = release (so Piano trigger style works).
-          Pressing a pad also selects that layer/clip for the display.
+          Press = select layer/clip for the display (no trigger).
+          Hold Play + pad = connect clip, release = release (Piano clips work).
+          Hold Record + pad = stop (clear) that layer.
 Display   Selected layer + clip, and 8 parameter slots (one above each encoder).
 Encoders  Track 1-8 edit the 8 slots. Hold Shift for fine steps.
           Master encoder (far right) = selected layer opacity.
@@ -48,6 +49,8 @@ TRACK_ENCODERS = [f"Track{i} Encoder" for i in range(1, 9)]
 MASTER_ENCODER = "Master Encoder"
 NAV_BUTTONS = ["Up", "Down", "Left", "Right", "Page Left", "Page Right"]
 MIX_BUTTON = "Mix"                          # B_3 on the control map
+PLAY_BUTTON = "Play"                        # B_1: hold + pad = launch clip
+STOP_BUTTON = "Record"                      # B_2: hold + pad = stop layer
 MASTER_PATHS = ("master", "video/opacity")  # layer/composition master fader, fallback opacity
 
 # One colour per layer (repeats every 8 layers). Used for pads and the display.
@@ -81,6 +84,7 @@ DEFAULT_CONFIG = {
     "grid": {"layer_offset": 0, "column_offset": 0},
     "encoders": {"coarse": 0.01, "fine": 0.001},
     "display_fps": 20,
+    "stop_column": None,   # None = stop via /clear; N = trigger column N instead
     "layers": {"default": "auto"},
 }
 
@@ -211,6 +215,9 @@ class Resolume:
                           data=json.dumps(bool(down)),
                           headers={"Content-Type": "application/json"}, timeout=1)
 
+    def clear_layer(self, layer):
+        self.session.post(f"{self.api}/composition/layers/{layer}/clear", timeout=1)
+
     def set_param(self, param_id, body):
         self.session.put(f"{self.api}/parameter/by-id/{param_id}", json=body, timeout=1)
 
@@ -229,7 +236,11 @@ class Sender(threading.Thread):
         self._last_err = 0.0
 
     def trigger(self, layer, column, down):
-        self.triggers.put((layer, column, down))
+        self.triggers.put((self.rest.connect_clip, (layer, column, down)))
+        self.wake.set()
+
+    def clear(self, layer):
+        self.triggers.put((self.rest.clear_layer, (layer,)))
         self.wake.set()
 
     def param(self, param_id, body):
@@ -248,7 +259,8 @@ class Sender(threading.Thread):
             self.wake.clear()
             while not self.triggers.empty():
                 try:
-                    self.rest.connect_clip(*self.triggers.get_nowait())
+                    fn, args = self.triggers.get_nowait()
+                    fn(*args)
                 except Exception as e:
                     self._err(e)
             with self.lock:
@@ -289,6 +301,9 @@ class Bridge:
         self.mode = "params"       # "params" or "mix"
         self.page = 0
         self.shift = False
+        self.play_held = False     # B_1
+        self.stop_held = False     # B_2
+        self.stop_column = cfg.get("stop_column")
         self.touched = None        # encoder slot index being touched
         self.pressed = set()       # cells we sent a "down" for
         self.overrides = {}        # param id -> (value, time sent)
@@ -443,10 +458,17 @@ class Bridge:
             clip = self.clip_json(L, C)
             if clip is None:
                 return
+            if self.stop_held:
+                if self.stop_column:
+                    self.sender.trigger(L, int(self.stop_column), True)
+                    self.sender.trigger(L, int(self.stop_column), False)
+                else:
+                    self.sender.clear(L)
+                return
             if L != self.sel[0]:
                 self.page = 0
             self.sel = (L, C)
-            if clip_state(clip) == "Empty":
+            if not self.play_held or clip_state(clip) == "Empty":
                 return
             self.pressed.add((L, C))
         self.sender.trigger(L, C, True)
@@ -462,6 +484,12 @@ class Bridge:
     def button(self, name, down):
         if name == "Shift":
             self.shift = down
+            return
+        if name == PLAY_BUTTON:
+            self.play_held = down
+            return
+        if name == STOP_BUTTON:
+            self.stop_held = down
             return
         if not down:
             return
@@ -487,7 +515,9 @@ class Bridge:
 
     # ---- output state ----------------------------------------------------- #
     def button_colors(self):
-        return {MIX_BUTTON: "white" if self.mode == "mix" else "dark_gray"}
+        return {MIX_BUTTON: "white" if self.mode == "mix" else "dark_gray",
+                PLAY_BUTTON: "green" if self.play_held else "dark_gray",
+                STOP_BUTTON: "red" if self.stop_held else "dark_gray"}
 
     def pad_colors(self):
         grid = {}

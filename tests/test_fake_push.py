@@ -48,8 +48,30 @@ def fire(action, *args):
     REG[action][0](None, *args)   # push2-python only calls the first handler per action
 
 
+def state(comp, L, C):
+    return comp["layers"][L - 1]["clips"][C - 1]["connected"]["value"]
+
+
+fire("on_pad_pressed", 60, (7, 1), 100)          # plain press = select only
+fire("on_pad_released", 60, (7, 1), 0)
+time.sleep(0.5)
+assert state(rest.composition(), 1, 2) == "Disconnected", "plain press must not launch"
+
+fire("on_button_pressed", "Play")                 # B_1 held + pad = launch
 fire("on_pad_pressed", 60, (7, 3), 100)          # bottom row = layer 1, column 4
 fire("on_pad_released", 60, (7, 3), 0)
+time.sleep(0.3)                                   # let a frame light Play
+fire("on_button_released", "Play")
+time.sleep(0.3)
+assert state(rest.composition(), 1, 4) == "Connected", "Play + pad must launch"
+assert ("btn", ("Play", "green")) in calls, "Play not lit while held"
+
+fire("on_button_pressed", "Record")               # B_2 held + pad = stop layer
+fire("on_pad_pressed", 60, (6, 0), 100)          # layer 2, any column
+fire("on_pad_released", 60, (6, 0), 0)
+fire("on_button_released", "Record")
+time.sleep(0.5)
+assert state(rest.composition(), 2, 2) == "Disconnected", "Record + pad must stop the layer"
 fire("on_button_pressed", "Shift")
 fire("on_encoder_rotated", "Track1 Encoder", -1)  # fine step
 fire("on_button_released", "Shift")
