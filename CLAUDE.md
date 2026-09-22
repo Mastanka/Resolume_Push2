@@ -38,7 +38,7 @@ python push_resolume_bridge.py --dump 3   # list parameter paths for layer 3 (fo
 ```
 
 **Hard constraints**
-- **Must run on Python 3.9** (the venv was made from macOS system python3). Keep
+- **Must stay Python 3.9-compatible** (macOS system python3 is 3.9; the current venv uses python.org 3.14). Keep
   `from __future__ import annotations`; no `match`, no runtime `X | Y` types, no 3.10+ stdlib APIs.
   This already caused one crash-on-start bug.
 - Ableton Live must be closed (it takes the Push USB display and Live MIDI port).
@@ -55,15 +55,16 @@ python push_resolume_bridge.py --dump 3   # list parameter paths for layer 3 (fo
 | K9 | `Swing Encoder` | – |
 | K10 | `Tempo Encoder` | – |
 | K11 | `Master Encoder` | Selected layer opacity / composition master in MIX |
-| BU1–BU8 | `Upper Row 1..8` (above display) | BU3 = MIX menu toggle |
+| BU1–BU8 | `Upper Row 1..8` (above display) | – |
 | BD1–BD8 | `Lower Row 1..8` (below display) | – |
 | B_1 | `Play` (bottom-left) | – |
 | B_2 | `Record` (above B_1) | – |
+| B_3 | `Mix` (right of display) | MIX menu toggle |
 
 ## Modes
 
 - **params** (default): K1–K8 = parameter slots of the selected layer/clip.
-- **mix** (BU3 toggles, BU3 lit white): K1–K8 = `layer.master` (fallback `video/opacity`),
+- **mix** (B_3 toggles, B_3 lit white): K1–K8 = `layer.master` (fallback `video/opacity`),
   K1 = top visible layer, going down; K11 = `composition.master`. Display shows layer names +
   values above, composition master bar centred below the line.
 

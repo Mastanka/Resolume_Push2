@@ -9,7 +9,7 @@ Pads      8x8 clip grid. Bottom pad row = lowest visible layer (same as Resolume
 Display   Selected layer + clip, and 8 parameter slots (one above each encoder).
 Encoders  Track 1-8 edit the 8 slots. Hold Shift for fine steps.
           Master encoder (far right) = selected layer opacity.
-Mix       Upper Row 3 toggles the mixer: Track 1-8 = layer masters (1 = top visible
+Mix       Mix button toggles the mixer: Track 1-8 = layer masters (1 = top visible
           layer), Master encoder = composition master.
 Buttons   Up/Down scroll layers, Left/Right scroll columns (Shift = jump by 8).
           Page < / Page > flip parameter pages when a layer has more than 8 slots.
@@ -47,7 +47,7 @@ import yaml
 TRACK_ENCODERS = [f"Track{i} Encoder" for i in range(1, 9)]
 MASTER_ENCODER = "Master Encoder"
 NAV_BUTTONS = ["Up", "Down", "Left", "Right", "Page Left", "Page Right"]
-MIX_BUTTON = "Upper Row 3"                  # BU3 on the control map
+MIX_BUTTON = "Mix"                          # B_3 on the control map
 MASTER_PATHS = ("master", "video/opacity")  # layer/composition master fader, fallback opacity
 
 # One colour per layer (repeats every 8 layers). Used for pads and the display.

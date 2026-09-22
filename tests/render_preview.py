@@ -23,11 +23,11 @@ time.sleep(0.3)
 _, surf = B.render(br.snapshot(), bgr=False)          # bgr=False → correct colours in PNG
 surf.write_to_png(str(HERE / "preview_auto.png"))
 
-br.button("Upper Row 3", True)                         # mix mode
+br.button("Mix", True)                         # mix mode
 br.touched = None
 _, surf = B.render(br.snapshot(), bgr=False)
 surf.write_to_png(str(HERE / "preview_mix.png"))
-br.button("Upper Row 3", True)
+br.button("Mix", True)
 
 br.online = False
 _, surf = B.render(br.snapshot(), bgr=False)
