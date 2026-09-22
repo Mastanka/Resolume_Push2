@@ -9,6 +9,8 @@ Pads      8x8 clip grid. Bottom pad row = lowest visible layer (same as Resolume
 Display   Selected layer + clip, and 8 parameter slots (one above each encoder).
 Encoders  Track 1-8 edit the 8 slots. Hold Shift for fine steps.
           Master encoder (far right) = selected layer opacity.
+Mix       Upper Row 3 toggles the mixer: Track 1-8 = layer masters (1 = top visible
+          layer), Master encoder = composition master.
 Buttons   Up/Down scroll layers, Left/Right scroll columns (Shift = jump by 8).
           Page < / Page > flip parameter pages when a layer has more than 8 slots.
 
@@ -45,6 +47,8 @@ import yaml
 TRACK_ENCODERS = [f"Track{i} Encoder" for i in range(1, 9)]
 MASTER_ENCODER = "Master Encoder"
 NAV_BUTTONS = ["Up", "Down", "Left", "Right", "Page Left", "Page Right"]
+MIX_BUTTON = "Upper Row 3"                  # BU3 on the control map
+MASTER_PATHS = ("master", "video/opacity")  # layer/composition master fader, fallback opacity
 
 # One colour per layer (repeats every 8 layers). Used for pads and the display.
 LAYER_RGB = [
@@ -103,6 +107,15 @@ def names_of(item):
 def label_of(item):
     names = names_of(item)
     return names[0] if names else None
+
+
+def master_param(node):
+    """The master fader of a layer or the composition."""
+    for path in MASTER_PATHS:
+        p = resolve_node(node, path) if node else None
+        if is_param(p):
+            return p
+    return None
 
 
 def clip_state(clip):
@@ -273,6 +286,7 @@ class Bridge:
         self.coarse = float(cfg["encoders"]["coarse"])
         self.fine = float(cfg["encoders"]["fine"])
         self.sel = (1, 1)          # (layer, column), 1-based, as in Resolume
+        self.mode = "params"       # "params" or "mix"
         self.page = 0
         self.shift = False
         self.touched = None        # encoder slot index being touched
@@ -293,6 +307,11 @@ class Bridge:
         layer = self.layer_json(L)
         clips = (layer or {}).get("clips") or []
         return clips[C - 1] if 1 <= C <= len(clips) else None
+
+    def mix_layers(self):
+        """Layers on encoders 1-8 in mix mode: top visible layer first."""
+        top = min(self.layer_offset + 8, len(self.layers()))
+        return list(range(top, max(self.layer_offset, 0), -1))[:8]
 
     def max_cols(self):
         return max((len(l.get("clips") or []) for l in self.layers()), default=0)
@@ -396,13 +415,22 @@ class Bridge:
 
     def turn(self, idx, inc):
         with self.lock:
+            if self.mode == "mix":
+                layers = self.mix_layers()
+                p = master_param(self.layer_json(layers[idx])) if idx < len(layers) else None
+                if p:
+                    self._nudge(p, {}, inc)
+                return
             slots, _ = self.page_slots()
             if idx < len(slots) and slots[idx].param is not None:
                 self._nudge(slots[idx].param, slots[idx].spec, inc)
 
     def turn_master(self, inc):
         with self.lock:
-            p = resolve_node(self.layer_json(self.sel[0]), "video/opacity")
+            if self.mode == "mix":
+                p = master_param(self.comp)
+            else:
+                p = resolve_node(self.layer_json(self.sel[0]), "video/opacity")
             if is_param(p):
                 self._nudge(p, {}, inc)
 
@@ -454,8 +482,13 @@ class Bridge:
                 self.page = min(pages - 1, self.page + 1)
             elif name == "Page Left":
                 self.page = max(0, self.page - 1)
+            elif name == MIX_BUTTON:
+                self.mode = "params" if self.mode == "mix" else "mix"
 
     # ---- output state ----------------------------------------------------- #
+    def button_colors(self):
+        return {MIX_BUTTON: "white" if self.mode == "mix" else "dark_gray"}
+
     def pad_colors(self):
         grid = {}
         with self.lock:
@@ -493,7 +526,16 @@ class Bridge:
             touched_path = None
             if self.touched is not None and self.touched < len(slots):
                 touched_path = slots[self.touched].path
+            mix = []
+            for ml in self.mix_layers():
+                lj = self.layer_json(ml)
+                p = master_param(lj)
+                txt, frac = fmt_value(p, self.value_of(p), {}) if p else ("n/a", 0.0)
+                mix.append((ml, text(lj.get("name")) or f"Layer {ml}", txt, frac, p is None))
+            cp = master_param(self.comp)
             return {
+                "mode": self.mode, "mix": mix,
+                "comp_master": fmt_value(cp, self.value_of(cp), {}) if cp else None,
                 "online": self.online and self.comp is not None,
                 "url": self.rest.url,
                 "L": L, "C": C,
@@ -551,6 +593,41 @@ def render(snap, bgr=True):
         say(24, 70, f"Waiting for Resolume at {snap['url']}")
         col((150, 150, 150)); font(16)
         say(24, 104, "Arena → Preferences → Webserver → Enable Webserver & REST API")
+    elif snap["mode"] == "mix":
+        for k in range(8):
+            x = k * 120
+            if snap["touched"] == k:
+                col((45, 45, 45)); ctx.rectangle(x, 0, 120, 98); ctx.fill()
+            if k:
+                col((35, 35, 35)); ctx.rectangle(x, 6, 1, 86); ctx.fill()
+            if k >= len(snap["mix"]):
+                continue
+            L, name, value, frac, missing = snap["mix"][k]
+            accent = LAYER_RGB[(L - 1) % 8]
+            col(accent); ctx.rectangle(x + 8, 6, 104, 3); ctx.fill()
+            col((255, 90, 90) if missing else (170, 170, 170)); font(15)
+            say(x + 8, 28, name, 104)
+            col((255, 255, 255)); font(22, True)
+            say(x + 8, 60, value, 104)
+            col((45, 45, 45)); ctx.rectangle(x + 8, 72, 104, 8); ctx.fill()
+            col(accent); ctx.rectangle(x + 8, 72, 104 * frac, 8); ctx.fill()
+            col((110, 110, 110)); font(12)
+            say(x + 8, 93, f"L{L}")
+
+        col((60, 60, 60)); ctx.rectangle(0, 100, W, 1); ctx.fill()
+        col((255, 255, 255)); font(18, True)
+        say(24, 137, "MIX")
+        if snap["comp_master"]:
+            value, frac = snap["comp_master"]
+            col((150, 150, 150)); font(14)
+            say(300, 124, "COMPOSITION MASTER")
+            col((255, 255, 255)); font(20, True)
+            say(660, 126, value, right=True)
+            col((45, 45, 45)); ctx.rectangle(300, 134, 360, 12); ctx.fill()
+            col((255, 255, 255)); ctx.rectangle(300, 134, 360 * frac, 12); ctx.fill()
+        col((140, 140, 140)); font(13)
+        say(950, 137, "FINE" if snap["shift"] else f"LAYERS {snap['layers'][0]}–{snap['layers'][1]}",
+            right=True)
     else:
         accent = LAYER_RGB[(snap["L"] - 1) % 8]
         for k in range(8):
@@ -664,7 +741,7 @@ def run(cfg, rest, sim=False):
     if sim:
         print("Simulator: http://localhost:6128")
 
-    pad_cache, palette_ok, display_warned = {}, False, False
+    pad_cache, btn_cache, palette_ok, display_warned = {}, {}, False, False
     started, midi_warned = time.time(), False
     dt = 1.0 / float(cfg.get("display_fps", 20))
     try:
@@ -678,13 +755,17 @@ def run(cfg, rest, sim=False):
                     print("       MIDI inputs seen:", mido.get_input_names() or "none")
                     midi_warned = True
             if bridge.midi_reset:
-                palette_ok, pad_cache, bridge.midi_reset = False, {}, False
+                palette_ok, pad_cache, btn_cache, bridge.midi_reset = False, {}, {}, False
             if push.midi_is_configured():
                 if not palette_ok:
                     apply_palette(push)
                     for b in NAV_BUTTONS:
                         push.buttons.set_button_color(b, "white")
                     palette_ok = True
+                for name, color in bridge.button_colors().items():
+                    if btn_cache.get(name) != color:
+                        push.buttons.set_button_color(name, color)
+                        btn_cache[name] = color
                 for ij, color in bridge.pad_colors().items():
                     if pad_cache.get(ij) != color:
                         push.pads.set_pad_color(ij, color)

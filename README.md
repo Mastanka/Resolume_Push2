@@ -7,6 +7,7 @@ Turns an Ableton Push 2 into a Resolume clip launcher with a live parameter disp
 | Pads | 8×8 clip grid, bottom row = lowest layer. Press = trigger, release = release (Piano clips work). Pressing also selects the layer/clip for the display. |
 | Encoders 1–8 | Edit the 8 parameters shown on the display. Hold **Shift** for fine steps. Touch an encoder to see its full path. |
 | Master encoder | Opacity of the selected layer |
+| Upper Row 3 | **MIX** on/off: encoders 1–8 = layer masters (1 = top visible layer), Master encoder = composition master |
 | ▲ ▼ ◀ ▶ | Scroll layers / columns (Shift = jump 8) |
 | Page < / > | Next page of parameters (if a layer has more than 8) |
 

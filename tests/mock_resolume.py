@@ -17,13 +17,13 @@ def clip(name, state="Disconnected", gen=False):
     if gen:
         c["video"]["sourceparams"] = {"Frequency": rng(0.32), "Fade": {"id": next(ids), "valuetype": "ParamBoolean", "value": True}}
     return c
-COMP = {"layers": [
-  {"name": s("Strobe"), "video": {"opacity": rng(0.8), "mixer": {"Blend Mode": {"id": next(ids), "valuetype": "ParamChoice", "value": "Add", "index": 1, "options": ["Alpha", "Add", "Multiply", "Screen"]}},
+COMP = {"master": rng(0.9), "video": {"opacity": rng(1.0)}, "layers": [
+  {"name": s("Strobe"), "master": rng(1.0), "video": {"opacity": rng(0.8), "mixer": {"Blend Mode": {"id": next(ids), "valuetype": "ParamChoice", "value": "Add", "index": 1, "options": ["Alpha", "Add", "Multiply", "Screen"]}},
      "effects": [{"name": "HueRotate", "display_name": "Hue Rotate", "id": next(ids), "params": {"Hue Rotate": rng(0.2)}}]},
    "audio": {"volume": rng(0, -60, 6)},
    "clips": [clip("Stroboscope", "Connected", gen=True), clip("Rolling strobe"), clip(None), clip("Odd/Even")]},
-  {"name": s("Comets"), "video": {"opacity": rng(1.0), "effects": []}, "clips": [clip(None), clip("Comets down", "Connected"), clip(None), clip(None)]},
-  {"name": s("Ambient clouds"), "video": {"opacity": rng(0.4), "effects": []}, "clips": [clip("Clouds"), clip(None), clip(None), clip(None)]},
+  {"name": s("Comets"), "master": rng(0.75), "video": {"opacity": rng(1.0), "effects": []}, "clips": [clip(None), clip("Comets down", "Connected"), clip(None), clip(None)]},
+  {"name": s("Ambient clouds"), "master": rng(0.5), "video": {"opacity": rng(0.4), "effects": []}, "clips": [clip("Clouds"), clip(None), clip(None), clip(None)]},
 ]}
 BYID = {}
 def index(n):

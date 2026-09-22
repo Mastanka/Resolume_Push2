@@ -45,6 +45,28 @@ python push_resolume_bridge.py --dump 3   # list parameter paths for layer 3 (fo
 - `run()` sets `DYLD_FALLBACK_LIBRARY_PATH` to Homebrew's lib dirs before importing push2_python,
   so pyusb finds libusb on Apple Silicon. Keep this.
 
+## Control map (Štefan's labels → push2-python names)
+
+Štefan refers to controls by these labels (from his annotated Push 2 layout image):
+
+| Label | push2-python name | Current use |
+|---|---|---|
+| K1–K8 | `Track1 Encoder`…`Track8 Encoder` | Param slots / layer masters in MIX |
+| K9 | `Swing Encoder` | – |
+| K10 | `Tempo Encoder` | – |
+| K11 | `Master Encoder` | Selected layer opacity / composition master in MIX |
+| BU1–BU8 | `Upper Row 1..8` (above display) | BU3 = MIX menu toggle |
+| BD1–BD8 | `Lower Row 1..8` (below display) | – |
+| B_1 | `Play` (bottom-left) | – |
+| B_2 | `Record` (above B_1) | – |
+
+## Modes
+
+- **params** (default): K1–K8 = parameter slots of the selected layer/clip.
+- **mix** (BU3 toggles, BU3 lit white): K1–K8 = `layer.master` (fallback `video/opacity`),
+  K1 = top visible layer, going down; K11 = `composition.master`. Display shows layer names +
+  values above, composition master bar centred below the line.
+
 ## Architecture
 
 Four threads around one `Bridge` object guarded by `Bridge.lock` (RLock):

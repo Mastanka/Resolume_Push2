@@ -55,7 +55,20 @@ fire("on_encoder_rotated", "Track1 Encoder", -1)  # fine step
 fire("on_button_released", "Shift")
 fire("on_encoder_rotated", "Master Encoder", 5)   # selected layer opacity
 fire("on_encoder_touched", "Track2 Encoder")
+time.sleep(0.5)
+
+before = rest.composition()
+fire("on_button_pressed", "Upper Row 3")          # BU3 → mix mode
+fire("on_encoder_rotated", "Track1 Encoder", -5)  # top layer (3) master
+fire("on_encoder_rotated", "Master Encoder", -5)  # composition master
+time.sleep(0.3)                                   # let a frame light BU3
+fire("on_button_pressed", "Upper Row 3")          # back to params
 time.sleep(1.0)
+after = rest.composition()
+assert after["layers"][2]["master"]["value"] < before["layers"][2]["master"]["value"], "layer 3 master unchanged"
+assert after["layers"][0]["master"]["value"] == before["layers"][0]["master"]["value"], "wrong layer changed"
+assert after["master"]["value"] < before["master"]["value"], "composition master unchanged"
+assert ("btn", ("Upper Row 3", "white")) in calls, "BU3 not lit in mix mode"
 
 counts = {}
 for name, _ in calls:
