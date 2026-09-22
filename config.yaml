@@ -1,0 +1,35 @@
+# Push 2 → Resolume bridge
+
+resolume:
+  host: 127.0.0.1       # machine running Arena
+  port: 8080            # Arena → Preferences → Webserver
+  poll_interval: 0.25   # seconds between state refreshes
+
+grid:
+  layer_offset: 0       # bottom pad row = layer (layer_offset + 1)
+  column_offset: 0      # left pad column = column (column_offset + 1)
+
+encoders:
+  coarse: 0.01          # fraction of a parameter's range per encoder tick
+  fine: 0.001           # same, while Shift is held
+
+display_fps: 20
+
+# What encoders 1-8 control, per layer. More than 8 slots → Page < / Page >.
+#
+#   auto  → slots are filled automatically from the layer + the clip you pressed
+#   list  → your own slots:
+#       label:  text on the display (~10 characters fit)
+#       path:   parameter path — list them with:  python push_resolume_bridge.py --dump <layer>
+#       scope:  layer (default) or clip (= the clip you last pressed on that layer)
+#       step:   optional, fraction of the range per tick (overrides encoders.coarse)
+#       range:  optional [min, max] limit, e.g. to cap a strobe rate
+layers:
+  default: auto
+
+  # Example — replace the paths with ones from --dump for your composition:
+  # 1:
+  #   - {label: Opacity, path: video/opacity}
+  #   - {label: Rate,    path: video/sourceparams/Frequency, scope: clip, range: [0, 0.6]}
+  #   - {label: Speed,   path: transport/controls/speed,     scope: clip}
+  #   - {label: Pos X,   path: video/effects/Transform/params/Position X, range: [-960, 960], step: 0.005}
