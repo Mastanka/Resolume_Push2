@@ -47,7 +47,7 @@ python push_resolume_bridge.py --dump 3   # list parameter paths for layer 3 (fo
 
 ## Control map (Štefan's labels → push2-python names)
 
-Štefan refers to controls by these labels (from his annotated Push 2 layout image):
+Štefan refers to controls by these labels (`PUSH2_LAYOUT.png`):
 
 | Label | push2-python name | Current use |
 |---|---|---|
