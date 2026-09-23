@@ -1,0 +1,9 @@
+# Param order for auto layers (first = K1 on page 1). Written by the bridge;
+# safe to edit or delete.
+order:
+- video/opacity
+- video/effects/transform/params/position x
+- video/sourceparams/fuzzyness
+- video/sourceparams/amount
+- video/sourceparams/width
+- video/sourceparams/rotation

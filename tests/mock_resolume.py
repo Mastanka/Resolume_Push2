@@ -43,6 +43,10 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         b = self._body(); LOG.append(("POST", self.path, b)); print("POST", self.path, b, flush=True)
         parts = self.path.split("/")
+        if parts[-1] == "select":
+            for layer in COMP["layers"]:
+                for c in layer["clips"]: c["selected"] = {"value": False}
+            COMP["layers"][int(parts[5])-1]["clips"][int(parts[7])-1]["selected"] = {"value": True}
         if parts[-1] == "clear":
             for c in COMP["layers"][int(parts[5])-1]["clips"]:
                 if c["connected"]["value"].startswith("Connected"): c["connected"]["value"] = "Disconnected"

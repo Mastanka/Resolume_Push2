@@ -60,6 +60,7 @@ fire("on_pad_pressed", 60, (7, 1), 100)          # plain press = select only
 fire("on_pad_released", 60, (7, 1), 0)
 time.sleep(0.5)
 assert state(rest.composition(), 1, 2) == "Disconnected", "plain press must not launch"
+assert rest.composition()["layers"][0]["clips"][1].get("selected", {}).get("value"), "press must select in Resolume"
 
 fire("on_button_pressed", "Play")                 # B_1 held + pad = launch
 fire("on_pad_pressed", 60, (7, 3), 100)          # bottom row = layer 1, column 4

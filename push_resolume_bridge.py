@@ -4,7 +4,7 @@ Push 2 -> Resolume Arena bridge
 ===============================
 
 Pads      8x8 clip grid. Bottom pad row = lowest visible layer (same as Resolume).
-          Press = select layer/clip for the display (no trigger).
+          Press = select layer/clip on the display and in Resolume (no trigger).
           Hold Play + pad = connect clip, release = release (Piano clips work).
           Hold Record + pad = stop (clear) that layer.
 Display   Selected layer + clip, and 8 parameter slots (one above each encoder).
@@ -229,6 +229,9 @@ class Resolume:
                           data=json.dumps(bool(down)),
                           headers={"Content-Type": "application/json"}, timeout=1)
 
+    def select_clip(self, layer, column):
+        self.session.post(f"{self.api}/composition/layers/{layer}/clips/{column}/select", timeout=1)
+
     def clear_layer(self, layer):
         self.session.post(f"{self.api}/composition/layers/{layer}/clear", timeout=1)
 
@@ -251,6 +254,10 @@ class Sender(threading.Thread):
 
     def trigger(self, layer, column, down):
         self.triggers.put((self.rest.connect_clip, (layer, column, down)))
+        self.wake.set()
+
+    def select(self, layer, column):
+        self.triggers.put((self.rest.select_clip, (layer, column)))
         self.wake.set()
 
     def clear(self, layer):
@@ -573,6 +580,7 @@ class Bridge:
             if (L, C) != self.sel:
                 self.move_src = None
             self.sel = (L, C)
+            self.sender.select(L, C)               # show it in Resolume's clip panel too
             if not self.play_held or clip_state(clip) == "Empty":
                 return
             self.pressed.add((L, C))

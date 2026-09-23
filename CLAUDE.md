@@ -67,7 +67,7 @@ python push_resolume_bridge.py --dump 3   # list parameter paths for layer 3 (fo
 
 ## Pads
 
-Plain press = select only. Play (B_1) held + pad = launch. Record (B_2) held + pad = stop layer.
+Plain press = select only (also `POST …/clips/{C}/select` so Resolume's clip panel follows). Play (B_1) held + pad = launch. Record (B_2) held + pad = stop layer.
 
 ## Modes
 
@@ -137,6 +137,7 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
   checked against the mock and `--dump`, not every Resolume source/effect type.
 - Big ranges (Transform Position X ±16384) are too coarse at 1 %/tick — handled per slot with `step`/`range`.
 - Polling fetches the full composition 4×/s; fine now, may be heavy with large decks.
+- Clip select uses `POST /composition/layers/{L}/clips/{C}/select` — unverified on Arena.
 - Stop uses `POST /composition/layers/{L}/clear` — unverified on Arena. Fallback: `stop_column: N`
   in config.yaml triggers (press+release) column N on that layer instead.
 - Only the active deck is visible through the API.

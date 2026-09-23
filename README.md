@@ -4,7 +4,7 @@ Turns an Ableton Push 2 into a Resolume clip launcher with a live parameter disp
 
 | Control | Does |
 |---|---|
-| Pads | 8×8 clip grid, bottom row = lowest layer. Press = **select** the layer/clip for the display. |
+| Pads | 8×8 clip grid, bottom row = lowest layer. Press = **select** the clip (on the Push display and in Resolume's clip panel), no trigger. |
 | Play + pad | **Launch** the clip (release = release, so Piano clips work) |
 | Record + pad | **Stop** that layer (see `stop_column` in `config.yaml` if it doesn't) |
 | Encoders 1–8 | Edit the 8 parameters shown on the display. Hold **Shift** for fine steps. Touch an encoder to see its full path. |
