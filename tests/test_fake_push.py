@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import push2_python
+import requests
 import yaml
 from push2_python import action_handler_registry as REG
 
@@ -124,17 +125,31 @@ after = rest.composition()
 spd = lambda c: c["layers"][1]["clips"][1]["transport"]["controls"]["speed"]["value"]
 assert spd(after) > spd(before), "K2 on L2 C2 should now be Speed"
 
-# --- tempo: 3 taps 0.25 s apart ≈ 240 BPM, then K10 +3
+# --- F8 tempo: taps → Resolume's own tap event, Shift + Tap → resync; K10 +3 BPM
+events = lambda: requests.get("http://127.0.0.1:8080/api/v1/_events").json()
+tc = rest.composition()["tempocontroller"]
+tap_id, resync_id = str(tc["tempo_tap"]["id"]), str(tc["resync"]["id"])
 for _ in range(3):
     fire("on_button_pressed", "Tap Tempo"); fire("on_button_released", "Tap Tempo")
     time.sleep(0.25)
+fire("on_button_pressed", "Shift"); fire("on_button_pressed", "Tap Tempo")
+fire("on_button_released", "Tap Tempo"); fire("on_button_released", "Shift")
 time.sleep(0.4)
+assert events().get(tap_id) == 3 and events().get(resync_id) == 1, events()
 bpm = rest.composition()["tempocontroller"]["tempo"]["value"]
-assert 225 < bpm < 255, bpm
 fire("on_encoder_rotated", "Tempo Encoder", 3)
 time.sleep(0.4)
 bpm2 = rest.composition()["tempocontroller"]["tempo"]["value"]
 assert abs(bpm2 - bpm - 3) < 0.01, (bpm, bpm2)
+
+# --- F9 beat: Tap Tempo flashes on the beat, playing pads pulse between full and mid
+time.sleep(1.2)                                   # > 2 beats at 123 BPM
+assert ("btn", ("Tap Tempo", "white")) in calls and ("btn", ("Tap Tempo", "dark_gray")) in calls
+assert any(n == "pad" and str(a[1]).endswith("_mid") for n, a in calls), "playing pads don't pulse"
+fire("on_button_pressed", "Metronome")            # pulse off
+time.sleep(0.2)
+assert ("btn", ("Metronome", "dark_gray")) in calls
+fire("on_button_pressed", "Metronome")
 
 # --- COLOR menu on L1 C1 (Color #ff8b58ff, BG Color #00000000)
 fire("on_pad_pressed", 60, (7, 0), 100); fire("on_pad_released", 60, (7, 0), 0)

@@ -12,8 +12,8 @@ M ≈ a session, L = more than one session.
 | F5 | Mute / solo in MIX | Buttons below the display: bypass / solo the layer under each knob | S | done |
 | F6 | Pad pressure | Hit harder = brighter launch; held pressure controls the layer master | M | |
 | F7 | Touch strip | Crossfader, global speed or composition master | S–M | |
-| F8 | Resolume native tap + resync | Tap also aligns the beat phase, not only the BPM | S | |
-| F9 | Beat blink | Pads / Tap button blink on the beat | M | |
+| F8 | Resolume native tap + resync | Tap also aligns the beat phase, not only the BPM | S | done |
+| F9 | Beat blink | Pads / Tap button blink on the beat | M | done |
 | F10 | Master colour | One colour control for the whole show (colour effect on the composition) | M | |
 | F11 | Save own colours | Shift + palette button stores the current colour there | S | |
 | F12 | Colour many clips | Apply a colour to a whole column or layer at once | M | |

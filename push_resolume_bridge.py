@@ -17,7 +17,9 @@ Color     Upper Row 2 = COLOR view for the selected clip: Track 1-3 = R/G/B, 4-6
           Brightness, 8 = which colour param. Lower Row 1-8 = that param's palette colours.
 Order     Hold Convert + touch a knob, go to any page, touch the target knob -> the two
           params swap. The order is saved per param type in pins.yaml.
-Tempo     Tap Tempo = tap BPM, Tempo encoder = BPM +-1 (Shift +-0.1).
+Tempo     Tap Tempo = Resolume's own tap, Shift + Tap Tempo = resync (beat 1 now).
+          Tempo encoder = BPM +-1 (Shift +-0.1). Tap Tempo, the display and playing pads
+          blink on the beat; Metronome turns the pad pulse on / off.
 Live      Stop Clip = blackout (composition master 0 / back). Buttons right of the pads = flash
           that row's layer to 100 % while held. Play + Lower Row = launch the column above.
           Mute / Solo + pad = mute / solo that layer; in MIX the Lower Row mutes (Solo held = solo).
@@ -75,6 +77,11 @@ MUTE_BUTTON = "Mute"                        # hold + pad = mute (bypass) that la
 SOLO_BUTTON = "Solo"                        # hold + pad = solo that layer
 SCENE_BUTTONS = ["1/32t", "1/32", "1/16t", "1/16", "1/8t", "1/8", "1/4t", "1/4"]  # = pad rows, top first
 BLINK = 0.25          # s on / off for blinking LEDs
+METRONOME_BUTTON = "Metronome"              # pad pulse on / off
+TAP_PATH = "tempocontroller/tempo_tap"
+RESYNC_PATH = "tempocontroller/resync"
+BEAT_ON = 0.12        # s a beat stays lit (Tap Tempo button, pad pulse)
+LED_HZ = 50           # LED updates per second (beat edges); the display runs at display_fps
 PARAMS_BUTTON = "Upper Row 1"               # BU1
 COLOR_BUTTON = "Upper Row 2"                # BU2
 MENU_BUTTONS = {PARAMS_BUTTON: "params", COLOR_BUTTON: "color"}
@@ -84,6 +91,7 @@ TEMPO_PATH = "tempocontroller/tempo"
 TAP_RESET = 2.0       # s without a tap starts a new tap count
 TAP_FLASH = 0.1       # s the Tap Tempo button stays lit per tap
 DIM = 0.15            # brightness of loaded-but-not-playing pads
+MID = 0.45            # brightness of playing pads between beats (pulse)
 PALETTE_BASE = 64     # Push palette slots 64..79 are overwritten with the layer colours
 SWATCH_BASE = 80      # slots 80..87 = the COLOR menu's palette swatches on Lower Row 1-8
 COLOR_SOURCES = [("clip", "video"), ("layer", "video/effects")]   # where colour params are searched
@@ -162,6 +170,9 @@ class Bridge:
         self.move_src = None       # absolute slot index being moved
         self.taps = []
         self.tap_flash = 0.0
+        self.tap_count = 0
+        self.beat_anchor = (time.time(), 0)   # (time of a known beat, its index in the bar 0-3)
+        self.pulse = True          # playing pads pulse on the beat (Metronome toggles)
         self.pins_path = Path(cfg.get("pins_file") or Path(__file__).with_name("pins.yaml"))
         self.order = self._load_order()
         self.touched = None        # encoder slot index being touched
@@ -443,15 +454,42 @@ class Bridge:
                 self._set_bpm(p, float(self.value_of(p) or 120.0) + inc * (0.1 if self.shift else 1.0))
 
     def tap(self):
+        """Every tap is a beat; the first tap of a sequence is beat 1 of the bar.
+        Resolume's own tap sets its BPM and phase; without it we compute the BPM here."""
         now = time.time()
         with self.lock:
             self.tap_flash = now
             if self.taps and now - self.taps[-1] > TAP_RESET:
                 self.taps = []
             self.taps = (self.taps + [now])[-8:]
+            self.tap_count = 1 if len(self.taps) == 1 else self.tap_count + 1
+            self.beat_anchor = (now, (self.tap_count - 1) % 4)
+            ev = resolve_node(self.comp, TAP_PATH) if self.comp else None
+            if is_param(ev):
+                self.sender.event(ev["id"])
+                return
             p = self.tempo_param()
             if p and len(self.taps) >= 2:
                 self._set_bpm(p, 60.0 * (len(self.taps) - 1) / (self.taps[-1] - self.taps[0]))
+
+    def resync(self):
+        with self.lock:
+            self.beat_anchor, self.taps, self.tap_flash = (time.time(), 0), [], time.time()
+            ev = resolve_node(self.comp, RESYNC_PATH) if self.comp else None
+            if is_param(ev):
+                self.sender.event(ev["id"])
+
+    def beat(self, now=None):
+        """(beat index in the bar 0-3, seconds since that beat) or None without a tempo."""
+        p = self.tempo_param()
+        bpm = float(self.value_of(p) or 0) if p else 0
+        if bpm <= 0:
+            return None
+        now = now or time.time()
+        period = 60.0 / bpm
+        t0, b0 = self.beat_anchor
+        n = math.floor((now - t0) / period)
+        return (b0 + n) % 4, now - t0 - n * period
 
     def touch(self, idx):
         with self.lock:
@@ -599,7 +637,10 @@ class Bridge:
         if not down:
             return
         if name == TAP_BUTTON:
-            self.tap()
+            self.resync() if self.shift else self.tap()
+            return
+        if name == METRONOME_BUTTON:
+            self.pulse = not self.pulse
             return
         if name == BLACKOUT_BUTTON:
             self.toggle_blackout()
@@ -641,6 +682,10 @@ class Bridge:
                     self.page = k
 
     # ---- output state ----------------------------------------------------- #
+    def on_beat(self):
+        b = self.beat()
+        return b is not None and b[1] < BEAT_ON
+
     def button_colors(self):
         with self.lock:
             params = self.mode == "params"
@@ -649,7 +694,9 @@ class Bridge:
                    PLAY_BUTTON: "green" if self.play_held else "dark_gray",
                    STOP_BUTTON: "red" if self.stop_held else "dark_gray",
                    MOVE_BUTTON: "white" if self.move_src is not None or self.convert_held else "dark_gray",
-                   TAP_BUTTON: "white" if time.time() - self.tap_flash < TAP_FLASH else "dark_gray"}
+                   TAP_BUTTON: "white" if self.on_beat() or time.time() - self.tap_flash < TAP_FLASH
+                   else "dark_gray",
+                   METRONOME_BUTTON: "white" if self.pulse else "dark_gray"}
             for b in UPPER_ROW:
                 out[b] = "black"
             for b, m in MENU_BUTTONS.items():
@@ -694,6 +741,7 @@ class Bridge:
     def pad_colors(self):
         grid = {}
         with self.lock:
+            dim_live = self.pulse and self.online and not self.on_beat()
             for i in range(8):
                 for j in range(8):
                     L, C = self.pad_to_cell(i, j)
@@ -708,7 +756,7 @@ class Bridge:
                         elif state != "Empty" and self.layer_hidden(L):   # muted / not soloed
                             color = "light_gray" if live else "dark_gray"
                         elif live:
-                            color = f"L{k}"
+                            color = f"L{k}_mid" if dim_live else f"L{k}"
                         elif state != "Empty":
                             color = f"L{k}_dim"
                     grid[(i, j)] = color
@@ -755,7 +803,9 @@ class Bridge:
                     color = {"label": label, "idx": self.color_idx, "n": n, "rgb": rgba[:3],
                              "hex": rgba_to_hex(rgba)[:7].upper(),
                              "knobs": [(lbl, vals[i]) for i, (lbl, *_rest) in enumerate(COLOR_KNOBS)]}
+            b = self.beat()
             return {
+                "beat": None if b is None else (b[0], b[1] < BEAT_ON),
                 "blackout": self.blackout is not None,
                 "color": color,
                 "bpm": f"{float(self.value_of(tp) or 0):.1f} BPM" if tp else "",
@@ -784,6 +834,8 @@ def apply_palette(push):
         push.set_color_palette_entry(PALETTE_BASE + k, f"L{k}", rgb=list(rgb), allow_overwrite=True)
         push.set_color_palette_entry(PALETTE_BASE + 8 + k, f"L{k}_dim",
                                      rgb=[int(c * DIM) for c in rgb], allow_overwrite=True)
+        push.set_color_palette_entry(PALETTE_BASE + 24 + k, f"L{k}_mid",          # slots 88..95
+                                     rgb=[int(c * MID) for c in rgb], allow_overwrite=True)
     push.reapply_color_palette()
 
 
@@ -856,11 +908,13 @@ def run(cfg, rest, sim=False):
     swatch_cache = None
     started, midi_warned = time.time(), False
     dt = 1.0 / float(cfg.get("display_fps", 20))
+    next_frame, next_midi_try = 0.0, 0.0
     try:
         while True:
             t0 = time.time()
             # All MIDI output happens here, in the main thread (push2-python/mido requirement).
-            if not push.midi_is_configured():
+            if not push.midi_is_configured() and t0 >= next_midi_try:
+                next_midi_try = t0 + 0.5
                 push.configure_midi()
                 if not midi_warned and time.time() - started > 3:
                     print("[push] Push 2 MIDI port not found. Is it powered on and is Ableton Live closed?")
@@ -891,14 +945,16 @@ def run(cfg, rest, sim=False):
                     if pad_cache.get(ij) != color:
                         push.pads.set_pad_color(ij, color)
                         pad_cache[ij] = color
-            try:
-                frame, _ = render(bridge.snapshot())
-                push.display.display_frame(frame, input_format=FRAME_FORMAT_BGR565)
-            except Exception as e:  # display issues shouldn't stop pads/encoders
-                if not display_warned:
-                    print(f"[display] {e}", file=sys.stderr)
-                    display_warned = True
-            time.sleep(max(0.0, dt - (time.time() - t0)))
+            if t0 >= next_frame:
+                next_frame = t0 + dt
+                try:
+                    frame, _ = render(bridge.snapshot())
+                    push.display.display_frame(frame, input_format=FRAME_FORMAT_BGR565)
+                except Exception as e:  # display issues shouldn't stop pads/encoders
+                    if not display_warned:
+                        print(f"[display] {e}", file=sys.stderr)
+                        display_warned = True
+            time.sleep(max(0.0, 1.0 / LED_HZ - (time.time() - t0)))
     except KeyboardInterrupt:
         print("\nBye.")
         try:

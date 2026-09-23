@@ -200,6 +200,11 @@ class Sender(threading.Thread):
         self.triggers.put((self.rest.select_clip, (layer, column)))
         self.wake.set()
 
+    def event(self, param_id):
+        """Trigger a ParamEvent (tap, resync). Ordered like clip triggers, never coalesced."""
+        self.triggers.put((self.rest.set_param, (param_id, {"value": True})))
+        self.wake.set()
+
     def column(self, column, down):
         self.triggers.put((self.rest.connect_column, (column, down)))
         self.wake.set()

@@ -191,6 +191,17 @@ def render(snap, bgr=True):
                                           f"COLS {snap['cols'][0]}–{snap['cols'][1]}")
         say(950, 150, bottom, 360, right=True)
 
+    if snap["online"] and snap.get("beat") is not None:           # 4 beat dots, top right of the bottom area
+        idx, on = snap["beat"]
+        for k in range(4):
+            if k != idx:
+                col((55, 55, 55))
+            elif on:
+                col((255, 120, 20) if k == 0 else (255, 255, 255))
+            else:
+                col((150, 150, 150))
+            ctx.arc(906 + k * 14, 109, 4, 0, 6.3); ctx.fill()
+
     if snap["online"] and snap.get("blackout"):
         col((150, 0, 0)); ctx.rectangle(0, 101, W, 59); ctx.fill()
         col((255, 255, 255)); font(26, True)
