@@ -47,6 +47,10 @@ shot("master_color")
 br.button("Master", True)
 br.button("Upper Row 1", True)
 
+br.button("Upper Row 3", True)                  # FX menu
+shot("fx")
+br.button("Upper Row 1", True)
+
 br.button("Convert", True); br.touch(1); br.untouch(1); br.button("Convert", False)
 br.button("Lower Row 2", True)                  # move mode, looking at page 2
 _, surf = B.render(br.snapshot(), bgr=False)

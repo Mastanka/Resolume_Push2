@@ -20,6 +20,8 @@ Order     Hold Convert + touch a knob, go to any page, touch the target knob -> 
 Tempo     Tap Tempo = Resolume's own tap, Shift + Tap Tempo = resync (beat 1 now).
           Tempo encoder = BPM +-1 (Shift +-0.1). Tap Tempo, the display and playing pads
           blink on the beat; Metronome turns the pad pulse on / off.
+FX        Upper Row 3 = effects of the selected clip, its layer and the composition:
+          Track 1-8 = effect amount (Opacity), Lower Row = effect on / off, Page < > = more.
 Master    Master button = COLOR on the composition's colour effect (Colorize): K7 = amount,
           K8 = on/off. Press again = back to the clip.
           COLOR: Shift + Lower Row = save the current colour there (colors.yaml).
@@ -61,7 +63,7 @@ import yaml
 
 from display import LAYER_RGB, render  # noqa: F401  (render re-exported for tests/tools)
 from resolume_api import (  # noqa: F401
-    Resolume, Sender, clip_state, color_label, fmt_value, hex_to_rgba, is_param,
+    Resolume, Sender, clip_state, color_label, fmt_value, hex_to_rgba, is_param, label_of,
     master_param, resolve_node, rgba_to_hex, text, walk,
 )
 
@@ -92,7 +94,9 @@ PASTE_BUTTON = "Duplicate"                  # COLOR: hold + pad / row / column =
 NOTE_TIME = 1.8       # s a short message stays on the display
 PARAMS_BUTTON = "Upper Row 1"               # BU1
 COLOR_BUTTON = "Upper Row 2"                # BU2
-MENU_BUTTONS = {PARAMS_BUTTON: "params", COLOR_BUTTON: "color"}
+FX_BUTTON = "Upper Row 3"                   # BU3
+MENU_BUTTONS = {PARAMS_BUTTON: "params", COLOR_BUTTON: "color", FX_BUTTON: "fx"}
+FX_SOURCES = [("Clip", "clip"), ("Layer", "layer"), ("Comp", "comp")]   # FX menu order
 UPPER_ROW = [f"Upper Row {i}" for i in range(1, 9)]
 LOWER_ROW = [f"Lower Row {i}" for i in range(1, 9)]
 TEMPO_PATH = "tempocontroller/tempo"
@@ -170,6 +174,7 @@ class Bridge:
         self.own_palette = self._load_palette()
         self.hsv_cache = {}        # param id -> (rgb, [h, s, v]) keeps hue while saturation is 0
         self.page = 0
+        self.fx_page = 0
         self.shift = False
         self.play_held = False     # B_1
         self.stop_held = False     # B_2
@@ -363,6 +368,11 @@ class Bridge:
             if self.mode == "color":
                 self._turn_color(idx, inc)
                 return
+            if self.mode == "fx":
+                items, _ = self.fx_page_items()
+                if idx < len(items) and items[idx][3]:
+                    self._nudge(items[idx][3], {}, inc)
+                return
             if self.move_src is not None:
                 return
             slots, _ = self.page_slots()
@@ -474,6 +484,28 @@ class Bridge:
                 self._set(target["id"], value, {"value": value})
                 done += 1
         self.note_msg(f"{label} → {done} clip{'s' * (done != 1)}" + (f"  ({skipped} skipped)" if skipped else ""))
+
+    # ---- FX menu ----------------------------------------------------------- #
+    def fx_list(self):
+        """[(tag, name, bypassed param or None, amount param or None)] clip, layer, composition effects."""
+        L, C = self.sel
+        roots = {"clip": self.clip_json(L, C), "layer": self.layer_json(L), "comp": self.comp}
+        out = []
+        for tag, scope in FX_SOURCES:
+            for fx in resolve_node(roots[scope], "video/effects") or [] if roots[scope] else []:
+                if not isinstance(fx, dict):
+                    continue
+                params = fx.get("params") or {}
+                amount = next((v for k, v in params.items() if k.lower() == "opacity" and is_param(v)), None)
+                byp = fx.get("bypassed")
+                out.append((tag, label_of(fx) or "Effect", byp if is_param(byp) else None, amount))
+        return out
+
+    def fx_page_items(self):
+        items = self.fx_list()
+        pages = max(1, math.ceil(len(items) / 8))
+        self.fx_page = min(self.fx_page, pages - 1)
+        return items[self.fx_page * 8:(self.fx_page + 1) * 8], pages
 
     def color_hsv(self, p):
         rgb = hex_to_rgba(self.value_of(p))[:3]
@@ -684,6 +716,7 @@ class Bridge:
             if (L, C) != self.sel:
                 self.move_src = None
                 self.color_idx = 0
+                self.fx_page = 0
             self.sel = (L, C)
             self.sender.select(L, C)               # show it in Resolume's clip panel too
             if not self.play_held or clip_state(clip) == "Empty":
@@ -770,6 +803,11 @@ class Bridge:
                 self.col_offset = min(max_c, self.col_offset + jump)
             elif name == "Left":
                 self.col_offset = max(0, self.col_offset - jump)
+            elif name == "Page Right" and self.mode == "fx":
+                _, pages = self.fx_page_items()
+                self.fx_page = min(pages - 1, self.fx_page + 1)
+            elif name == "Page Left" and self.mode == "fx":
+                self.fx_page = max(0, self.fx_page - 1)
             elif name == "Page Right":
                 _, pages = self.page_slots()
                 self.page = min(pages - 1, self.page + 1)
@@ -786,6 +824,13 @@ class Bridge:
                 master = self.mode == "color" and self.color_target == "master"
                 self.mode, self.color_target, self.color_idx = "color", "clip" if master else "master", 0
                 self.move_src = None
+            elif name in LOWER_ROW and self.mode == "fx":
+                items, _ = self.fx_page_items()
+                k = LOWER_ROW.index(name)
+                if k < len(items) and items[k][2]:
+                    byp = items[k][2]
+                    v = not bool(self.value_of(byp))
+                    self._set(byp["id"], v, {"value": v})
             elif name in LOWER_ROW and self.mode == "color" and self.shift:
                 self.save_palette_color(LOWER_ROW.index(name))
             elif name in LOWER_ROW and self.mode == "mix":
@@ -829,12 +874,16 @@ class Bridge:
             n_sw = len(self.swatches())
             blink = int(time.time() / BLINK) % 2 == 0
             mix_layers = self.mix_layers()
+            fx_items = self.fx_page_items()[0] if self.mode == "fx" else []
             for k, b in enumerate(LOWER_ROW):
                 if self.play_held:                          # column launch view
                     st = self.column_state(self.col_offset + k + 1)
                     out[b] = {"Connected": "green", "Disconnected": "dark_gray"}.get(st, "black")
                 elif self.mode == "color":
                     out[b] = f"P{k}" if k < n_sw else "black"
+                elif self.mode == "fx":
+                    byp = fx_items[k][2] if k < len(fx_items) else None
+                    out[b] = "black" if byp is None else ("dark_gray" if self.value_of(byp) else "white")
                 elif self.mode == "mix":
                     if k >= len(mix_layers):
                         out[b] = "black"
@@ -935,7 +984,16 @@ class Bridge:
                         color["enabled"] = None if byp is None else not self.value_of(byp)
             b = self.beat()
             note = self.note[0] if time.time() - self.note[1] < NOTE_TIME else ""
+            fx = None
+            if self.mode == "fx":
+                items, fx_pages = self.fx_page_items()
+                fx = {"page": self.fx_page, "pages": fx_pages, "items": [
+                    {"tag": tag, "name": name,
+                     "on": None if byp is None else not self.value_of(byp),
+                     "amount": fmt_value(amt, self.value_of(amt), {}) if amt else None}
+                    for tag, name, byp, amt in items]}
             return {
+                "fx": fx,
                 "master_color": self.color_target == "master",
                 "paste": self.paste_held and self.mode == "color",
                 "note": note,

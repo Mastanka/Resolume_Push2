@@ -17,7 +17,7 @@ M ≈ a session, L = more than one session.
 | F10 | Master colour | One colour control for the whole show (colour effect on the composition) | M | done |
 | F11 | Save own colours | Shift + palette button stores the current colour there | S | done |
 | F12 | Colour many clips | Apply a colour to a whole column or layer at once | M | done |
-| F13 | FX menu (BU3) | Clip + layer effects list, on/off on the buttons below the display | M | |
+| F13 | FX menu (BU3) | Clip + layer effects list, on/off on the buttons below the display | M | done |
 | F14 | Thumbnails + clip colours | Clip thumbnails on the display, Resolume clip colours on the pads | M | |
 | F15 | Deck switching | Switch Resolume decks from the Push | M | |
 | F16 | Live updates (WebSocket) | Resolume pushes changes instead of polling 4×/s: faster, lighter | L | |

@@ -256,6 +256,20 @@ clouds = rest.composition()["layers"][2]["clips"][0]["video"]["sourceparams"]["C
 assert clouds == cur, (clouds, cur)
 fire("on_button_pressed", "Upper Row 1")
 
+# --- F13 FX menu on L1 C1: [Clip Transform, Layer Hue Rotate (no bypass), Comp Colorize]
+fire("on_pad_pressed", 60, (7, 0), 100); fire("on_pad_released", 60, (7, 0), 0)
+fire("on_button_pressed", "Upper Row 3")
+op0 = fx()["params"]["Opacity"]["value"]
+fire("on_button_pressed", "Lower Row 1")          # Transform off
+fire("on_encoder_rotated", "Track3 Encoder", -10) # Colorize amount -10 %
+fire("on_button_pressed", "Lower Row 3")          # Colorize off
+time.sleep(0.4)
+tr = rest.composition()["layers"][0]["clips"][0]["video"]["effects"][0]["bypassed"]["value"]
+assert tr is True, "BD1 must bypass the clip's Transform"
+assert abs(fx()["params"]["Opacity"]["value"] - (op0 - 0.1)) < 1e-6 and fx()["bypassed"]["value"] is True, fx()
+assert ("btn", ("Lower Row 2", "black")) in calls, "effect without bypass must stay unlit"
+fire("on_button_pressed", "Upper Row 1")
+
 counts = {}
 for name, _ in calls:
     counts[name] = counts.get(name, 0) + 1

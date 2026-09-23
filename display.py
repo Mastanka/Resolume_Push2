@@ -123,6 +123,44 @@ def render(snap, bgr=True):
         col((140, 140, 140)); font(13)
         say(950, 127, snap["bpm"], right=True)
         say(950, 150, "FINE" if snap["shift"] else "PALETTE BELOW", right=True)
+    elif snap["mode"] == "fx":
+        fx = snap["fx"] or {"items": [], "page": 0, "pages": 1}
+        tags = {"Clip": (0, 190, 255), "Layer": LAYER_RGB[(snap["L"] - 1) % 8], "Comp": (255, 255, 255)}
+        for k in range(8):
+            x = k * 120
+            if snap["touched"] == k:
+                col((45, 45, 45)); ctx.rectangle(x, 0, 120, 98); ctx.fill()
+            if k:
+                col((35, 35, 35)); ctx.rectangle(x, 6, 1, 86); ctx.fill()
+            if k >= len(fx["items"]):
+                continue
+            it = fx["items"][k]
+            col(tags.get(it["tag"], (150, 150, 150))); font(11, True)
+            say(x + 8, 16, it["tag"].upper())
+            col((170, 170, 170)); font(15)
+            say(x + 8, 36, it["name"], 104)
+            on = it["on"]
+            col((255, 255, 255) if on or on is None else (255, 90, 90)); font(20, True)
+            say(x + 8, 62, "always on" if on is None else ("ON" if on else "OFF"), 104)
+            if it["amount"]:
+                value, frac = it["amount"]
+                col((45, 45, 45)); ctx.rectangle(x + 8, 72, 104, 8); ctx.fill()
+                col((255, 255, 255) if on is not False else (90, 90, 90))
+                ctx.rectangle(x + 8, 72, 104 * frac, 8); ctx.fill()
+                col((130, 130, 130)); font(12)
+                say(x + 112, 93, value, right=True)
+        if not fx["items"]:
+            col((200, 200, 200)); font(18, True)
+            say(24, 56, "No effects on this clip, its layer or the composition")
+        col((60, 60, 60)); ctx.rectangle(0, 100, W, 1); ctx.fill()
+        col((255, 255, 255)); font(18, True)
+        say(28, 128, f"FX   L{snap['L']} C{snap['C']}   {snap['clip_name'] or '—'}", 560)
+        col((200, 200, 200)); font(15)
+        say(28, 151, "knobs = amount   ·   buttons below = on / off", 560)
+        col((140, 140, 140)); font(13)
+        say(950, 127, "   ·   ".join(t for t in (f"PAGE {fx['page'] + 1}/{fx['pages']}", snap["bpm"]) if t),
+            right=True)
+        say(950, 150, "FINE" if snap["shift"] else "Page < > = more effects", right=True)
     elif snap["mode"] == "mix":
         for k in range(8):
             x = k * 120
