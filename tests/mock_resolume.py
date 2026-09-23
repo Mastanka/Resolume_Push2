@@ -15,9 +15,10 @@ def clip(name, state="Disconnected", gen=False):
          "video": {"opacity": rng(1), "effects": [{"name": "Transform", "id": next(ids), "bypassed": {"id": next(ids), "valuetype": "ParamBoolean", "value": False},
                    "params": {"Position X": rng(0, -16384, 16384), "Scale": rng(100, 0, 1000)}}]}}
     if gen:
-        c["video"]["sourceparams"] = {"Frequency": rng(0.32), "Fade": {"id": next(ids), "valuetype": "ParamBoolean", "value": True}}
+        c["video"]["sourceparams"] = {"Frequency": rng(0.32), "Fade": {"id": next(ids), "valuetype": "ParamBoolean", "value": True},
+                                      "Width": rng(0.5), "Height": rng(0.5), "Offset": rng(0.0)}
     return c
-COMP = {"master": rng(0.9), "video": {"opacity": rng(1.0)}, "layers": [
+COMP = {"master": rng(0.9), "tempocontroller": {"tempo": rng(120.0, 20.0, 500.0)}, "video": {"opacity": rng(1.0)}, "layers": [
   {"name": s("Strobe"), "master": rng(1.0), "video": {"opacity": rng(0.8), "mixer": {"Blend Mode": {"id": next(ids), "valuetype": "ParamChoice", "value": "Add", "index": 1, "options": ["Alpha", "Add", "Multiply", "Screen"]}},
      "effects": [{"name": "HueRotate", "display_name": "Hue Rotate", "id": next(ids), "params": {"Hue Rotate": rng(0.2)}}]},
    "audio": {"volume": rng(0, -60, 6)},

@@ -9,6 +9,11 @@ Turns an Ableton Push 2 into a Resolume clip launcher with a live parameter disp
 | Record + pad | **Stop** that layer (see `stop_column` in `config.yaml` if it doesn't) |
 | Encoders 1–8 | Edit the 8 parameters shown on the display. Hold **Shift** for fine steps. Touch an encoder to see its full path. |
 | Master encoder | Opacity of the selected layer |
+| Upper Row 1 | PARAMS view |
+| Lower Row 1–8 | Jump to parameter page 1–8 (lit = page exists, white = current) |
+| Convert + touch knob | Pick up that param → change page → touch target knob → the two swap. Saved per param type in `pins.yaml` |
+| Tap Tempo | Tap the BPM (2+ taps) |
+| Tempo encoder | BPM ±1, Shift ±0.1 |
 | Mix | **MIX** on/off: encoders 1–8 = layer masters (1 = top visible layer), Master encoder = composition master |
 | ▲ ▼ ◀ ▶ | Scroll layers / columns (Shift = jump 8) |
 | Page < / > | Next page of parameters (if a layer has more than 8) |

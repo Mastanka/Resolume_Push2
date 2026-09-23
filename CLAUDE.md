@@ -20,6 +20,8 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 |---|---|
 | `push_resolume_bridge.py` | Whole app, single file (~750 lines) |
 | `config.yaml` | Resolume host/port, grid offsets, encoder steps, per-layer parameter slots |
+| `pins.yaml` | Param order for auto layers, written by the bridge (Convert move). Štefan's show data |
+| `docs/specs/` | Short design specs per feature |
 | `requirements.txt` | push2-python (from git), pycairo, numpy, requests, PyYAML |
 | `README.md` | User-facing setup and controls |
 | `tests/mock_resolume.py` | Fake Resolume REST server (port 8080) with a small composition |
@@ -53,13 +55,15 @@ python push_resolume_bridge.py --dump 3   # list parameter paths for layer 3 (fo
 |---|---|---|
 | K1–K8 | `Track1 Encoder`…`Track8 Encoder` | Param slots / layer masters in MIX |
 | K9 | `Swing Encoder` | – |
-| K10 | `Tempo Encoder` | – |
+| K10 | `Tempo Encoder` | BPM ±1 (Shift ±0.1) |
 | K11 | `Master Encoder` | Selected layer opacity / composition master in MIX |
-| BU1–BU8 | `Upper Row 1..8` (above display) | – |
-| BD1–BD8 | `Lower Row 1..8` (below display) | – |
+| BU1–BU8 | `Upper Row 1..8` (above display) | Main menus. BU1 = PARAMS |
+| BD1–BD8 | `Lower Row 1..8` (below display) | Sub-menu of current menu. PARAMS: page 1–8 |
 | B_1 | `Play` (bottom-left) | Hold + pad = launch clip (lit green while held) |
 | B_2 | `Record` (above B_1) | Hold + pad = stop layer (lit red while held) |
 | B_3 | `Mix` (right of display) | MIX menu toggle |
+| B_4 | `Convert` (left column) | Hold + touch knob = pick param to move |
+| B_5 | `Tap Tempo` (top-left) | Tap BPM |
 
 ## Pads
 
@@ -67,7 +71,10 @@ Plain press = select only. Play (B_1) held + pad = launch. Record (B_2) held + p
 
 ## Modes
 
-- **params** (default): K1–K8 = parameter slots of the selected layer/clip.
+- **params** (default, BU1): K1–K8 = parameter slots of the selected layer/clip. BD1–BD8 = page.
+  **Move:** Convert + touch knob picks a slot (`move_src`, absolute index), touch another knob on any
+  page → swap. Order = priority list of scope-less keys (`Slot.key`) in `pins.yaml`, applied to
+  auto layers only (`Bridge.swap`, sort in `slots()`). Turns are ignored while moving.
 - **mix** (B_3 toggles, B_3 lit white): K1–K8 = `layer.master` (fallback `video/opacity`),
   K1 = top visible layer, going down; K11 = `composition.master`. Display shows layer names +
   values above, composition master bar centred below the line.
@@ -133,6 +140,8 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
 - Stop uses `POST /composition/layers/{L}/clear` — unverified on Arena. Fallback: `stop_column: N`
   in config.yaml triggers (press+release) column N on that layer instead.
 - Only the active deck is visible through the API.
+- Tempo uses `composition/tempocontroller/tempo` (ParamRange, BPM) — path unverified on Arena.
+  Tap tempo is computed locally; beat phase is not resynced.
 
 ## Testing workflow
 
@@ -150,7 +159,7 @@ real Push + Arena, done by Štefan.
 
 1. WebSocket subscriptions instead of polling (lower latency, less load).
 2. Column/scene launch on the 8 buttons right of the pads (`1/32t…1/4`).
-3. Tap Tempo button → Resolume tempo; Tempo encoder → BPM nudge.
+3. ~~Tap Tempo / BPM nudge~~ — done (B_5, K10). Next: resync beat phase on tap.
 4. Clip thumbnails on the display (REST provides them); Resolume clip colours on pads.
 5. ~~Stop / clear layer~~ — done (Record + pad).
 6. Touchstrip → composition master or crossfader.

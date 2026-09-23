@@ -8,6 +8,7 @@ fires handlers through push2-python's action registry, and prints what was sent.
 Check the mock's output for the matching POST/PUT requests.
 """
 import sys
+import tempfile
 import threading
 import time
 import types
@@ -16,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import push2_python
+import yaml
 from push2_python import action_handler_registry as REG
 
 calls = []
@@ -39,6 +41,8 @@ push2_python.Push2 = FakePush
 import push_resolume_bridge as B  # noqa: E402
 
 cfg = B.load_config(Path(B.__file__).with_name("config.yaml"))
+pins = Path(tempfile.mkdtemp()) / "pins.yaml"       # never touch the real pins.yaml
+cfg["pins_file"] = str(pins)
 rest = B.Resolume("127.0.0.1", 8080)
 threading.Thread(target=B.run, args=(cfg, rest), daemon=True).start()
 time.sleep(1.0)
@@ -91,6 +95,45 @@ assert after["layers"][2]["master"]["value"] < before["layers"][2]["master"]["va
 assert after["layers"][0]["master"]["value"] == before["layers"][0]["master"]["value"], "wrong layer changed"
 assert after["master"]["value"] < before["master"]["value"], "composition master unchanged"
 assert ("btn", ("Mix", "white")) in calls, "B_3 not lit in mix mode"
+
+
+# --- move a param: L1 C1 has 10 auto slots → 2 pages. Frequency (p1 K2) ↔ Speed (p2 K2)
+fire("on_pad_pressed", 60, (7, 0), 100); fire("on_pad_released", 60, (7, 0), 0)
+time.sleep(0.2)
+fire("on_button_pressed", "Convert")
+fire("on_encoder_touched", "Track2 Encoder")
+fire("on_encoder_released", "Track2 Encoder")
+fire("on_button_released", "Convert")
+fire("on_button_pressed", "Lower Row 2")          # BD2 → page 2
+time.sleep(0.3)
+assert ("btn", ("Lower Row 2", "white")) in calls, "BD2 not lit on page 2"
+assert ("btn", ("Convert", "white")) in calls, "Convert not lit while moving"
+fire("on_encoder_touched", "Track2 Encoder")      # target: page 2, K2
+fire("on_encoder_released", "Track2 Encoder")
+fire("on_button_pressed", "Lower Row 1")
+order = yaml.safe_load(pins.read_text())["order"]
+assert order[1] == "transport/controls/speed" and order[9] == "video/sourceparams/frequency", order
+
+# order carries over: L2 C2 (Comets down) natural = Opacity, Position X, Scale, Speed → K2 = Speed
+fire("on_pad_pressed", 60, (6, 1), 100); fire("on_pad_released", 60, (6, 1), 0)
+before = rest.composition()
+fire("on_encoder_rotated", "Track2 Encoder", 10)
+time.sleep(0.5)
+after = rest.composition()
+spd = lambda c: c["layers"][1]["clips"][1]["transport"]["controls"]["speed"]["value"]
+assert spd(after) > spd(before), "K2 on L2 C2 should now be Speed"
+
+# --- tempo: 3 taps 0.25 s apart ≈ 240 BPM, then K10 +3
+for _ in range(3):
+    fire("on_button_pressed", "Tap Tempo"); fire("on_button_released", "Tap Tempo")
+    time.sleep(0.25)
+time.sleep(0.4)
+bpm = rest.composition()["tempocontroller"]["tempo"]["value"]
+assert 225 < bpm < 255, bpm
+fire("on_encoder_rotated", "Tempo Encoder", 3)
+time.sleep(0.4)
+bpm2 = rest.composition()["tempocontroller"]["tempo"]["value"]
+assert abs(bpm2 - bpm - 3) < 0.01, (bpm, bpm2)
 
 counts = {}
 for name, _ in calls:

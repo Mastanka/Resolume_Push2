@@ -12,6 +12,10 @@ Encoders  Track 1-8 edit the 8 slots. Hold Shift for fine steps.
           Master encoder (far right) = selected layer opacity.
 Mix       Mix button toggles the mixer: Track 1-8 = layer masters (1 = top visible
           layer), Master encoder = composition master.
+Menus     Upper Row 1 = PARAMS view. Lower Row 1-8 = jump to parameter page 1-8.
+Order     Hold Convert + touch a knob, go to any page, touch the target knob -> the two
+          params swap. The order is saved per param type in pins.yaml.
+Tempo     Tap Tempo = tap BPM, Tempo encoder = BPM +-1 (Shift +-0.1).
 Buttons   Up/Down scroll layers, Left/Right scroll columns (Shift = jump by 8).
           Page < / Page > flip parameter pages when a layer has more than 8 slots.
 
@@ -51,6 +55,15 @@ NAV_BUTTONS = ["Up", "Down", "Left", "Right", "Page Left", "Page Right"]
 MIX_BUTTON = "Mix"                          # B_3 on the control map
 PLAY_BUTTON = "Play"                        # B_1: hold + pad = launch clip
 STOP_BUTTON = "Record"                      # B_2: hold + pad = stop layer
+MOVE_BUTTON = "Convert"                     # B_4: hold + touch knob = move param
+TAP_BUTTON = "Tap Tempo"                    # B_5
+TEMPO_ENCODER = "Tempo Encoder"             # K10
+PARAMS_BUTTON = "Upper Row 1"               # BU1
+UPPER_ROW = [f"Upper Row {i}" for i in range(1, 9)]
+LOWER_ROW = [f"Lower Row {i}" for i in range(1, 9)]
+TEMPO_PATH = "tempocontroller/tempo"
+TAP_RESET = 2.0       # s without a tap starts a new tap count
+TAP_FLASH = 0.1       # s the Tap Tempo button stays lit per tap
 MASTER_PATHS = ("master", "video/opacity")  # layer/composition master fader, fallback opacity
 
 # One colour per layer (repeats every 8 layers). Used for pads and the display.
@@ -85,6 +98,7 @@ DEFAULT_CONFIG = {
     "encoders": {"coarse": 0.01, "fine": 0.001},
     "display_fps": 20,
     "stop_column": None,   # None = stop via /clear; N = trigger column N instead
+    "pins_file": None,     # param order file; None = pins.yaml next to this script
     "layers": {"default": "auto"},
 }
 
@@ -283,6 +297,11 @@ class Slot:
     param: dict | None   # None = path not found
     spec: dict = field(default_factory=dict)
 
+    @property
+    def key(self):
+        """Path without scope: the same param type on any layer/clip has the same key."""
+        return self.path.split(":", 1)[-1].lower()
+
 
 class Bridge:
     def __init__(self, cfg, rest):
@@ -304,6 +323,12 @@ class Bridge:
         self.play_held = False     # B_1
         self.stop_held = False     # B_2
         self.stop_column = cfg.get("stop_column")
+        self.convert_held = False  # B_4
+        self.move_src = None       # absolute slot index being moved
+        self.taps = []
+        self.tap_flash = 0.0
+        self.pins_path = Path(cfg.get("pins_file") or Path(__file__).with_name("pins.yaml"))
+        self.order = self._load_order()
         self.touched = None        # encoder slot index being touched
         self.pressed = set()       # cells we sent a "down" for
         self.overrides = {}        # param id -> (value, time sent)
@@ -354,6 +379,35 @@ class Bridge:
         spec = lc.get(L, lc.get(str(L), lc.get("default", "auto")))
         return spec or "auto"
 
+    def _load_order(self):
+        try:
+            data = yaml.safe_load(self.pins_path.read_text(encoding="utf-8")) or {}
+            return [str(k).lower() for k in data.get("order") or []]
+        except FileNotFoundError:
+            return []
+        except Exception as e:
+            print(f"[pins] can't read {self.pins_path}: {e}", file=sys.stderr)
+            return []
+
+    def _save_order(self):
+        try:
+            self.pins_path.write_text(
+                "# Param order for auto layers (first = K1 on page 1). Written by the bridge;\n"
+                "# safe to edit or delete.\n" + yaml.safe_dump({"order": self.order}, sort_keys=False),
+                encoding="utf-8")
+        except Exception as e:
+            print(f"[pins] can't write {self.pins_path}: {e}", file=sys.stderr)
+
+    def swap(self, a, b):
+        """Swap two auto slots (absolute indices) and remember the new order."""
+        keys = [s.key for s in self.slots()]
+        if not (0 <= a < len(keys) and 0 <= b < len(keys)) or keys[a] == keys[b]:
+            return
+        keys[a], keys[b] = keys[b], keys[a]
+        prefix = list(dict.fromkeys(keys[:max(a, b) + 1]))
+        self.order = prefix + [k for k in self.order if k not in prefix]
+        self._save_order()
+
     def slots(self):
         L, C = self.sel
         layer, clip = self.layer_json(L), self.clip_json(L, C)
@@ -376,6 +430,8 @@ class Bridge:
                         continue
                     seen.add(param["id"])
                     out.append(Slot(last[:1].upper() + last[1:], f"{scope}:{p}", param))
+            rank = {k: i for i, k in enumerate(self.order)}
+            out.sort(key=lambda sl: rank.get(sl.key, len(rank)))   # stable: rest keeps natural order
         else:
             for s in spec:
                 scope = s.get("scope", "layer")
@@ -436,6 +492,8 @@ class Bridge:
                 if p:
                     self._nudge(p, {}, inc)
                 return
+            if self.move_src is not None:
+                return
             slots, _ = self.page_slots()
             if idx < len(slots) and slots[idx].param is not None:
                 self._nudge(slots[idx].param, slots[idx].spec, inc)
@@ -448,6 +506,51 @@ class Bridge:
                 p = resolve_node(self.layer_json(self.sel[0]), "video/opacity")
             if is_param(p):
                 self._nudge(p, {}, inc)
+
+    def tempo_param(self):
+        p = resolve_node(self.comp, TEMPO_PATH) if self.comp else None
+        return p if is_param(p) else None
+
+    def _set_bpm(self, p, bpm):
+        bpm = round(min(p.get("max", 500.0), max(p.get("min", 20.0), bpm)), 2)
+        self._set(p["id"], bpm, {"value": bpm})
+
+    def turn_tempo(self, inc):
+        with self.lock:
+            p = self.tempo_param()
+            if p:
+                self._set_bpm(p, float(self.value_of(p) or 120.0) + inc * (0.1 if self.shift else 1.0))
+
+    def tap(self):
+        now = time.time()
+        with self.lock:
+            self.tap_flash = now
+            if self.taps and now - self.taps[-1] > TAP_RESET:
+                self.taps = []
+            self.taps = (self.taps + [now])[-8:]
+            p = self.tempo_param()
+            if p and len(self.taps) >= 2:
+                self._set_bpm(p, 60.0 * (len(self.taps) - 1) / (self.taps[-1] - self.taps[0]))
+
+    def touch(self, idx):
+        with self.lock:
+            self.touched = idx
+            if self.mode != "params":
+                return
+            n = len(self.slots())
+            i = self.page * 8 + idx
+            if self.move_src is None:
+                if self.convert_held and i < n and self.layer_spec(self.sel[0]) == "auto":
+                    self.move_src = i
+            elif i == self.move_src:
+                self.move_src = None               # touched the source again = cancel
+            elif i < n:
+                self.swap(self.move_src, i)
+                self.move_src = None
+
+    def untouch(self, idx):
+        if self.touched == idx:
+            self.touched = None
 
     def pad_to_cell(self, i, j):
         return self.layer_offset + (8 - i), self.col_offset + j + 1
@@ -467,6 +570,8 @@ class Bridge:
                 return
             if L != self.sel[0]:
                 self.page = 0
+            if (L, C) != self.sel:
+                self.move_src = None
             self.sel = (L, C)
             if not self.play_held or clip_state(clip) == "Empty":
                 return
@@ -491,7 +596,15 @@ class Bridge:
         if name == STOP_BUTTON:
             self.stop_held = down
             return
+        if name == MOVE_BUTTON:
+            self.convert_held = down
+            if down and self.move_src is not None:
+                self.move_src = None               # Convert again = cancel
+            return
         if not down:
+            return
+        if name == TAP_BUTTON:
+            self.tap()
             return
         jump = 8 if self.shift else 1
         with self.lock:
@@ -512,12 +625,30 @@ class Bridge:
                 self.page = max(0, self.page - 1)
             elif name == MIX_BUTTON:
                 self.mode = "params" if self.mode == "mix" else "mix"
+                self.move_src = None
+            elif name == PARAMS_BUTTON:
+                self.mode = "params"
+            elif name in LOWER_ROW and self.mode == "params":
+                _, pages = self.page_slots()
+                k = LOWER_ROW.index(name)
+                if k < pages:
+                    self.page = k
 
     # ---- output state ----------------------------------------------------- #
     def button_colors(self):
-        return {MIX_BUTTON: "white" if self.mode == "mix" else "dark_gray",
-                PLAY_BUTTON: "green" if self.play_held else "dark_gray",
-                STOP_BUTTON: "red" if self.stop_held else "dark_gray"}
+        with self.lock:
+            params = self.mode == "params"
+            pages = self.page_slots()[1] if params else 0
+            out = {MIX_BUTTON: "dark_gray" if params else "white",
+                   PLAY_BUTTON: "green" if self.play_held else "dark_gray",
+                   STOP_BUTTON: "red" if self.stop_held else "dark_gray",
+                   MOVE_BUTTON: "white" if self.move_src is not None or self.convert_held else "dark_gray",
+                   TAP_BUTTON: "white" if time.time() - self.tap_flash < TAP_FLASH else "dark_gray"}
+            for b in UPPER_ROW:
+                out[b] = ("white" if params else "dark_gray") if b == PARAMS_BUTTON else "black"
+            for k, b in enumerate(LOWER_ROW):
+                out[b] = "black" if k >= pages else ("white" if k == self.page else "dark_gray")
+            return out
 
     def pad_colors(self):
         grid = {}
@@ -563,7 +694,15 @@ class Bridge:
                 txt, frac = fmt_value(p, self.value_of(p), {}) if p else ("n/a", 0.0)
                 mix.append((ml, text(lj.get("name")) or f"Layer {ml}", txt, frac, p is None))
             cp = master_param(self.comp)
+            tp = self.tempo_param()
+            move = None
+            if self.move_src is not None and self.move_src < len(all_slots):
+                src_page, src_col = divmod(self.move_src, 8)
+                move = {"label": all_slots[self.move_src].label, "page": src_page, "col": src_col,
+                        "here": src_page == self.page}
             return {
+                "bpm": f"{float(self.value_of(tp) or 0):.1f} BPM" if tp else "",
+                "move": move,
                 "mode": self.mode, "mix": mix,
                 "comp_master": fmt_value(cp, self.value_of(cp), {}) if cp else None,
                 "online": self.online and self.comp is not None,
@@ -656,7 +795,8 @@ def render(snap, bgr=True):
             col((45, 45, 45)); ctx.rectangle(300, 134, 360, 12); ctx.fill()
             col((255, 255, 255)); ctx.rectangle(300, 134, 360 * frac, 12); ctx.fill()
         col((140, 140, 140)); font(13)
-        say(950, 137, "FINE" if snap["shift"] else f"LAYERS {snap['layers'][0]}–{snap['layers'][1]}",
+        say(950, 127, snap["bpm"], right=True)
+        say(950, 150, "FINE" if snap["shift"] else f"LAYERS {snap['layers'][0]}–{snap['layers'][1]}",
             right=True)
     else:
         accent = LAYER_RGB[(snap["L"] - 1) % 8]
@@ -669,6 +809,9 @@ def render(snap, bgr=True):
             if k >= len(snap["rows"]):
                 continue
             label, value, frac, missing = snap["rows"][k]
+            mv = snap["move"]
+            if mv and mv["here"] and mv["col"] == k:
+                col((255, 210, 0)); ctx.set_line_width(2); ctx.rectangle(x + 2, 2, 116, 94); ctx.stroke()
             col((255, 90, 90) if missing else (150, 150, 150)); font(15)
             say(x + 8, 24, label, 104)
             col((255, 255, 255)); font(22, True)
@@ -677,14 +820,24 @@ def render(snap, bgr=True):
             col(accent); ctx.rectangle(x + 8, 72, 104 * frac, 8); ctx.fill()
 
         col((60, 60, 60)); ctx.rectangle(0, 100, W, 1); ctx.fill()
-        col(accent); ctx.rectangle(10, 110, 8, 42); ctx.fill()
-        col((255, 255, 255)); font(18, True)
-        say(28, 128, f"L{snap['L']}   {snap['layer_name']}", 560)
-        col((200, 200, 200)); font(16)
-        say(28, 151, f"C{snap['C']}   {snap['clip_name'] or '—'}", 560)
+        mv = snap["move"]
+        if mv:
+            col((255, 210, 0)); ctx.rectangle(10, 110, 8, 42); ctx.fill()
+            font(20, True)
+            say(28, 130, "SELECT NEW POSITION")
+            col((200, 200, 200)); font(15)
+            say(28, 151, f"Moving {mv['label']}  (page {mv['page'] + 1}, K{mv['col'] + 1})"
+                         "   ·   touch it again or Convert = cancel", 560)
+        else:
+            col(accent); ctx.rectangle(10, 110, 8, 42); ctx.fill()
+            col((255, 255, 255)); font(18, True)
+            say(28, 128, f"L{snap['L']}   {snap['layer_name']}", 560)
+            col((200, 200, 200)); font(16)
+            say(28, 151, f"C{snap['C']}   {snap['clip_name'] or '—'}", 560)
 
         col((140, 140, 140)); font(13)
-        top = f"PAGE {snap['page'] + 1}/{snap['pages']}" + ("   ·   FINE" if snap["shift"] else "")
+        top = "   ·   ".join(t for t in (f"PAGE {snap['page'] + 1}/{snap['pages']}", snap["bpm"],
+                                          "FINE" if snap["shift"] else "") if t)
         say(950, 127, top, right=True)
         bottom = snap["touched_path"] or (f"LAYERS {snap['layers'][0]}–{snap['layers'][1]}   ·   "
                                           f"COLS {snap['cols'][0]}–{snap['cols'][1]}")
@@ -745,16 +898,18 @@ def run(cfg, rest, sim=False):
             bridge.turn(TRACK_ENCODERS.index(name), inc)
         elif name == MASTER_ENCODER:
             bridge.turn_master(inc)
+        elif name == TEMPO_ENCODER:
+            bridge.turn_tempo(inc)
 
     @push2_python.on_encoder_touched()
     def _enc_touch(push, name):
         if name in TRACK_ENCODERS:
-            bridge.touched = TRACK_ENCODERS.index(name)
+            bridge.touch(TRACK_ENCODERS.index(name))
 
     @push2_python.on_encoder_released()
     def _enc_release(push, name):
-        if name in TRACK_ENCODERS and bridge.touched == TRACK_ENCODERS.index(name):
-            bridge.touched = None
+        if name in TRACK_ENCODERS:
+            bridge.untouch(TRACK_ENCODERS.index(name))
 
     @push2_python.on_button_pressed()
     def _btn_down(push, name):
