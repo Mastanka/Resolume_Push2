@@ -29,6 +29,7 @@ Usage
     python push_resolume_bridge.py --sim           run with push2-python's browser simulator
     python push_resolume_bridge.py --dump 3        list parameter paths for layer 3 (for config.yaml)
     python push_resolume_bridge.py --dump 3 --clip 2
+    python push_resolume_bridge.py --check 8       test every Resolume call on layer 8 (undone after)
 """
 
 from __future__ import annotations
@@ -823,11 +824,18 @@ def main():
     ap.add_argument("--dump", type=int, metavar="LAYER", help="list parameter paths for a layer and exit")
     ap.add_argument("--clip", type=int, metavar="COLUMN", help="clip column to list with --dump")
     ap.add_argument("--sim", action="store_true", help="run push2-python's browser simulator")
+    ap.add_argument("--check", type=int, metavar="LAYER",
+                    help="try every Resolume call on this (spare) layer, undo each, report OK/FAIL")
+    ap.add_argument("--check-columns", action="store_true", help="with --check: also launch a column")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
     rest = Resolume(cfg["resolume"]["host"], cfg["resolume"]["port"])
-    if args.dump:
+    if args.check:
+        from resolume_check import Checker
+        ok = Checker(cfg["resolume"]["host"], cfg["resolume"]["port"], args.check).run(args.check_columns)
+        sys.exit(0 if ok else 1)
+    elif args.dump:
         dump(rest, args.dump, args.clip)
     else:
         run(cfg, rest, args.sim)

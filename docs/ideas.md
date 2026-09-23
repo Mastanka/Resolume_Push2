@@ -5,7 +5,7 @@ M ≈ a session, L = more than one session.
 
 | ID | Feature | What it does | Effort | Status |
 |---|---|---|---|---|
-| F1 | `--check` mode | Tries each Resolume API call on a spare test layer and prints OK / FAIL | S | |
+| F1 | `--check` mode | Tries each Resolume API call on a spare test layer and prints OK / FAIL | S | done |
 | F2 | Blackout | One button: composition master to 0, press again to restore | S | |
 | F3 | Flash / bump | Hold a button, that layer goes to 100 % until released | S | |
 | F4 | Scene launch | The 8 buttons right of the pads launch a whole column | S | |

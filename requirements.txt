@@ -3,3 +3,4 @@ pycairo
 numpy
 requests
 PyYAML
+websocket-client

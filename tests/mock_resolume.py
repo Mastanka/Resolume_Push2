@@ -8,6 +8,8 @@ ids = itertools.count(1000)
 def rng(v, lo=0.0, hi=1.0): return {"id": next(ids), "valuetype": "ParamRange", "value": v, "min": lo, "max": hi}
 PALETTE = ["#000000ff", "#ff0000ff", "#00ff00ff", "#ffff00ff", "#0000ffff", "#ff00ffff", "#ffffffff", "#ffb17bff"]
 def color(v): return {"id": next(ids), "valuetype": "ParamColor", "value": v, "palette": PALETTE, "view": {"suffix": ""}}
+def b(v): return {"id": next(ids), "valuetype": "ParamBoolean", "value": v}
+def ev(): return {"id": next(ids), "valuetype": "ParamEvent"}
 def s(v): return {"id": next(ids), "valuetype": "ParamString", "value": v}
 def clip(name, state="Disconnected", gen=False):
     if name is None:
@@ -21,13 +23,20 @@ def clip(name, state="Disconnected", gen=False):
                                       "Width": rng(0.5), "Height": rng(0.5), "Offset": rng(0.0),
                                       "Color": color("#ff8b58ff"), "BG Color": color("#00000000")}
     return c
-COMP = {"master": rng(0.9), "tempocontroller": {"tempo": rng(120.0, 20.0, 500.0)}, "video": {"opacity": rng(1.0)}, "layers": [
-  {"name": s("Strobe"), "master": rng(1.0), "video": {"opacity": rng(0.8), "mixer": {"Blend Mode": {"id": next(ids), "valuetype": "ParamChoice", "value": "Add", "index": 1, "options": ["Alpha", "Add", "Multiply", "Screen"]}},
+COMP = {"master": rng(0.9),
+  "tempocontroller": {"tempo": rng(120.0, 20.0, 500.0), "tempo_tap": ev(), "resync": ev()},
+  "video": {"opacity": rng(1.0), "effects": [
+      {"name": "Colorize", "id": next(ids), "bypassed": b(True),
+       "params": {"Opacity": rng(1.0), "Color": color("#ffffffff")}}]},
+  "columns": [{"name": s(f"Column {n}"), "connected": {"id": next(ids), "valuetype": "ParamState", "value": "Disconnected"}}
+              for n in range(1, 5)],
+  "layers": [
+  {"name": s("Strobe"), "bypassed": b(False), "solo": b(False), "master": rng(1.0), "video": {"opacity": rng(0.8), "mixer": {"Blend Mode": {"id": next(ids), "valuetype": "ParamChoice", "value": "Add", "index": 1, "options": ["Alpha", "Add", "Multiply", "Screen"]}},
      "effects": [{"name": "HueRotate", "display_name": "Hue Rotate", "id": next(ids), "params": {"Hue Rotate": rng(0.2)}}]},
    "audio": {"volume": rng(0, -60, 6)},
    "clips": [clip("Stroboscope", "Connected", gen=True), clip("Rolling strobe"), clip(None), clip("Odd/Even")]},
-  {"name": s("Comets"), "master": rng(0.75), "video": {"opacity": rng(1.0), "effects": []}, "clips": [clip(None), clip("Comets down", "Connected"), clip(None), clip(None)]},
-  {"name": s("Ambient clouds"), "master": rng(0.5), "video": {"opacity": rng(0.4), "effects": []}, "clips": [clip("Clouds"), clip(None), clip(None), clip(None)]},
+  {"name": s("Comets"), "bypassed": b(False), "solo": b(False), "master": rng(0.75), "video": {"opacity": rng(1.0), "effects": []}, "clips": [clip(None), clip("Comets down", "Connected"), clip(None), clip(None)]},
+  {"name": s("Ambient clouds"), "bypassed": b(False), "solo": b(False), "master": rng(0.5), "video": {"opacity": rng(0.4), "effects": []}, "clips": [clip("Clouds"), clip(None), clip(None), clip(None)]},
 ]}
 BYID = {}
 def index(n):
@@ -38,14 +47,29 @@ def index(n):
         for v in n: index(v)
 index(COMP)
 LOG = []
+EVENTS = {}   # ParamEvent id -> times triggered (GET /api/v1/_events)
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def _body(self): return self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()
     def do_GET(self):
+        if self.path.endswith("/product"):
+            d = json.dumps({"name": "Mock Resolume", "major": 7, "minor": 23}).encode(); self.send_response(200); self.send_header("Content-Type","application/json"); self.end_headers(); self.wfile.write(d); return
+        if self.path.endswith("/_events"):
+            d = json.dumps(EVENTS).encode(); self.send_response(200); self.send_header("Content-Type","application/json"); self.end_headers(); self.wfile.write(d); return
         d = json.dumps(COMP).encode(); self.send_response(200); self.send_header("Content-Type","application/json"); self.end_headers(); self.wfile.write(d)
     def do_POST(self):
         b = self._body(); LOG.append(("POST", self.path, b)); print("POST", self.path, b, flush=True)
         parts = self.path.split("/")
+        if parts[-2:-1] and parts[-3] == "columns" and parts[-1] == "connect" and b == "true":
+            n = int(parts[-2])
+            for layer in COMP["layers"]:
+                c = layer["clips"][n-1]
+                if c["connected"]["value"] == "Empty": continue
+                for o in layer["clips"]:
+                    if o["connected"]["value"].startswith("Connected"): o["connected"]["value"] = "Disconnected"
+                c["connected"]["value"] = "Connected"
+            for i, col in enumerate(COMP["columns"]):
+                col["connected"]["value"] = "Connected" if i == n-1 else "Disconnected"
         if parts[-1] == "select":
             for layer in COMP["layers"]:
                 for c in layer["clips"]: c["selected"] = {"value": False}
@@ -53,7 +77,7 @@ class H(BaseHTTPRequestHandler):
         if parts[-1] == "clear":
             for c in COMP["layers"][int(parts[5])-1]["clips"]:
                 if c["connected"]["value"].startswith("Connected"): c["connected"]["value"] = "Disconnected"
-        if parts[-1] == "connect" and b == "true":
+        if parts[-1] == "connect" and "clips" in parts and b == "true":
             L, C = int(parts[5]), int(parts[7])
             for c in COMP["layers"][L-1]["clips"]:
                 if c["connected"]["value"].startswith("Connected"): c["connected"]["value"] = "Disconnected"
@@ -62,6 +86,9 @@ class H(BaseHTTPRequestHandler):
     def do_PUT(self):
         b = self._body(); print("PUT", self.path, b, flush=True)
         pid = int(self.path.rsplit("/",1)[-1]); body = json.loads(b)
-        if "value" in body: BYID[pid]["value"] = body["value"]
+        if BYID[pid]["valuetype"] == "ParamEvent":
+            EVENTS[str(pid)] = EVENTS.get(str(pid), 0) + 1
+        elif "value" in body: BYID[pid]["value"] = body["value"]
+        elif "index" in body: BYID[pid]["value"] = BYID[pid]["options"][body["index"]]
         self.send_response(204); self.end_headers()
 ThreadingHTTPServer(("127.0.0.1", 8080), H).serve_forever()
