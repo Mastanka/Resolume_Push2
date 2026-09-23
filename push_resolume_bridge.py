@@ -292,7 +292,7 @@ class Bridge:
             clip, layer = self.clip_json(L, C), self.layer_json(L)
             if clip:
                 add_all(clip.get("video"))
-                add_all(clip.get("transport", {}).get("controls"))
+                add_all((clip.get("transport") or {}).get("controls"))   # empty clips: transport = null
             if layer:
                 add_all(layer.get("video"))
             add_all(resolve_node(comp, "video/effects"))

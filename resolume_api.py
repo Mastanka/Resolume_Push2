@@ -7,6 +7,7 @@ import queue
 import sys
 import threading
 import time
+import traceback
 
 import requests
 
@@ -287,7 +288,9 @@ class ResolumeWS(threading.Thread):
                         subs = want
             except Exception as e:
                 if self.live or not self._warned:
-                    print(f"[resolume] live updates off, polling instead ({type(e).__name__})")
+                    print(f"[resolume] live updates off, polling instead ({type(e).__name__}: {e})")
+                    if not isinstance(e, (OSError, websocket.WebSocketException)):
+                        traceback.print_exc()            # a bug, not a network problem
                     self._warned = True
                 self.live = False
                 try:

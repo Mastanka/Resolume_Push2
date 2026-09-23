@@ -25,6 +25,19 @@ from push2_python import action_handler_registry as REG
 calls = []
 
 
+class Tee:
+    """Keep a copy of everything printed, to check the bridge's log at the end."""
+    def __init__(self, out):
+        self.out, self.text = out, []
+    def write(self, s):
+        self.text.append(s); return self.out.write(s)
+    def flush(self):
+        self.out.flush()
+
+
+sys.stdout = Tee(sys.stdout)
+
+
 class FakePush:
     def __init__(self, run_simulator=False):
         rec = lambda name: (lambda *a, **k: calls.append((name, a)))
@@ -274,6 +287,10 @@ assert abs(fx()["params"]["Opacity"]["value"] - (op0 - 0.1)) < 1e-6 and fx()["by
 assert ("btn", ("Lower Row 2", "black")) in calls, "effect without bypass must stay unlit"
 fire("on_button_pressed", "Upper Row 1")
 
+# --- empty pad: Arena sends empty slots with transport / video = null (crashed live updates once)
+fire("on_pad_pressed", 60, (7, 2), 100); fire("on_pad_released", 60, (7, 2), 0)          # L1 C3 empty
+time.sleep(1.0)
+
 # --- F16 live updates: a change made elsewhere (e.g. mouse in Arena) reaches the pads without polling
 L3 = rest.composition()["layers"][2]
 if not POLL_ONLY:
@@ -283,6 +300,9 @@ if not POLL_ONLY:
     assert any(n == "pad" and a[0][0] == 5 and a[1] in ("dark_gray", "light_gray") for n, a in calls[n0:]), \
         "external mute of layer 3 didn't reach the pads via WebSocket"
     requests.put(f"http://127.0.0.1:8080/api/v1/parameter/by-id/{L3['bypassed']['id']}", json={"value": False})
+
+if not POLL_ONLY:
+    assert "live updates off" not in "".join(sys.stdout.text), "WebSocket thread crashed during the test"
 
 counts = {}
 for name, _ in calls:

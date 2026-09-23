@@ -13,7 +13,8 @@ def ev(): return {"id": next(ids), "valuetype": "ParamEvent"}
 def s(v): return {"id": next(ids), "valuetype": "ParamString", "value": v}
 def clip(name, state="Disconnected", gen=False):
     if name is None:
-        return {"name": s(""), "connected": {"id": next(ids), "valuetype": "ParamState", "value": "Empty"}}
+        return {"name": s(""), "connected": {"id": next(ids), "valuetype": "ParamState", "value": "Empty"},
+                "transport": None, "video": None}          # like Arena 7.23: empty slots have null sections
     c = {"name": s(name), "connected": {"id": next(ids), "valuetype": "ParamState", "value": state},
          "transport": {"position": rng(0.3, 0, 5000), "controls": {"speed": rng(1, 0, 10)}},
          "video": {"opacity": rng(1), "effects": [{"name": "Transform", "id": next(ids), "bypassed": {"id": next(ids), "valuetype": "ParamBoolean", "value": False},
