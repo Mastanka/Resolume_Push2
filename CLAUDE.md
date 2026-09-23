@@ -24,6 +24,9 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 | `docs/specs/` | Short design specs per feature |
 | `requirements.txt` | push2-python (from git), pycairo, numpy, requests, PyYAML |
 | `README.md` | User-facing setup and controls |
+| `LICENSE` | MIT |
+| `docs/promo/` | 5 presentation PNGs + `make_promo.py` (needs `pip install segno`) |
+| `.github/ISSUE_TEMPLATE/` | Idea + bug templates |
 | `tests/mock_resolume.py` | Fake Resolume REST server (port 8080) with a small composition |
 | `tests/test_fake_push.py` | Runs the real `run()` loop with a fake Push object; asserts it works |
 | `tests/render_preview.py` | Renders the display to PNG for visual checks |
@@ -173,4 +176,5 @@ real Push + Arena, done by Štefan.
 7. Upper/Lower Row buttons: layer bypass/solo, effect bypass toggles.
 8. Pad blink on BPM (send MIDI clock so Push animations sync to Resolume tempo).
 9. Deck switching.
-10. Package and publish on GitHub (no comparable public project exists).
+10. ~~Publish on GitHub~~ — public at github.com/Mastanka/Resolume_Push2 (MIT). `main` protected
+    by ruleset (no deletion / force push). Only Mastanka has write access.
