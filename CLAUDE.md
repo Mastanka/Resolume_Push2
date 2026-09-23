@@ -167,6 +167,9 @@ real Push + Arena, done by Štefan.
 
 ## Backlog (ideas, not commitments)
 
+Current numbered list (F1…F17, Štefan picks by ID): **`docs/ideas.md`**. Mark Status there when done.
+Older notes:
+
 1. WebSocket subscriptions instead of polling (lower latency, less load).
 2. Column/scene launch on the 8 buttons right of the pads (`1/32t…1/4`).
 3. ~~Tap Tempo / BPM nudge~~ — done (B_5, K10). Next: resync beat phase on tap.
