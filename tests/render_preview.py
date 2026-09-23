@@ -14,6 +14,7 @@ import push_resolume_bridge as B  # noqa: E402
 
 cfg = B.load_config(HERE.parent / "config.yaml")
 cfg["pins_file"] = str(Path(tempfile.mkdtemp()) / "pins.yaml")
+cfg["colors_file"] = str(Path(tempfile.mkdtemp()) / "colors.yaml")
 br = B.Bridge(cfg, B.Resolume("127.0.0.1", 8080))
 br.sender.start()
 threading.Thread(target=br.poll_loop, daemon=True).start()
@@ -37,6 +38,13 @@ br.button("Upper Row 2", True)                  # COLOR menu
 time.sleep(0.1)
 _, surf = B.render(br.snapshot(), bgr=False)
 surf.write_to_png(str(HERE / "preview_color.png"))
+br.button("Duplicate", True)
+shot("paste")
+br.button("Duplicate", False)
+br.button("Master", True)
+time.sleep(0.1)
+shot("master_color")
+br.button("Master", True)
 br.button("Upper Row 1", True)
 
 br.button("Convert", True); br.touch(1); br.untouch(1); br.button("Convert", False)

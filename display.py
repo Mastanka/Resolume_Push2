@@ -72,7 +72,8 @@ def render(snap, bgr=True):
                 col((35, 35, 35)); ctx.rectangle(x, 6, 1, 86); ctx.fill()
         if c is None:
             col((200, 200, 200)); font(18, True)
-            say(24, 56, "No colour parameter on this clip")
+            say(24, 56, "No colour effect on the composition. Add Colorize in Resolume."
+                if snap.get("master_color") else "No colour parameter on this clip")
         else:
             r, g, b = c["rgb"]
             bars = [(255, 40, 40), (40, 220, 40), (60, 90, 255)]
@@ -91,19 +92,34 @@ def render(snap, bgr=True):
                 col((45, 45, 45)); ctx.rectangle(x + 8, 72, 104, 8); ctx.fill()
                 col(bar); ctx.rectangle(x + 8, 72, 104 * frac, 8); ctx.fill()
             x = 7 * 120
-            col((150, 150, 150)); font(15)
-            say(x + 8, 24, f"Param {c['idx'] + 1}/{c['n']}", 104)
-            col((255, 255, 255)); font(17, True)
-            say(x + 8, 58, c["label"], 104)
+            if "fx" in c:                                          # master colour: amount + on/off
+                if c.get("amount"):
+                    value, frac = c["amount"]
+                    col((150, 150, 150)); font(15); say(6 * 120 + 8, 24, "Amount", 104)
+                    col((255, 255, 255)); font(22, True); say(6 * 120 + 8, 58, value, 104)
+                    col((45, 45, 45)); ctx.rectangle(6 * 120 + 8, 72, 104, 8); ctx.fill()
+                    col((r, g, b)); ctx.rectangle(6 * 120 + 8, 72, 104 * frac, 8); ctx.fill()
+                col((150, 150, 150)); font(15)
+                say(x + 8, 24, c["fx"] or "Effect", 104)
+                on = c.get("enabled")
+                col((255, 255, 255) if on else (255, 90, 90)); font(22, True)
+                say(x + 8, 58, "—" if on is None else ("ON" if on else "OFF"), 104)
+            else:
+                col((150, 150, 150)); font(15)
+                say(x + 8, 24, f"Param {c['idx'] + 1}/{c['n']}", 104)
+                col((255, 255, 255)); font(17, True)
+                say(x + 8, 58, c["label"], 104)
 
         col((60, 60, 60)); ctx.rectangle(0, 100, W, 1); ctx.fill()
         if c is not None:
             col(tuple(c["rgb"])); ctx.rectangle(10, 108, 90, 44); ctx.fill()
             col((80, 80, 80)); ctx.set_line_width(1); ctx.rectangle(10.5, 108.5, 89, 43); ctx.stroke()
         col((255, 255, 255)); font(18, True)
-        say(114, 128, "COLOR" + (f"   {c['label']}   {c['hex']}" if c else ""), 520)
+        title = "MASTER COLOR" if snap.get("master_color") else "COLOR"
+        say(114, 128, title + (f"   {c['label']}   {c['hex']}" if c else ""), 520)
         col((200, 200, 200)); font(16)
-        say(114, 151, f"L{snap['L']} C{snap['C']}   {snap['clip_name'] or '—'}", 520)
+        say(114, 151, "whole show  ·  Master button = back to the clip" if snap.get("master_color")
+            else f"L{snap['L']} C{snap['C']}   {snap['clip_name'] or '—'}", 520)
         col((140, 140, 140)); font(13)
         say(950, 127, snap["bpm"], right=True)
         say(950, 150, "FINE" if snap["shift"] else "PALETTE BELOW", right=True)
@@ -201,6 +217,20 @@ def render(snap, bgr=True):
             else:
                 col((150, 150, 150))
             ctx.arc(906 + k * 14, 109, 4, 0, 6.3); ctx.fill()
+
+    if snap["online"] and snap.get("paste"):                       # Duplicate held in COLOR
+        col((70, 0, 60)); ctx.rectangle(0, 101, W, 59); ctx.fill()
+        if snap.get("color"):
+            col(tuple(snap["color"]["rgb"])); ctx.rectangle(10, 108, 44, 44); ctx.fill()
+        col((255, 255, 255)); font(20, True)
+        say(66, 128, "PASTE COLOUR")
+        col((230, 200, 230)); font(15)
+        say(66, 150, "pad = clip   ·   button right of a row = layer   ·   button below = column")
+    if snap["online"] and snap.get("note") and not snap.get("blackout"):
+        font(16, True)
+        w = ctx.text_extents(snap["note"]).x_advance + 32
+        col((40, 40, 40)); ctx.rectangle(W - w - 10, 104, w, 30); ctx.fill()
+        col((255, 255, 255)); say(W - 26, 125, snap["note"], right=True)
 
     if snap["online"] and snap.get("blackout"):
         col((150, 0, 0)); ctx.rectangle(0, 101, W, 59); ctx.fill()

@@ -44,6 +44,8 @@ import push_resolume_bridge as B  # noqa: E402
 cfg = B.load_config(Path(B.__file__).with_name("config.yaml"))
 pins = Path(tempfile.mkdtemp()) / "pins.yaml"       # never touch the real pins.yaml
 cfg["pins_file"] = str(pins)
+colors_file = pins.with_name("colors.yaml")          # never touch the real colors.yaml
+cfg["colors_file"] = str(colors_file)
 rest = B.Resolume("127.0.0.1", 8080)
 threading.Thread(target=B.run, args=(cfg, rest), daemon=True).start()
 time.sleep(1.0)
@@ -224,6 +226,35 @@ fire("on_button_pressed", "Solo"); fire("on_button_pressed", "Lower Row 2"); fir
 time.sleep(0.4)
 assert flag(1, "bypassed") is False and flag(2, "solo") is False, "MIX Lower Row mute / Solo+Lower Row solo"
 fire("on_button_pressed", "Mix")
+
+# --- F10 master colour: Master button → composition Colorize (white, bypassed, opacity 1)
+fx = lambda: rest.composition()["video"]["effects"][0]
+fire("on_button_pressed", "Master")
+fire("on_encoder_rotated", "Track1 Encoder", -10)   # red 255 - 30
+fire("on_encoder_rotated", "Track7 Encoder", -10)   # amount 1.0 → 0.9
+fire("on_encoder_rotated", "Track8 Encoder", 1)     # effect on
+time.sleep(0.4)
+assert fx()["params"]["Color"]["value"] == "#e1ffffff", fx()["params"]["Color"]["value"]
+assert abs(fx()["params"]["Opacity"]["value"] - 0.9) < 1e-6 and fx()["bypassed"]["value"] is False, fx()
+assert ("btn", ("Master", "white")) in calls
+fire("on_button_pressed", "Master")                 # back to the clip
+
+# --- F11 own palette: Shift + Lower Row 3 saves the current clip colour, Lower Row 3 applies it
+fire("on_pad_pressed", 60, (7, 0), 100); fire("on_pad_released", 60, (7, 0), 0)     # L1 C1
+fire("on_button_pressed", "Upper Row 2")
+time.sleep(0.2)
+cur = rest.composition()["layers"][0]["clips"][0]["video"]["sourceparams"]["Color"]["value"]
+fire("on_button_pressed", "Shift"); fire("on_button_pressed", "Lower Row 3"); fire("on_button_released", "Shift")
+assert yaml.safe_load(colors_file.read_text())["palette"][2] == cur, colors_file.read_text()
+
+# --- F12 paste: Duplicate + Lower Row 1 = column 1 → L3 C1 (Clouds) gets L1 C1's colour
+fire("on_button_pressed", "Duplicate")
+fire("on_button_pressed", "Lower Row 1"); fire("on_button_released", "Lower Row 1")
+fire("on_button_released", "Duplicate")
+time.sleep(0.4)
+clouds = rest.composition()["layers"][2]["clips"][0]["video"]["sourceparams"]["Color"]["value"]
+assert clouds == cur, (clouds, cur)
+fire("on_button_pressed", "Upper Row 1")
 
 counts = {}
 for name, _ in calls:

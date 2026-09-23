@@ -409,6 +409,7 @@ def main():
         comp = requests.get("http://127.0.0.1:8080/api/v1/composition", timeout=3).json()
     cfg = B.load_config(HERE.parent.parent / "config.yaml")
     cfg["pins_file"] = str(Path(tempfile.mkdtemp()) / "pins.yaml")
+    cfg["colors_file"] = str(Path(tempfile.mkdtemp()) / "colors.yaml")
     br = B.Bridge(cfg, B.Resolume("127.0.0.1", 1))                # never sends anything
     br.comp, br.online = demo_comp(comp), True
     for L in range(1, 9):                                          # nice mixer values

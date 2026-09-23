@@ -14,9 +14,9 @@ M ≈ a session, L = more than one session.
 | F7 | Touch strip | Crossfader, global speed or composition master | S–M | |
 | F8 | Resolume native tap + resync | Tap also aligns the beat phase, not only the BPM | S | done |
 | F9 | Beat blink | Pads / Tap button blink on the beat | M | done |
-| F10 | Master colour | One colour control for the whole show (colour effect on the composition) | M | |
-| F11 | Save own colours | Shift + palette button stores the current colour there | S | |
-| F12 | Colour many clips | Apply a colour to a whole column or layer at once | M | |
+| F10 | Master colour | One colour control for the whole show (colour effect on the composition) | M | done |
+| F11 | Save own colours | Shift + palette button stores the current colour there | S | done |
+| F12 | Colour many clips | Apply a colour to a whole column or layer at once | M | done |
 | F13 | FX menu (BU3) | Clip + layer effects list, on/off on the buttons below the display | M | |
 | F14 | Thumbnails + clip colours | Clip thumbnails on the display, Resolume clip colours on the pads | M | |
 | F15 | Deck switching | Switch Resolume decks from the Push | M | |

@@ -20,6 +20,11 @@ Order     Hold Convert + touch a knob, go to any page, touch the target knob -> 
 Tempo     Tap Tempo = Resolume's own tap, Shift + Tap Tempo = resync (beat 1 now).
           Tempo encoder = BPM +-1 (Shift +-0.1). Tap Tempo, the display and playing pads
           blink on the beat; Metronome turns the pad pulse on / off.
+Master    Master button = COLOR on the composition's colour effect (Colorize): K7 = amount,
+          K8 = on/off. Press again = back to the clip.
+          COLOR: Shift + Lower Row = save the current colour there (colors.yaml).
+          Hold Duplicate: pad / button right of a row / Lower Row = paste the colour to that
+          clip / whole layer / whole column.
 Live      Stop Clip = blackout (composition master 0 / back). Buttons right of the pads = flash
           that row's layer to 100 % while held. Play + Lower Row = launch the column above.
           Mute / Solo + pad = mute / solo that layer; in MIX the Lower Row mutes (Solo held = solo).
@@ -82,6 +87,9 @@ TAP_PATH = "tempocontroller/tempo_tap"
 RESYNC_PATH = "tempocontroller/resync"
 BEAT_ON = 0.12        # s a beat stays lit (Tap Tempo button, pad pulse)
 LED_HZ = 50           # LED updates per second (beat edges); the display runs at display_fps
+MASTER_COLOR_BUTTON = "Master"              # COLOR on the composition's colour effect
+PASTE_BUTTON = "Duplicate"                  # COLOR: hold + pad / row / column = paste colour
+NOTE_TIME = 1.8       # s a short message stays on the display
 PARAMS_BUTTON = "Upper Row 1"               # BU1
 COLOR_BUTTON = "Upper Row 2"                # BU2
 MENU_BUTTONS = {PARAMS_BUTTON: "params", COLOR_BUTTON: "color"}
@@ -116,6 +124,7 @@ DEFAULT_CONFIG = {
     "display_fps": 20,
     "stop_column": None,   # None = stop via /clear; N = trigger column N instead
     "pins_file": None,     # param order file; None = pins.yaml next to this script
+    "colors_file": None,   # own palette (Shift + Lower Row in COLOR); None = colors.yaml here
     "layers": {"default": "auto"},
 }
 
@@ -154,6 +163,11 @@ class Bridge:
         self.sel = (1, 1)          # (layer, column), 1-based, as in Resolume
         self.mode = "params"       # "params", "color" or "mix"
         self.color_idx = 0         # which colour param the COLOR menu edits
+        self.color_target = "clip"  # "clip" or "master" (composition colour effect)
+        self.paste_held = False    # Duplicate
+        self.note = ("", 0.0)      # short message on the display (text, time)
+        self.colors_path = Path(cfg.get("colors_file") or Path(__file__).with_name("colors.yaml"))
+        self.own_palette = self._load_palette()
         self.hsv_cache = {}        # param id -> (rgb, [h, s, v]) keeps hue while saturation is 0
         self.page = 0
         self.shift = False
@@ -366,7 +380,12 @@ class Bridge:
                 self._nudge(p, {}, inc)
 
     def color_params(self):
-        """[(label, param)] colour params of the selected clip, then of its layer's effects."""
+        """[(label, param)] colour params of the selected clip, then of its layer's effects.
+        With the master target: the composition's effects (e.g. Colorize)."""
+        if self.color_target == "master":
+            node = resolve_node(self.comp, "video/effects") if self.comp else None
+            return [(color_label(p), prm) for p, prm in
+                    (walk(node, "video/effects", types={"ParamColor"}) if node is not None else [])]
         L, C = self.sel
         roots = {"layer": self.layer_json(L), "clip": self.clip_json(L, C)}
         out, seen = [], set()
@@ -386,6 +405,76 @@ class Bridge:
         label, p = cps[self.color_idx]
         return label, p, len(cps)
 
+    def master_effect(self, p):
+        """The composition effect that owns colour param p: (effect, amount param, bypassed param)."""
+        for fx in resolve_node(self.comp, "video/effects") or []:
+            params = fx.get("params") or {}
+            if any(isinstance(v, dict) and v.get("id") == p["id"] for v in params.values()):
+                amount = next((v for k, v in params.items() if k.lower() == "opacity" and is_param(v)), None)
+                byp = fx.get("bypassed")
+                return fx, amount, byp if is_param(byp) else None
+        return None, None, None
+
+    def note_msg(self, msg):
+        self.note = (msg, time.time())
+
+    # ---- own palette (colors.yaml) ------------------------------------------ #
+    def _load_palette(self):
+        try:
+            data = yaml.safe_load(self.colors_path.read_text(encoding="utf-8")) or {}
+            pal = [str(c) for c in data.get("palette") or []][:8]
+            return pal or None
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            print(f"[colors] can't read {self.colors_path}: {e}", file=sys.stderr)
+            return None
+
+    def palette(self):
+        """Own palette if saved, otherwise Resolume's palette of the current colour param."""
+        if self.own_palette:
+            return self.own_palette
+        _, p, _ = self.color_param()
+        return ((p or {}).get("palette") or [])[:8]
+
+    def save_palette_color(self, k):
+        _, p, _ = self.color_param()
+        if p is None:
+            return
+        pal = (list(self.palette()) + ["#000000ff"] * 8)[:8]
+        pal[k] = self.value_of(p)
+        self.own_palette = pal
+        try:
+            self.colors_path.write_text(
+                "# Own colours for the COLOR menu (Shift + button below the display saves one).\n"
+                "# Written by the bridge; safe to edit or delete (= back to Resolume's palette).\n"
+                + yaml.safe_dump({"palette": pal}, sort_keys=False), encoding="utf-8")
+            self.note_msg(f"Saved to palette slot {k + 1}")
+        except Exception as e:
+            print(f"[colors] can't write {self.colors_path}: {e}", file=sys.stderr)
+
+    def paste_color(self, cells):
+        """Write the current colour into the same-named colour param of each clip."""
+        label, p, _ = self.color_param()
+        if p is None:
+            return
+        if label.startswith("Layer "):
+            self.note_msg("Only clip colours can be pasted")
+            return
+        value, done, skipped = self.value_of(p), 0, 0
+        for L, C in cells:
+            clip = self.clip_json(L, C)
+            if clip is None or clip_state(clip) == "Empty":
+                continue
+            target = next((prm for path, prm in walk(clip.get("video") or {}, "video", types={"ParamColor"})
+                           if color_label(path) == label), None)
+            if target is None:
+                skipped += 1
+            elif target["id"] != p["id"]:
+                self._set(target["id"], value, {"value": value})
+                done += 1
+        self.note_msg(f"{label} → {done} clip{'s' * (done != 1)}" + (f"  ({skipped} skipped)" if skipped else ""))
+
     def color_hsv(self, p):
         rgb = hex_to_rgba(self.value_of(p))[:3]
         cached = self.hsv_cache.get(p["id"])
@@ -395,6 +484,14 @@ class Bridge:
         return [h * 360, sat * 100, v * 100]
 
     def _turn_color(self, idx, inc):
+        if self.color_target == "master" and idx in (6, 7):
+            _, p, _ = self.color_param()
+            _, amount, byp = self.master_effect(p) if p else (None, None, None)
+            if idx == 6 and amount:                    # K7: effect amount
+                self._nudge(amount, {}, inc)
+            elif idx == 7 and byp:                     # K8: effect on (right) / off (left)
+                self._set(byp["id"], inc < 0, {"value": inc < 0})
+            return
         if idx == 7:                                   # K8: which colour param
             acc = self.choice_acc.get("color", 0) + inc
             n = len(self.color_params())
@@ -426,8 +523,8 @@ class Bridge:
 
     def set_palette_color(self, k):
         _, p, _ = self.color_param()
-        palette = (p or {}).get("palette") or []
-        if k < len(palette):
+        palette = self.palette()
+        if p is not None and k < len(palette):
             self.hsv_cache.pop(p["id"], None)
             self._set(p["id"], palette[k], {"value": palette[k]})
 
@@ -436,8 +533,7 @@ class Bridge:
         with self.lock:
             if self.mode != "color":
                 return []
-            _, p, _ = self.color_param()
-            return [hex_to_rgba(c)[:3] for c in ((p or {}).get("palette") or [])[:8]]
+            return [hex_to_rgba(c)[:3] for c in self.palette()]
 
     def tempo_param(self):
         p = resolve_node(self.comp, TEMPO_PATH) if self.comp else None
@@ -573,6 +669,9 @@ class Bridge:
             if self.mute_held or self.solo_held:
                 self.toggle_layer(L, "bypassed" if self.mute_held else "solo")
                 return
+            if self.paste_held and self.mode == "color":
+                self.paste_color([(L, C)])
+                return
             if self.stop_held:
                 if self.stop_column:
                     self.sender.trigger(L, int(self.stop_column), True)
@@ -615,6 +714,20 @@ class Bridge:
             return
         if name == SOLO_BUTTON:
             self.solo_held = down
+            return
+        if name == PASTE_BUTTON:
+            self.paste_held = down
+            return
+        if self.paste_held and self.mode == "color" and name in SCENE_BUTTONS + LOWER_ROW:
+            if down:
+                with self.lock:
+                    if name in SCENE_BUTTONS:          # whole layer of that pad row
+                        L = self.layer_offset + (8 - SCENE_BUTTONS.index(name))
+                        cells = [(L, c) for c in range(1, len((self.layer_json(L) or {}).get("clips") or []) + 1)]
+                    else:                              # whole column above that button
+                        C = self.col_offset + LOWER_ROW.index(name) + 1
+                        cells = [(l, C) for l in range(1, len(self.layers()) + 1)]
+                    self.paste_color(cells)
             return
         if name in SCENE_BUTTONS:
             self.flash_layer(SCENE_BUTTONS.index(name), down)
@@ -668,6 +781,13 @@ class Bridge:
             elif name in MENU_BUTTONS:
                 self.mode = MENU_BUTTONS[name]
                 self.move_src = None
+                self.color_target = "clip"
+            elif name == MASTER_COLOR_BUTTON:
+                master = self.mode == "color" and self.color_target == "master"
+                self.mode, self.color_target, self.color_idx = "color", "clip" if master else "master", 0
+                self.move_src = None
+            elif name in LOWER_ROW and self.mode == "color" and self.shift:
+                self.save_palette_color(LOWER_ROW.index(name))
             elif name in LOWER_ROW and self.mode == "mix":
                 layers = self.mix_layers()
                 k = LOWER_ROW.index(name)
@@ -696,11 +816,16 @@ class Bridge:
                    MOVE_BUTTON: "white" if self.move_src is not None or self.convert_held else "dark_gray",
                    TAP_BUTTON: "white" if self.on_beat() or time.time() - self.tap_flash < TAP_FLASH
                    else "dark_gray",
-                   METRONOME_BUTTON: "white" if self.pulse else "dark_gray"}
+                   METRONOME_BUTTON: "white" if self.pulse else "dark_gray",
+                   MASTER_COLOR_BUTTON: "white" if self.mode == "color" and self.color_target == "master"
+                   else "dark_gray",
+                   PASTE_BUTTON: ("white" if self.paste_held else "dark_gray") if self.mode == "color"
+                   else "black"}
             for b in UPPER_ROW:
                 out[b] = "black"
             for b, m in MENU_BUTTONS.items():
-                out[b] = "white" if self.mode == m else "dark_gray"
+                active = self.mode == m and not (m == "color" and self.color_target == "master")
+                out[b] = "white" if active else "dark_gray"
             n_sw = len(self.swatches())
             blink = int(time.time() / BLINK) % 2 == 0
             mix_layers = self.mix_layers()
@@ -803,8 +928,17 @@ class Bridge:
                     color = {"label": label, "idx": self.color_idx, "n": n, "rgb": rgba[:3],
                              "hex": rgba_to_hex(rgba)[:7].upper(),
                              "knobs": [(lbl, vals[i]) for i, (lbl, *_rest) in enumerate(COLOR_KNOBS)]}
+                    if self.color_target == "master":
+                        fx, amount, byp = self.master_effect(p)
+                        color["fx"] = text((fx or {}).get("display_name")) or text((fx or {}).get("name"))
+                        color["amount"] = fmt_value(amount, self.value_of(amount), {}) if amount else None
+                        color["enabled"] = None if byp is None else not self.value_of(byp)
             b = self.beat()
+            note = self.note[0] if time.time() - self.note[1] < NOTE_TIME else ""
             return {
+                "master_color": self.color_target == "master",
+                "paste": self.paste_held and self.mode == "color",
+                "note": note,
                 "beat": None if b is None else (b[0], b[1] < BEAT_ON),
                 "blackout": self.blackout is not None,
                 "color": color,

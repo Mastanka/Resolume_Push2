@@ -36,7 +36,7 @@ COMP = {"master": rng(0.9),
    "audio": {"volume": rng(0, -60, 6)},
    "clips": [clip("Stroboscope", "Connected", gen=True), clip("Rolling strobe"), clip(None), clip("Odd/Even")]},
   {"name": s("Comets"), "bypassed": b(False), "solo": b(False), "master": rng(0.75), "video": {"opacity": rng(1.0), "effects": []}, "clips": [clip(None), clip("Comets down", "Connected"), clip(None), clip(None)]},
-  {"name": s("Ambient clouds"), "bypassed": b(False), "solo": b(False), "master": rng(0.5), "video": {"opacity": rng(0.4), "effects": []}, "clips": [clip("Clouds"), clip(None), clip(None), clip(None)]},
+  {"name": s("Ambient clouds"), "bypassed": b(False), "solo": b(False), "master": rng(0.5), "video": {"opacity": rng(0.4), "effects": []}, "clips": [clip("Clouds", gen=True), clip(None), clip(None), clip(None)]},
 ]}
 BYID = {}
 def index(n):
