@@ -2,11 +2,10 @@
 # safe to edit or delete.
 order:
 - video/sourceparams/fuzzyness
-- video/sourceparams/distance
 - transport/controls/speed
-- video/sourceparams/size
-- video/sourceparams/grid
-- transport/controls/playmode
+- video/sourceparams/waves
+- video/sourceparams/frequency
+- video/sourceparams/mode
 - video/effects/transform/params/position x
 - video/effects/transform/params/position y
 - video/effects/transform/params/scale
@@ -20,8 +19,12 @@ order:
 - video/effects/transform/params/anchor z
 - transport/controls/playdirection
 - transport/controls/playmodeaway
-- video/sourceparams/speed
 - video/opacity
+- transport/controls/playmode
+- video/sourceparams/distance
+- video/sourceparams/size
+- video/sourceparams/grid
+- video/sourceparams/speed
 - video/sourceparams/amount
 - video/sourceparams/width
 - video/sourceparams/blend
@@ -29,9 +32,6 @@ order:
 - video/sourceparams/position x
 - video/sourceparams/position y
 - video/sourceparams/line width
-- video/sourceparams/waves
-- video/sourceparams/frequency
-- video/sourceparams/mode
 - video/sourceparams/direction
 - video/sourceparams/mirror
 - video/sourceparams/rotation

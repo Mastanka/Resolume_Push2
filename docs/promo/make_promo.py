@@ -1,4 +1,4 @@
-"""Render the 4 presentation images (1080x1350) into docs/promo/.
+"""Render the 5 presentation images (1080x1350) into docs/promo/. Needs `pip install segno` (QR code).
 
     python docs/promo/make_promo.py                 # composition from the running Arena
     python docs/promo/make_promo.py comp.json       # or from a saved GET /composition
@@ -22,6 +22,9 @@ import push_resolume_bridge as B  # noqa: E402
 
 W, H = 1080, 1350
 FONT = "Helvetica Neue"
+MONO = "Menlo"
+REPO = "https://github.com/Mastanka/Resolume_Push2"
+TOTAL = 5
 
 # --------------------------------------------------------------------------- #
 # Push 2 geometry, in the coordinates of PUSH2_LAYOUT.png (1393 x 1123)
@@ -208,6 +211,11 @@ def draw_push(ctx, ox, oy, s, hl, pads, display_surf, badges, labels=None):
 # --------------------------------------------------------------------------- #
 
 def page(path, no, title, subtitle, accent, hl, pads, disp_small, disp_big, badges, bullets, labels=None):
+    surf, ctx = header(no, title, subtitle, accent)
+    _page_body(surf, ctx, path, accent, hl, pads, disp_small, disp_big, badges, bullets, labels)
+
+
+def header(no, title, subtitle, accent):
     surf = cairo.ImageSurface(cairo.FORMAT_RGB24, W, H)
     ctx = cairo.Context(surf)
     g = cairo.LinearGradient(0, 0, 0, H)
@@ -224,11 +232,14 @@ def page(path, no, title, subtitle, accent, hl, pads, disp_small, disp_big, badg
     ctx.move_to(ax, 63); ctx.line_to(ax + 30, 63); ctx.stroke()
     ctx.move_to(ax + 22, 55); ctx.line_to(ax + 31, 63); ctx.line_to(ax + 22, 71); ctx.stroke()
     text(ctx, ax + 48, 70, "RESOLUME ARENA", (150, 150, 160), 20, True, spacing=2.5)
-    text(ctx, W - 60, 70, f"{no:02d} / 04", (110, 110, 120), 20, True, "right", spacing=2)
+    text(ctx, W - 60, 70, f"{no:02d} / {TOTAL:02d}", (110, 110, 120), 20, True, "right", spacing=2)
     text(ctx, 58, 138, title, (255, 255, 255), 66, True)
     ctx.set_source_rgb(*rgb(accent)); ctx.rectangle(60, 156, 70, 5); ctx.fill()
     text(ctx, 146, 164, subtitle, (190, 190, 198), 26)
+    return surf, ctx
 
+
+def _page_body(surf, ctx, path, accent, hl, pads, disp_small, disp_big, badges, bullets, labels):
     s = 880 / PUSH_W
     draw_push(ctx, (W - 880) / 2, 196, s, hl, pads, disp_small, badges, labels)
 
@@ -254,6 +265,108 @@ def page(path, no, title, subtitle, accent, hl, pads, disp_small, disp_big, badg
             x += text(ctx, x, y, part, (255, 255, 255) if bold else (185, 185, 195), 25, bold)
             x += 8 if bold else 0
         y += 50
+    surf.write_to_png(str(path))
+    print("wrote", path)
+
+
+def arrow(ctx, x0, x1, y, color):
+    ctx.set_source_rgb(*rgb(color)); ctx.set_line_width(3)
+    ctx.move_to(x0 + 10, y); ctx.line_to(x1 - 10, y); ctx.stroke()
+    for tip, d in ((x1 - 10, 1), (x0 + 10, -1)):                 # both ways
+        ctx.move_to(tip - 10 * d, y - 8); ctx.line_to(tip, y); ctx.line_to(tip - 10 * d, y + 8); ctx.stroke()
+
+
+def box(ctx, x0, y0, x1, y1, title, lines, color):
+    rrect(ctx, x0, y0, x1, y1, 16)
+    ctx.set_source_rgb(*rgb((24, 24, 30))); ctx.fill_preserve()
+    ctx.set_source_rgb(*rgb(color)); ctx.set_line_width(2.5); ctx.stroke()
+    text(ctx, (x0 + x1) / 2, y0 + 44, title, (255, 255, 255), 25, True, "center")
+    for k, ln in enumerate(lines):
+        text(ctx, (x0 + x1) / 2, y0 + 78 + 26 * k, ln, (170, 170, 180), 18, align="center")
+
+
+def page_how(path):
+    import segno
+    OR = (255, 120, 20)
+    surf, ctx = header(5, "HOW IT WORKS", "A small Python app between Push 2 and Resolume", OR)
+
+    # diagram
+    y0, y1 = 205, 385
+    box(ctx, 40, y0, 300, y1, "PUSH 2", ["pads, knobs, buttons", "960×160 display", "no Live needed"], (0, 190, 255))
+    box(ctx, 410, y0, 670, y1, "THE BRIDGE", ["Python, runs on your Mac", "one file + config.yaml", "draws the display"], OR)
+    box(ctx, 780, y0, 1040, y1, "RESOLUME", ["Arena 7", "built-in REST API", "your deck, unchanged"], (0, 255, 90))
+    arrow(ctx, 300, 410, 290, (200, 200, 210))
+    arrow(ctx, 670, 780, 290, (200, 200, 210))
+    text(ctx, 355, 272, "USB", (200, 200, 210), 17, True, "center")
+    text(ctx, 355, 318, "MIDI + screen", (140, 140, 150), 14, align="center")
+    text(ctx, 725, 272, "HTTP", (200, 200, 210), 17, True, "center")
+    text(ctx, 725, 318, "port 8080", (140, 140, 150), 14, align="center")
+    text(ctx, W / 2, 425, "Reads the composition 4× per second, sends clip triggers and parameter changes back.",
+         (170, 170, 180), 19, align="center")
+    text(ctx, W / 2, 452, "Your other MIDI controllers keep working in Resolume as before.",
+         (170, 170, 180), 19, align="center")
+
+    # commands
+    def section(y, label):
+        text(ctx, 40, y, label, (120, 120, 130), 16, True, spacing=2)
+
+    section(512, "RUN IT")
+    cy0, rows = 528, [
+        ("python push_resolume_bridge.py", "start the bridge"),
+        ("python push_resolume_bridge.py --sim", "browser simulator, no Push needed"),
+        ("python push_resolume_bridge.py --dump 3", "list layer 3's parameters"),
+        ("python push_resolume_bridge.py --dump 3 --clip 2", "same, for clip 2"),
+        ("python push_resolume_bridge.py --config show.yaml", "use another config file"),
+    ]
+    rrect(ctx, 40, cy0, W - 40, cy0 + 40 + 44 * len(rows), 14)
+    ctx.set_source_rgb(*rgb((18, 18, 22))); ctx.fill_preserve()
+    ctx.set_source_rgb(*rgb((55, 55, 62))); ctx.set_line_width(1.5); ctx.stroke()
+    for k, (cmd, note) in enumerate(rows):
+        y = cy0 + 50 + 44 * k
+        ctx.select_font_face(MONO, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL); ctx.set_font_size(19)
+        ctx.set_source_rgb(*rgb(OR)); ctx.move_to(64, y); ctx.show_text("$")
+        prog, _, args = cmd.partition(".py")
+        ctx.set_source_rgb(*rgb((235, 235, 240))); ctx.move_to(88, y); ctx.show_text(prog + ".py")
+        ctx.set_source_rgb(*rgb((255, 190, 120))); ctx.show_text(args)
+        text(ctx, W - 64, y, note, (130, 130, 140), 17, align="right")
+
+    # dependencies + QR
+    y = 868
+    section(y, "YOU NEED")
+    deps = [("macOS", " (tested on Apple Silicon), Python 3.9+"),
+            ("Resolume Arena 7", ", Webserver + REST API on"),
+            ("Ableton Push 2", ", Ableton Live closed"),
+            ("brew install", " libusb cairo"),
+            ("pip install -r requirements.txt", ""),
+            ("", "push2-python, pycairo, numpy, requests, PyYAML")]
+    for k, (b, r) in enumerate(deps):
+        yy = y + 50 + 48 * k
+        if b or k < 5:
+            ctx.arc(52, yy - 8, 5, 0, 2 * math.pi); ctx.set_source_rgb(*rgb(OR)); ctx.fill()
+        x = 70
+        if b:
+            x += text(ctx, x, yy, b, (255, 255, 255), 22, True)
+        text(ctx, x, yy, r, (175, 175, 185), 22 if b else 18)
+
+    # QR
+    qr = segno.make(REPO, error="m")
+    matrix = [list(row) for row in qr.matrix]
+    n = len(matrix)
+    pad = 26                                                     # quiet zone for scanners
+    size = 222
+    qx, qy = W - 40 - pad - size, 900
+    rrect(ctx, qx - pad, qy - pad, qx + size + pad, qy + size + pad, 16)
+    ctx.set_source_rgb(1, 1, 1); ctx.fill()
+    cell = size / n
+    ctx.set_source_rgb(*rgb((10, 10, 14)))
+    for r, row in enumerate(matrix):
+        for c, v in enumerate(row):
+            if v:
+                ctx.rectangle(qx + c * cell, qy + r * cell, cell + 0.4, cell + 0.4)
+    ctx.fill()
+    text(ctx, qx + size / 2, qy + size + 66, "SOURCE ON GITHUB", (255, 255, 255), 17, True, "center", spacing=2)
+    text(ctx, qx + size / 2, qy + size + 92, REPO.replace("https://", ""), (160, 160, 170), 15, align="center")
+
     surf.write_to_png(str(path))
     print("wrote", path)
 
@@ -374,6 +487,8 @@ def main():
           (2, "8 knobs| one master per layer, top layer first"),
           (3, "Master knob| composition master"),
           (4, "TAP TEMPO| sets the BPM,  |Tempo knob| fine-tunes it")])
+
+    page_how(HERE / "05_how_it_works.png")
 
 
 if __name__ == "__main__":
