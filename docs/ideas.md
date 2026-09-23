@@ -6,10 +6,10 @@ M ≈ a session, L = more than one session.
 | ID | Feature | What it does | Effort | Status |
 |---|---|---|---|---|
 | F1 | `--check` mode | Tries each Resolume API call on a spare test layer and prints OK / FAIL | S | done |
-| F2 | Blackout | One button: composition master to 0, press again to restore | S | |
-| F3 | Flash / bump | Hold a button, that layer goes to 100 % until released | S | |
-| F4 | Scene launch | The 8 buttons right of the pads launch a whole column | S | |
-| F5 | Mute / solo in MIX | Buttons below the display: bypass / solo the layer under each knob | S | |
+| F2 | Blackout | One button: composition master to 0, press again to restore | S | done |
+| F3 | Flash / bump | Hold a button, that layer goes to 100 % until released | S | done |
+| F4 | Scene launch | The 8 buttons right of the pads launch a whole column | S | done |
+| F5 | Mute / solo in MIX | Buttons below the display: bypass / solo the layer under each knob | S | done |
 | F6 | Pad pressure | Hit harder = brighter launch; held pressure controls the layer master | M | |
 | F7 | Touch strip | Crossfader, global speed or composition master | S–M | |
 | F8 | Resolume native tap + resync | Tap also aligns the beat phase, not only the BPM | S | |

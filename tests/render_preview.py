@@ -19,6 +19,13 @@ br.sender.start()
 threading.Thread(target=br.poll_loop, daemon=True).start()
 time.sleep(0.6)
 
+
+
+def shot(name):
+    _, surf = B.render(br.snapshot(), bgr=False)
+    surf.write_to_png(str(HERE / f"preview_{name}.png"))
+
+
 br.pad_pressed((7, 0)); br.pad_released((7, 0))   # select layer 1, clip 1
 br.touched = 1
 time.sleep(0.3)
@@ -42,9 +49,16 @@ br.button("Mix", True)                         # mix mode
 br.touched = None
 _, surf = B.render(br.snapshot(), bgr=False)
 surf.write_to_png(str(HERE / "preview_mix.png"))
+br.toggle_layer(2, "bypassed"); br.toggle_layer(3, "solo")
+shot("mix_mute_solo")
+br.toggle_layer(2, "bypassed"); br.toggle_layer(3, "solo")
 br.button("Mix", True)
+
+br.toggle_blackout()
+shot("blackout")
+br.toggle_blackout()
 
 br.online = False
 _, surf = B.render(br.snapshot(), bgr=False)
 surf.write_to_png(str(HERE / "preview_offline.png"))
-print("wrote", HERE / "preview_auto.png", "preview_mix/move/color/offline.png")
+print("wrote", HERE / "preview_auto.png", "and the other preview_*.png")

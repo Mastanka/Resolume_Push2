@@ -116,8 +116,8 @@ def render(snap, bgr=True):
                 col((35, 35, 35)); ctx.rectangle(x, 6, 1, 86); ctx.fill()
             if k >= len(snap["mix"]):
                 continue
-            L, name, value, frac, missing = snap["mix"][k]
-            accent = LAYER_RGB[(L - 1) % 8]
+            L, name, value, frac, missing, muted, solo = snap["mix"][k]
+            accent = (90, 90, 90) if muted else LAYER_RGB[(L - 1) % 8]
             col(accent); ctx.rectangle(x + 8, 6, 104, 3); ctx.fill()
             col((255, 90, 90) if missing else (170, 170, 170)); font(15)
             say(x + 8, 28, name, 104)
@@ -127,6 +127,9 @@ def render(snap, bgr=True):
             col(accent); ctx.rectangle(x + 8, 72, 104 * frac, 8); ctx.fill()
             col((110, 110, 110)); font(12)
             say(x + 8, 93, f"L{L}")
+            if muted or solo:
+                col((255, 60, 60) if muted else (255, 210, 0)); font(12, True)
+                say(x + 112, 93, "MUTED" if muted else "SOLO", right=True)
 
         col((60, 60, 60)); ctx.rectangle(0, 100, W, 1); ctx.fill()
         col((255, 255, 255)); font(18, True)
@@ -187,6 +190,13 @@ def render(snap, bgr=True):
         bottom = snap["touched_path"] or (f"LAYERS {snap['layers'][0]}–{snap['layers'][1]}   ·   "
                                           f"COLS {snap['cols'][0]}–{snap['cols'][1]}")
         say(950, 150, bottom, 360, right=True)
+
+    if snap["online"] and snap.get("blackout"):
+        col((150, 0, 0)); ctx.rectangle(0, 101, W, 59); ctx.fill()
+        col((255, 255, 255)); font(26, True)
+        say(24, 140, "BLACKOUT")
+        col((255, 200, 200)); font(15)
+        say(950, 138, "press Stop Clip to restore", right=True)
 
     surf.flush()
     stride = surf.get_stride() // 2

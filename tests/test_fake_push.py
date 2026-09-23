@@ -160,6 +160,56 @@ time.sleep(0.4)
 assert bg() == "#ff0000ff" and colr() == "#0000ffff", (bg(), colr())
 fire("on_button_pressed", "Upper Row 1")
 
+# --- F2 blackout: Stop Clip → composition master 0, again → back
+m0 = rest.composition()["master"]["value"]
+fire("on_button_pressed", "Stop")
+time.sleep(0.6)
+assert rest.composition()["master"]["value"] == 0.0, "blackout must zero the master"
+assert ("btn", ("Stop", "red")) in calls, "Stop Clip must blink red in blackout"
+fire("on_button_pressed", "Stop")
+time.sleep(0.4)
+assert rest.composition()["master"]["value"] == m0, "blackout off must restore the master"
+
+# --- F3 flash: button right of pad row 6 (= layer 2) → 100 % while held
+lm = lambda L: rest.composition()["layers"][L - 1]["master"]["value"]
+before2 = lm(2)
+fire("on_button_pressed", "1/4t")
+time.sleep(0.4)
+assert lm(2) == 1.0, "flash must set the layer master to 1"
+fire("on_button_released", "1/4t")
+time.sleep(0.4)
+assert lm(2) == before2, "flash release must restore the layer master"
+
+# --- F4 column launch: Play + Lower Row 1 → column 1
+fire("on_button_pressed", "Play")
+time.sleep(0.2)
+fire("on_button_pressed", "Lower Row 1"); fire("on_button_released", "Lower Row 1")
+time.sleep(0.2)
+fire("on_button_released", "Play")
+time.sleep(0.4)
+assert rest.composition()["columns"][0]["connected"]["value"] == "Connected", "column 1 not launched"
+assert ("btn", ("Lower Row 1", "green")) in calls or ("btn", ("Lower Row 1", "dark_gray")) in calls
+
+# --- F5 mute / solo
+flag = lambda L, k: rest.composition()["layers"][L - 1][k]["value"]
+fire("on_button_pressed", "Mute")
+fire("on_pad_pressed", 60, (7, 0), 100); fire("on_pad_released", 60, (7, 0), 0)   # layer 1
+fire("on_button_released", "Mute")
+time.sleep(0.4)
+assert flag(1, "bypassed") is True, "Mute + pad must mute the layer"
+assert any(n == "pad" and a[0][0] == 7 and a[1] == "dark_gray" for n, a in calls), "muted layer pads not greyed"
+fire("on_button_pressed", "Solo")
+fire("on_pad_pressed", 60, (6, 1), 100); fire("on_pad_released", 60, (6, 1), 0)   # layer 2
+fire("on_button_released", "Solo")
+time.sleep(0.4)
+assert flag(2, "solo") is True, "Solo + pad must solo the layer"
+fire("on_button_pressed", "Mix")                   # MIX: K1 = layer 3, K2 = layer 2, K3 = layer 1
+fire("on_button_pressed", "Lower Row 3")           # unmute layer 1
+fire("on_button_pressed", "Solo"); fire("on_button_pressed", "Lower Row 2"); fire("on_button_released", "Solo")
+time.sleep(0.4)
+assert flag(1, "bypassed") is False and flag(2, "solo") is False, "MIX Lower Row mute / Solo+Lower Row solo"
+fire("on_button_pressed", "Mix")
+
 counts = {}
 for name, _ in calls:
     counts[name] = counts.get(name, 0) + 1

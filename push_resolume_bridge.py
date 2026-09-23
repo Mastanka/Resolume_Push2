@@ -18,6 +18,9 @@ Color     Upper Row 2 = COLOR view for the selected clip: Track 1-3 = R/G/B, 4-6
 Order     Hold Convert + touch a knob, go to any page, touch the target knob -> the two
           params swap. The order is saved per param type in pins.yaml.
 Tempo     Tap Tempo = tap BPM, Tempo encoder = BPM +-1 (Shift +-0.1).
+Live      Stop Clip = blackout (composition master 0 / back). Buttons right of the pads = flash
+          that row's layer to 100 % while held. Play + Lower Row = launch the column above.
+          Mute / Solo + pad = mute / solo that layer; in MIX the Lower Row mutes (Solo held = solo).
 Buttons   Up/Down scroll layers, Left/Right scroll columns (Shift = jump by 8).
           Page < / Page > flip parameter pages when a layer has more than 8 slots.
 
@@ -67,6 +70,11 @@ STOP_BUTTON = "Record"                      # B_2: hold + pad = stop layer
 MOVE_BUTTON = "Convert"                     # B_4: hold + touch knob = move param
 TAP_BUTTON = "Tap Tempo"                    # B_5
 TEMPO_ENCODER = "Tempo Encoder"             # K10
+BLACKOUT_BUTTON = "Stop"                    # "Stop Clip": composition master 0 / back
+MUTE_BUTTON = "Mute"                        # hold + pad = mute (bypass) that layer
+SOLO_BUTTON = "Solo"                        # hold + pad = solo that layer
+SCENE_BUTTONS = ["1/32t", "1/32", "1/16t", "1/16", "1/8t", "1/8", "1/4t", "1/4"]  # = pad rows, top first
+BLINK = 0.25          # s on / off for blinking LEDs
 PARAMS_BUTTON = "Upper Row 1"               # BU1
 COLOR_BUTTON = "Upper Row 2"                # BU2
 MENU_BUTTONS = {PARAMS_BUTTON: "params", COLOR_BUTTON: "color"}
@@ -145,6 +153,12 @@ class Bridge:
         self.stop_held = False     # B_2
         self.stop_column = cfg.get("stop_column")
         self.convert_held = False  # B_4
+        self.mute_held = False
+        self.solo_held = False
+        self.blackout = None       # composition master before blackout, None = not blacked out
+        self.blackout_t = 0.0
+        self.flash = {}            # layer -> master value before the flash button was pressed
+        self.col_pressed = set()   # columns we sent a "down" for
         self.move_src = None       # absolute slot index being moved
         self.taps = []
         self.tap_flash = 0.0
@@ -186,6 +200,7 @@ class Bridge:
                     print(f"[resolume] connected — {len(comp.get('layers') or [])} layers")
                 with self.lock:
                     self.comp, self.online = comp, True
+                    self._check_blackout()
             except Exception as e:
                 if self.online or not getattr(self, "_warned_offline", False):
                     print(f"[resolume] not reachable at {self.rest.url} ({type(e).__name__})")
@@ -193,6 +208,13 @@ class Bridge:
                 with self.lock:
                     self.online = False
             time.sleep(self.poll_interval)
+
+    def _check_blackout(self):
+        """Master raised by someone else (Launch Control, mouse) = no longer blacked out."""
+        p = master_param(self.comp)
+        if self.blackout is not None and p and time.time() - self.blackout_t > 1.0 \
+                and float(self.value_of(p) or 0) > 0.01:
+            self.blackout = None
 
     # ---- parameter slots ------------------------------------------------ #
     def layer_spec(self, L):
@@ -326,6 +348,7 @@ class Bridge:
         with self.lock:
             if self.mode == "mix":
                 p = master_param(self.comp)
+                self.blackout = None
             else:
                 p = resolve_node(self.layer_json(self.sel[0]), "video/opacity")
             if is_param(p):
@@ -450,6 +473,56 @@ class Bridge:
         if self.touched == idx:
             self.touched = None
 
+    # ---- live controls: blackout, flash, mute / solo, columns ------------------ #
+    def toggle_blackout(self):
+        with self.lock:
+            p = master_param(self.comp)
+            if p is None:
+                return
+            if self.blackout is None:
+                self.blackout, self.blackout_t = float(self.value_of(p) or 0), time.time()
+                self._set(p["id"], 0.0, {"value": 0.0})
+            else:
+                self._set(p["id"], self.blackout, {"value": self.blackout})
+                self.blackout = None
+
+    def flash_layer(self, row, down):
+        L = self.layer_offset + (8 - row)
+        with self.lock:
+            p = master_param(self.layer_json(L))
+            if p is None:
+                return
+            if down and L not in self.flash:
+                self.flash[L] = float(self.value_of(p) or 0)
+                self._set(p["id"], 1.0, {"value": 1.0})
+            elif not down and L in self.flash:
+                v = self.flash.pop(L)
+                self._set(p["id"], v, {"value": v})
+
+    def layer_flag(self, L, key):
+        """layer.bypassed / layer.solo param (or None)."""
+        p = (self.layer_json(L) or {}).get(key)
+        return p if is_param(p) else None
+
+    def toggle_layer(self, L, key):
+        p = self.layer_flag(L, key)
+        if p:
+            v = not bool(self.value_of(p))
+            self._set(p["id"], v, {"value": v})
+
+    def layer_hidden(self, L):
+        """Muted, or another layer is soloed."""
+        mute = self.layer_flag(L, "bypassed")
+        if mute and self.value_of(mute):
+            return True
+        solos = [l for l in range(1, len(self.layers()) + 1)
+                 if self.layer_flag(l, "solo") and self.value_of(self.layer_flag(l, "solo"))]
+        return bool(solos) and L not in solos
+
+    def column_state(self, n):
+        cols = (self.comp or {}).get("columns") or []
+        return text(cols[n - 1].get("connected"), "Empty") if 1 <= n <= len(cols) else "Empty"
+
     def pad_to_cell(self, i, j):
         return self.layer_offset + (8 - i), self.col_offset + j + 1
 
@@ -458,6 +531,9 @@ class Bridge:
         with self.lock:
             clip = self.clip_json(L, C)
             if clip is None:
+                return
+            if self.mute_held or self.solo_held:
+                self.toggle_layer(L, "bypassed" if self.mute_held else "solo")
                 return
             if self.stop_held:
                 if self.stop_column:
@@ -496,6 +572,25 @@ class Bridge:
         if name == STOP_BUTTON:
             self.stop_held = down
             return
+        if name == MUTE_BUTTON:
+            self.mute_held = down
+            return
+        if name == SOLO_BUTTON:
+            self.solo_held = down
+            return
+        if name in SCENE_BUTTONS:
+            self.flash_layer(SCENE_BUTTONS.index(name), down)
+            return
+        if name in LOWER_ROW and (self.play_held or not down):
+            n = self.col_offset + LOWER_ROW.index(name) + 1
+            if down:
+                self.col_pressed.add(n)
+                self.sender.column(n, True)
+                return
+            if n in self.col_pressed:
+                self.col_pressed.discard(n)
+                self.sender.column(n, False)
+            return
         if name == MOVE_BUTTON:
             self.convert_held = down
             if down and self.move_src is not None:
@@ -505,6 +600,9 @@ class Bridge:
             return
         if name == TAP_BUTTON:
             self.tap()
+            return
+        if name == BLACKOUT_BUTTON:
+            self.toggle_blackout()
             return
         jump = 8 if self.shift else 1
         with self.lock:
@@ -529,6 +627,11 @@ class Bridge:
             elif name in MENU_BUTTONS:
                 self.mode = MENU_BUTTONS[name]
                 self.move_src = None
+            elif name in LOWER_ROW and self.mode == "mix":
+                layers = self.mix_layers()
+                k = LOWER_ROW.index(name)
+                if k < len(layers):
+                    self.toggle_layer(layers[k], "solo" if self.solo_held else "bypassed")
             elif name in LOWER_ROW and self.mode == "color":
                 self.set_palette_color(LOWER_ROW.index(name))
             elif name in LOWER_ROW and self.mode == "params":
@@ -552,11 +655,40 @@ class Bridge:
             for b, m in MENU_BUTTONS.items():
                 out[b] = "white" if self.mode == m else "dark_gray"
             n_sw = len(self.swatches())
+            blink = int(time.time() / BLINK) % 2 == 0
+            mix_layers = self.mix_layers()
             for k, b in enumerate(LOWER_ROW):
-                if self.mode == "color":
+                if self.play_held:                          # column launch view
+                    st = self.column_state(self.col_offset + k + 1)
+                    out[b] = {"Connected": "green", "Disconnected": "dark_gray"}.get(st, "black")
+                elif self.mode == "color":
                     out[b] = f"P{k}" if k < n_sw else "black"
+                elif self.mode == "mix":
+                    if k >= len(mix_layers):
+                        out[b] = "black"
+                        continue
+                    L = mix_layers[k]
+                    solo, mute = self.layer_flag(L, "solo"), self.layer_flag(L, "bypassed")
+                    if self.solo_held:
+                        out[b] = "yellow" if solo and self.value_of(solo) else "dark_gray"
+                    elif mute and self.value_of(mute):
+                        out[b] = "red"
+                    else:
+                        out[b] = "yellow" if solo and self.value_of(solo) else f"L{(L - 1) % 8}"
                 else:
                     out[b] = "black" if k >= pages else ("white" if k == self.page else "dark_gray")
+            for i, b in enumerate(SCENE_BUTTONS):
+                L = self.layer_offset + (8 - i)
+                out[b] = ("black" if self.layer_json(L) is None
+                          else f"L{(L - 1) % 8}" if L in self.flash else f"L{(L - 1) % 8}_dim")
+            all_l = range(1, len(self.layers()) + 1)
+            any_mute = any(self.layer_flag(l, "bypassed") and self.value_of(self.layer_flag(l, "bypassed"))
+                           for l in all_l)
+            any_solo = any(self.layer_flag(l, "solo") and self.value_of(self.layer_flag(l, "solo"))
+                           for l in all_l)
+            out[MUTE_BUTTON] = "white" if self.mute_held else ("red" if any_mute else "dark_gray")
+            out[SOLO_BUTTON] = "white" if self.solo_held else ("yellow" if any_solo else "dark_gray")
+            out[BLACKOUT_BUTTON] = ("red" if blink else "black") if self.blackout is not None else "dark_gray"
             return out
 
     def pad_colors(self):
@@ -573,6 +705,8 @@ class Bridge:
                         k = (L - 1) % 8
                         if (L, C) == self.sel:
                             color = "white" if live else ("light_gray" if state != "Empty" else "dark_gray")
+                        elif state != "Empty" and self.layer_hidden(L):   # muted / not soloed
+                            color = "light_gray" if live else "dark_gray"
                         elif live:
                             color = f"L{k}"
                         elif state != "Empty":
@@ -601,7 +735,9 @@ class Bridge:
                 lj = self.layer_json(ml)
                 p = master_param(lj)
                 txt, frac = fmt_value(p, self.value_of(p), {}) if p else ("n/a", 0.0)
-                mix.append((ml, text(lj.get("name")) or f"Layer {ml}", txt, frac, p is None))
+                mute, solo = self.layer_flag(ml, "bypassed"), self.layer_flag(ml, "solo")
+                mix.append((ml, text(lj.get("name")) or f"Layer {ml}", txt, frac, p is None,
+                            bool(mute and self.value_of(mute)), bool(solo and self.value_of(solo))))
             cp = master_param(self.comp)
             tp = self.tempo_param()
             move = None
@@ -620,6 +756,7 @@ class Bridge:
                              "hex": rgba_to_hex(rgba)[:7].upper(),
                              "knobs": [(lbl, vals[i]) for i, (lbl, *_rest) in enumerate(COLOR_KNOBS)]}
             return {
+                "blackout": self.blackout is not None,
                 "color": color,
                 "bpm": f"{float(self.value_of(tp) or 0):.1f} BPM" if tp else "",
                 "move": move,

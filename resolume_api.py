@@ -167,6 +167,11 @@ class Resolume:
     def select_clip(self, layer, column):
         self.session.post(f"{self.api}/composition/layers/{layer}/clips/{column}/select", timeout=1)
 
+    def connect_column(self, column, down):
+        self.session.post(f"{self.api}/composition/columns/{column}/connect",
+                          data=json.dumps(bool(down)),
+                          headers={"Content-Type": "application/json"}, timeout=1)
+
     def clear_layer(self, layer):
         self.session.post(f"{self.api}/composition/layers/{layer}/clear", timeout=1)
 
@@ -193,6 +198,10 @@ class Sender(threading.Thread):
 
     def select(self, layer, column):
         self.triggers.put((self.rest.select_clip, (layer, column)))
+        self.wake.set()
+
+    def column(self, column, down):
+        self.triggers.put((self.rest.connect_column, (column, down)))
         self.wake.set()
 
     def clear(self, layer):
