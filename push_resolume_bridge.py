@@ -947,7 +947,7 @@ def render(snap, bgr=True):
         say(114, 151, f"L{snap['L']} C{snap['C']}   {snap['clip_name'] or '—'}", 520)
         col((140, 140, 140)); font(13)
         say(950, 127, snap["bpm"], right=True)
-        say(950, 150, "FINE" if snap["shift"] else "BD1–8 = palette", right=True)
+        say(950, 150, "FINE" if snap["shift"] else "PALETTE BELOW", right=True)
     elif snap["mode"] == "mix":
         for k in range(8):
             x = k * 120
@@ -1012,7 +1012,7 @@ def render(snap, bgr=True):
             font(20, True)
             say(28, 130, "SELECT NEW POSITION")
             col((200, 200, 200)); font(15)
-            say(28, 151, f"Moving {mv['label']}  (page {mv['page'] + 1}, K{mv['col'] + 1})"
+            say(28, 151, f"Moving {mv['label']}  (page {mv['page'] + 1}, knob {mv['col'] + 1})"
                          "   ·   touch it again or Convert = cancel", 560)
         else:
             col(accent); ctx.rectangle(10, 110, 8, 42); ctx.fill()

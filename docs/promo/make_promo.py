@@ -339,9 +339,9 @@ def main():
          pads(), small, big,
          badges=[(222, 259, 1, YE), (240, 55, 2, YE), (232, 395, 3, YE), (-6, 478, 4, YE)],
          labels={f"Lower Row {k + 1}": f"PAGE {k + 1}" for k in range(8)},
-         bullets=[(1, "PARAMS| shows the clip's parameters with live values"),
-          (2, "K1–K8| control them, hold Shift for fine steps"),
-          (3, "BD1–BD8| jump between parameter pages"),
+         bullets=[(1, "PARAMS button| shows the clip's parameters, live"),
+          (2, "8 knobs| control them, hold Shift for fine steps"),
+          (3, "Page 1, Page 2…| buttons switch between pages"),
           (4, "Hold CONVERT + touch a knob| to move a parameter")])
 
     # 3 — COLORS
@@ -358,10 +358,10 @@ def main():
     page(HERE / "03_colors.png", 3, "COLORS", "Dial in clip colour by hand", MA,
          hl, pads(), d, d,
          [(COLS[1] + 48, 88, 1, MA), (240, 55, 2, MA), (COLS[7] + 50, 104, 3, MA), (232, 395, 4, MA)],
-         [(1, "BU2| opens COLOR for the selected clip"),
-          (2, "K1–K3| Red / Green / Blue,  |K4–K6| Hue / Sat / Brightness"),
-          (3, "K8| picks the colour: Color, BG Color, Colorize…"),
-          (4, "BD1–BD8| Resolume's palette, one press to switch")])
+         [(1, "COLOR button| opens colour control for the clip"),
+          (2, "Knobs| Red / Green / Blue  +  Hue / Sat / Brightness"),
+          (3, "Last knob| picks the colour: Color, BG Color…"),
+          (4, "Palette| buttons, one press for a preset colour")])
 
     # 4 — MIX & TEMPO
     br.mode = "mix"
@@ -370,10 +370,10 @@ def main():
          {"Mix": GR, "K11": GR, "K10": YE, "Tap Tempo": YE, **{f"K{k}": GR for k in range(1, 9)}},
          pads(), d, d,
          [(1334, 170, 1, GR), (240, 55, 2, GR), (1238, 55, 3, GR), (-6, 90, 4, YE)],
-         [(1, "MIX| opens the mixer"),
-          (2, "K1–K8| layer masters, top layer first"),
-          (3, "K11| composition master"),
-          (4, "TAP TEMPO| sets the BPM,  |K10| fine-tunes it")])
+         [(1, "MIX button| opens the mixer"),
+          (2, "8 knobs| one master per layer, top layer first"),
+          (3, "Master knob| composition master"),
+          (4, "TAP TEMPO| sets the BPM,  |Tempo knob| fine-tunes it")])
 
 
 if __name__ == "__main__":

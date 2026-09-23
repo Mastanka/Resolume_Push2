@@ -1,9 +1,37 @@
 # Param order for auto layers (first = K1 on page 1). Written by the bridge;
 # safe to edit or delete.
 order:
-- video/opacity
-- video/effects/transform/params/position x
 - video/sourceparams/fuzzyness
+- video/sourceparams/distance
+- transport/controls/speed
+- video/sourceparams/size
+- video/sourceparams/grid
+- transport/controls/playmode
+- video/effects/transform/params/position x
+- video/effects/transform/params/position y
+- video/effects/transform/params/scale
+- video/effects/transform/params/scale w
+- video/effects/transform/params/scale h
+- video/effects/transform/params/rotation x
+- video/effects/transform/params/rotation y
+- video/effects/transform/params/rotation z
+- video/effects/transform/params/anchor x
+- video/effects/transform/params/anchor y
+- video/effects/transform/params/anchor z
+- transport/controls/playdirection
+- transport/controls/playmodeaway
+- video/sourceparams/speed
+- video/opacity
 - video/sourceparams/amount
 - video/sourceparams/width
+- video/sourceparams/blend
+- video/sourceparams/radius
+- video/sourceparams/position x
+- video/sourceparams/position y
+- video/sourceparams/line width
+- video/sourceparams/waves
+- video/sourceparams/frequency
+- video/sourceparams/mode
+- video/sourceparams/direction
+- video/sourceparams/mirror
 - video/sourceparams/rotation
