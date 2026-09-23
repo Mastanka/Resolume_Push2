@@ -20,6 +20,8 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 |---|---|
 | `push_resolume_bridge.py` | Entry point: constants, `Bridge` (state + input), `run()`, `--dump`, config |
 | `resolume_api.py` | Resolume JSON helpers (`resolve_node`, `walk`, colour helpers), REST client, `Sender` |
+| `resolume_check.py` | `--check LAYER`: tries every Resolume call on a spare layer, undoes it, prints OK/FAIL |
+| `colors.yaml` | Own COLOR palette (Shift + BD saves), Štefan's show data |
 | `display.py` | `render()`: draws a `Bridge.snapshot()` on the 960×160 display, `LAYER_RGB` |
 | `config.yaml` | Resolume host/port, grid offsets, encoder steps, per-layer parameter slots |
 | `pins.yaml` | Param order for auto layers, written by the bridge (Convert move). Štefan's show data |
@@ -58,21 +60,29 @@ python push_resolume_bridge.py --dump 3   # list parameter paths for layer 3 (fo
 
 | Label | push2-python name | Current use |
 |---|---|---|
-| K1–K8 | `Track1 Encoder`…`Track8 Encoder` | Param slots / layer masters in MIX |
+| K1–K8 | `Track1 Encoder`…`Track8 Encoder` | Menu knobs (params / colour / layer masters / FX amount) |
 | K9 | `Swing Encoder` | – |
 | K10 | `Tempo Encoder` | BPM ±1 (Shift ±0.1) |
-| K11 | `Master Encoder` | Selected layer opacity / composition master in MIX |
-| BU1–BU8 | `Upper Row 1..8` (above display) | Main menus. BU1 = PARAMS, BU2 = COLOR |
-| BD1–BD8 | `Lower Row 1..8` (below display) | Sub-menu of current menu. PARAMS: page 1–8, COLOR: palette |
-| B_1 | `Play` (bottom-left) | Hold + pad = launch clip (lit green while held) |
-| B_2 | `Record` (above B_1) | Hold + pad = stop layer (lit red while held) |
+| K11 | `Master Encoder` | Selected layer opacity / composition master in MIX (ends blackout) |
+| BU1–BU8 | `Upper Row 1..8` (above display) | Menus: BU1 PARAMS, BU2 COLOR, BU3 FX |
+| BD1–BD8 | `Lower Row 1..8` (below display) | Context row: PARAMS pages, COLOR palette (Shift = save), MIX mute (Solo held = solo), FX on/off. Play held: launch column above |
+| B_1 | `Play` (bottom-left) | Hold + pad = launch clip; hold + BD = launch column (lit green) |
+| B_2 | `Record` (above B_1) | Hold + pad = stop layer (lit red) |
 | B_3 | `Mix` (right of display) | MIX menu toggle |
 | B_4 | `Convert` (left column) | Hold + touch knob = pick param to move |
-| B_5 | `Tap Tempo` (top-left) | Tap BPM |
+| B_5 | `Tap Tempo` (top-left) | Resolume's tap; Shift = resync. Flashes on the beat |
+| – | `Metronome` | Pad pulse on/off |
+| – | `Stop` ("Stop Clip") | Blackout toggle (blinks red) |
+| – | `Mute` / `Solo` | Hold + pad = mute (layer `bypassed`) / solo that layer |
+| – | `Master` (right of BD row) | COLOR on the composition's Colorize (master colour) |
+| – | `Duplicate` | COLOR: hold + pad / scene button / BD = paste colour to clip / layer / column |
+| – | `1/32t` … `1/4` (right of pads) | Flash: hold = that row's layer master 100 % |
 
 ## Pads
 
-Plain press = select only (also `POST …/clips/{C}/select` so Resolume's clip panel follows). Play (B_1) held + pad = launch. Record (B_2) held + pad = stop layer.
+Plain press = select only (also `POST …/clips/{C}/select` so Resolume's clip panel follows).
+Modifiers: Play = launch, Record = stop layer, Mute / Solo = toggle layer, Duplicate (COLOR) = paste.
+Playing pads pulse between full and `L{k}_mid` on the beat; muted / non-solo layers turn grey.
 
 ## Modes
 
@@ -82,22 +92,31 @@ Plain press = select only (also `POST …/clips/{C}/select` so Resolume's clip p
   auto layers only (`Bridge.swap`, sort in `slots()`). Turns are ignored while moving.
 - **color** (BU2): selected clip's `ParamColor`s (clip `video/**`, then layer `video/effects`).
   K1–K3 R/G/B, K4–K6 H/S/B (`hsv_cache` keeps hue at 0 saturation), K8 = which colour param.
-  BD1–BD8 = the param's `palette` (8 hex colours from Resolume), LEDs via palette slots 80–87.
-  Values are `#rrggbbaa`; writes keep alpha.
+  BD1–BD8 = own palette from `colors.yaml` (Shift + BD saves), else the param's Resolume `palette`;
+  LEDs via palette slots 80–87. Values are `#rrggbbaa`; writes keep alpha.
+  `color_target = "master"` (Master button): composition `video/effects` colour; K7 = that effect's
+  Opacity, K8 = on/off (`bypassed`). Paste (`paste_color`) matches the param by `color_label()`.
+- **fx** (BU3): `fx_list()` = clip, layer, composition effects; K = effect `Opacity` param, BD = `bypassed`.
+  Page ◀▶ = `fx_page`.
 - **mix** (B_3 toggles, B_3 lit white): K1–K8 = `layer.master` (fallback `video/opacity`),
-  K1 = top visible layer, going down; K11 = `composition.master`. Display shows layer names +
-  values above, composition master bar centred below the line.
+  K1 = top visible layer, going down; K11 = `composition.master`. BD = mute, Solo + BD = solo.
+- Always: blackout (`Bridge.blackout` = saved master), flash (`Bridge.flash`), beat clock
+  (`beat_anchor` from taps / resync + Resolume BPM → `beat()`), short messages (`note_msg`).
 
 ## Architecture
 
-Four threads around one `Bridge` object guarded by `Bridge.lock` (RLock):
+Five threads around one `Bridge` object guarded by `Bridge.lock` (RLock):
 
 ```
 push2-python MIDI thread ──► Bridge.pad_pressed / turn / button   (mutate state only, no MIDI out)
-poll thread               ──► GET /composition every 0.25 s → Bridge.comp
-Sender thread             ──► clip triggers (ordered queue) + param PUTs (coalesced, latest wins)
-main thread (run loop)    ──► pad LEDs (diffed vs cache) + display frame at 20 fps
+WebSocket thread         ──► composition on connect → set_comp; parameter_update → on_param (patch by id)
+poll thread              ──► GET /composition → set_comp; every 0.25 s, or every ws_refresh (5 s) while WS is live
+Sender thread            ──► ordered queue (clip/column triggers, events) + param PUTs (coalesced, latest wins)
+main thread (run loop)   ──► LEDs at 50 Hz (diffed vs cache, beat edges) + display frame at display_fps
 ```
+
+- `ResolumeWS` subscribes by id to `Bridge.desired_ids()` (states, masters, tempo, selected clip/layer,
+  composition effects), re-synced every 0.5 s. `Bridge.index` = id → node, rebuilt by `set_comp`.
 
 - **All MIDI output (pad/button colours, palette) happens in the main thread** — push2-python/mido
   requirement. Callbacks only change state.
@@ -124,7 +143,12 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
   The release is required, otherwise re-triggering the same clip fails; also makes Piano clips work.
 - `PUT /parameter/by-id/{id}` with `{"value": x}`.
 - Clip state: `clip.connected.value` ∈ `Empty, Disconnected, Previewing, Connected, Connected & previewing`.
-- WebSocket at `ws://host:8080/api/v1` supports subscriptions — **not used yet** (see backlog).
+- WebSocket `ws://host:8080/api/v1` (checked on Arena 7.23): on connect sends the full composition
+  (no `type`), then `sources_update`, `effects_update`. `{"action": "subscribe", "parameter":
+  "/parameter/by-id/<id>"}` → `parameter_subscribed` then `parameter_update` messages (full param +
+  `path`). Subscribing by path returns `"Invalid parameter path"`.
+- `python push_resolume_bridge.py --check LAYER` (`resolume_check.py`) tests every call above on a spare
+  layer and undoes it. **Run it on Arena and update this section with the results.**
 
 **push2-python** (ffont/push2-python):
 - Only the **first** registered handler per action is called (`trigger_action` calls `func[0]`).
@@ -133,7 +157,8 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
 - Display frames: numpy uint16 (960×160 transposed). `FRAME_FORMAT_BGR565` is fastest; `render()`
   draws with cairo RGB16_565 and swaps R/B at draw time so no conversion is needed.
 - Custom pad colours: `set_color_palette_entry(idx, name, rgb=..., allow_overwrite=True)` then
-  `reapply_color_palette()`. We use indices 64–79 (`L0..L7`, `L0_dim..L7_dim`). Re-apply after every
+  `reapply_color_palette()`. We use 64–79 (`L0..L7`, `L0_dim..L7_dim`), 80–87 (`P0..P7` palette
+  swatches), 88–95 (`L0_mid..L7_mid` beat pulse). Re-apply after every
   MIDI reconnect (`on_midi_connected` sets `bridge.midi_reset`).
 - Button names: `'Up'`, `'Down'`, `'Left'`, `'Right'`, `'Page Left'`, `'Page Right'`, `'Shift'`,
   `'Upper Row 1..8'`, `'Lower Row 1..8'`, `'1/32t'…'1/4'` (scene column), `'Tap Tempo'`, etc.
@@ -145,22 +170,26 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
 - Composition JSON shapes (`video/sourceparams`, `transport/controls/speed`, effect `params`) were
   checked against the mock and `--dump`, not every Resolume source/effect type.
 - Big ranges (Transform Position X ±16384) are too coarse at 1 %/tick — handled per slot with `step`/`range`.
-- Polling fetches the full composition 4×/s; fine now, may be heavy with large decks.
+- Column launch `POST /composition/columns/{n}/connect` true/false, events (`tempo_tap`, `resync`)
+  `PUT {"value": true}`, layer `bypassed`/`solo` writes — unverified until `--check` runs on Arena.
+- Beat phase on the Push comes from the taps / resync (`beat_anchor`); Resolume doesn't expose its phase.
+- A new full composition only arrives on WS connect (and maybe on structure changes); the REST
+  refresh every `ws_refresh` s catches added/removed clips.
 - Clip select uses `POST /composition/layers/{L}/clips/{C}/select` — unverified on Arena.
 - Stop uses `POST /composition/layers/{L}/clear` — unverified on Arena. Fallback: `stop_column: N`
   in config.yaml triggers (press+release) column N on that layer instead.
 - Only the active deck is visible through the API.
 - Tempo uses `composition/tempocontroller/tempo` (ParamRange 20–500, BPM) — path confirmed in the live
-  JSON; it also has `tempo_tap` / `resync` ParamEvents (unused).
+  JSON; `tempo_tap` / `resync` ParamEvents are triggered by Tap / Shift+Tap.
 - ParamColor writes `PUT {"value": "#rrggbbaa"}` — shape confirmed in the live JSON, write unverified.
-  Tap tempo is computed locally; beat phase is not resynced.
 
 ## Testing workflow
 
 Always run before handing changes back:
 ```
 python tests/mock_resolume.py &
-python tests/test_fake_push.py      # must print OK
+python tests/test_fake_push.py      # must print OK (runs on the mock's WebSocket)
+TEST_POLL=1 python tests/test_fake_push.py   # same with the WebSocket off (polling fallback)
 python tests/render_preview.py      # then look at tests/preview_*.png for display changes
 python -c "import ast; ast.parse(open('push_resolume_bridge.py').read(), feature_version=(3,9))"
 ```

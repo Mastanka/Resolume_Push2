@@ -3,7 +3,9 @@
 resolume:
   host: 127.0.0.1       # machine running Arena
   port: 8080            # Arena → Preferences → Webserver
-  poll_interval: 0.25   # seconds between state refreshes
+  poll_interval: 0.25   # seconds between state refreshes when live updates are off
+  websocket: true       # live updates over Resolume's WebSocket (needs websocket-client)
+  ws_refresh: 5         # seconds between full refreshes while live updates are on
 
 grid:
   layer_offset: 0       # bottom pad row = layer (layer_offset + 1)
@@ -22,6 +24,9 @@ stop_column: null
 
 # Param order set with Convert + knob is saved here (default: pins.yaml next to the script).
 pins_file: null
+
+# Own COLOR palette (Shift + button below the display) is saved here (default: colors.yaml).
+colors_file: null
 
 # What encoders 1-8 control, per layer. More than 8 slots → Page < / Page >.
 #

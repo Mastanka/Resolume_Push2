@@ -7,8 +7,8 @@ M ≈ a session, L = more than one session.
 |---|---|---|---|---|
 | F1 | `--check` mode | Tries each Resolume API call on a spare test layer and prints OK / FAIL | S | done |
 | F2 | Blackout | One button: composition master to 0, press again to restore | S | done |
-| F3 | Flash / bump | Hold a button, that layer goes to 100 % until released | S | done |
-| F4 | Scene launch | The 8 buttons right of the pads launch a whole column | S | done |
+| F3 | Flash / bump | Hold the button right of a pad row: that layer at 100 % until released | S | done |
+| F4 | Column launch | Hold Play + button below the display = launch the column above it | S | done |
 | F5 | Mute / solo in MIX | Buttons below the display: bypass / solo the layer under each knob | S | done |
 | F6 | Pad pressure | Hit harder = brighter launch; held pressure controls the layer master | M | |
 | F7 | Touch strip | Crossfader, global speed or composition master | S–M | |
@@ -23,4 +23,4 @@ M ≈ a session, L = more than one session.
 | F16 | Live updates (WebSocket) | Resolume pushes changes instead of polling 4×/s: faster, lighter | L | done |
 | F17 | Autostart + installer | Start with the Mac; simple install script | S–M | |
 
-Recommended order: F1 → F2 + F3 → F4 + F5 → F8 → F9.
+Placement of the done features: see the controls table in README.md.

@@ -17,17 +17,21 @@ it works with any Resolume deck.
 ## What it does
 
 - **Clips:** your Resolume deck appears on the 8×8 pads, one colour per layer (dim = loaded,
-  bright = playing). Tap a pad to select a clip, hold **Play** + pad to launch it, hold **Record** + pad
-  to stop the layer.
+  bright = playing, pulsing on the beat). Tap a pad to select a clip, hold **Play** + pad to launch it,
+  hold **Record** + pad to stop the layer, hold **Play** + a button below the display to launch a whole column.
+- **Live controls:** **Stop Clip** is a blackout button, the buttons right of the pads **flash** their
+  layer to full while held, **Mute** / **Solo** + pad mute or solo a layer.
 - **Parameters:** the selected clip's parameters (generator, effects, transport) show on the display
   with live values. Turn them with the 8 knobs, flip pages with the buttons below the display, and
   move the parameters you use most onto page 1.
-- **Colors:** red / green / blue and hue / saturation / brightness knobs for the clip's colours,
-  plus Resolume's colour palette on the buttons below the display.
-- **Mix:** one knob per layer master, plus the composition master.
-- **Tempo:** Tap Tempo button and a BPM knob.
+- **Colors:** red / green / blue and hue / saturation / brightness knobs for the clip's colours, your own
+  palette on the buttons below the display, a **master colour** for the whole show, and paste a colour
+  to many clips at once.
+- **FX:** switch the clip's, layer's and composition's effects on and off, with their amount on the knobs.
+- **Mix:** one knob per layer master, plus the composition master; mute and solo per layer.
+- **Tempo:** Tap Tempo (Resolume's own tap), resync, a BPM knob, and a beat indicator.
 
-It talks to Resolume through Resolume's own REST API, so there is nothing to install in Resolume and
+It talks to Resolume through Resolume's own REST API and WebSocket (live updates), so there is nothing to install in Resolume and
 your deck stays unchanged. Other MIDI controllers mapped in Resolume keep working alongside it.
 
 <img src="docs/promo/05_how_it_works.png" width="49%" alt="How it works">
@@ -104,21 +108,38 @@ The Push display shows your deck. Press **Ctrl+C** to quit.
 
 ## Controls
 
+**Clips and live**
+
 | Control | Does |
 |---|---|
 | **Pads** | Select a clip (it opens in Resolume's clip panel too) |
 | **Play** + pad | Launch the clip |
+| **Play** + button below the display | Launch the whole column above that button |
 | **Record** + pad | Stop that layer |
+| **Mute** / **Solo** + pad | Mute / solo that pad's layer (muted layers turn grey) |
+| **Buttons right of the pads** | Flash: hold = that row's layer at 100 %, release = back |
+| **Stop Clip** | Blackout: composition master to 0, press again to restore (blinks red, banner on the display) |
 | ▲ ▼ ◀ ▶ | Scroll layers / columns (Shift = jump 8) |
-| **1st button above the display** | PARAMS menu |
-| **2nd button above the display** | COLOR menu |
-| **Mix** | MIX menu (layer masters) |
-| **8 knobs** | Parameters / colours / layer masters, depending on the menu. Shift = fine steps |
-| **Buttons below the display** | PARAMS: page 1–8, COLOR: palette colours |
+
+**Menus** (buttons above the display, and Mix / Master)
+
+| Menu | 8 knobs | Buttons below the display |
+|---|---|---|
+| **PARAMS** (1st button) | The clip's parameters. **Convert** + touch a knob = move a parameter: change page, touch the target knob, the two swap | Page 1–8 |
+| **COLOR** (2nd button) | Red, Green, Blue, Hue, Saturation, Brightness; last knob = which colour | Your palette. **Shift** + button = save the current colour there. Hold **Duplicate** + pad / button right of a row / button below = paste the colour to that clip / layer / column |
+| **FX** (3rd button) | Effect amount | Effect on / off (Page < > for more effects) |
+| **MIX** (Mix button) | Layer masters, top layer first | Mute; hold **Solo** = solo |
+| **Master** button | COLOR for the whole show (the composition's Colorize effect); 7th knob = amount, 8th = on / off | Your palette |
+
+**Knobs and tempo**
+
+| Control | Does |
+|---|---|
+| **Shift** + knob | Fine steps |
 | **Master knob** (far right) | Selected layer's opacity, or the composition master in MIX |
-| **Convert** + touch a knob | Move that parameter: change page, touch the knob where it should go, and the two swap places |
-| **Tap Tempo** | Tap the BPM |
+| **Tap Tempo** | Resolume's tap tempo. **Shift** + Tap Tempo = resync (beat 1 = now). Flashes on the beat |
 | **Tempo knob** (far left) | BPM ±1, Shift ±0.1 |
+| **Metronome** | Pads pulse on the beat on / off |
 
 ## Configuration
 
@@ -130,8 +151,8 @@ python push_resolume_bridge.py --dump 3            # layer 3
 python push_resolume_bridge.py --dump 3 --clip 2   # layer 3, clip 2
 ```
 
-The parameter order you set with **Convert** is saved in `pins.yaml`. Delete that file to go back
-to the default order.
+The parameter order you set with **Convert** is saved in `pins.yaml`, your own colours in
+`colors.yaml`. Delete either file to go back to the defaults.
 
 | Command line | |
 |---|---|
@@ -139,6 +160,7 @@ to the default order.
 | `--sim` | Browser simulator of the Push at http://localhost:6128, no hardware needed |
 | `--dump LAYER [--clip COLUMN]` | List parameter paths for `config.yaml` |
 | `--config FILE` | Use a different config file |
+| `--check LAYER` | Test every Resolume command on a spare layer (each change is undone) and print OK / FAIL. Add `--check-columns` to also launch a column |
 
 ## Ideas and feedback welcome
 
@@ -146,11 +168,9 @@ Got an idea for a new feature, a workflow that would help your show, or found so
 doesn't work with your Resolume setup? **[Open an issue](https://github.com/Mastanka/Resolume_Push2/issues/new/choose)** and tell me about it.
 Every suggestion is read. Some things already on the list:
 
-- Scene / column launch on the buttons right of the pads
 - Clip thumbnails on the display and Resolume's clip colours on the pads
 - Touch strip for the crossfader
-- Layer bypass / solo on the buttons
-- Pads blinking in time with the BPM
+- Pad pressure for intensity
 - Deck switching
 
 ## License
