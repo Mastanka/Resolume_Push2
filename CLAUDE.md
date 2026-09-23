@@ -152,7 +152,7 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
   `bypassed`, `solo`) / colour `#rrggbbaa` / tempo, event trigger `PUT {"value": true}` (204), clip
   `select`, clip connect true/false, layer `/clear`, WebSocket subscribe by id.
   **ParamChoice: only `{"value": "<option name>"}` works; `{"index": i}` → HTTP 400.**
-  Column launch not yet checked (`--check-columns`).
+  Column launch `POST /composition/columns/{n}/connect` true/false works too (`--check-columns`).
 
 **push2-python** (ffont/push2-python):
 - Only the **first** registered handler per action is called (`trigger_action` calls `func[0]`).
@@ -173,7 +173,6 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
 - Composition JSON shapes (`video/sourceparams`, `transport/controls/speed`, effect `params`) were
   checked against the mock and `--dump`, not every Resolume source/effect type.
 - Big ranges (Transform Position X ±16384) are too coarse at 1 %/tick — handled per slot with `step`/`range`.
-- Column launch `POST /composition/columns/{n}/connect` true/false — unverified (`--check-columns`).
   `tempo_tap` uses the same event call as `resync` (verified), its effect on BPM is untested.
 - Beat phase on the Push comes from the taps / resync (`beat_anchor`); Resolume doesn't expose its phase.
 - A new full composition only arrives on WS connect (and maybe on structure changes); the REST

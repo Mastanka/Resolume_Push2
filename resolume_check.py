@@ -55,7 +55,7 @@ class Checker:
 
     def add(self, name, ok, detail=""):
         self.results.append((name, ok, detail))
-        mark = {True: "OK  ", False: "FAIL", None: "SKIP"}[ok]
+        mark = {True: "OK  ", False: "FAIL", None: "SKIP", "info": "INFO"}[ok]
         print(f"  {mark}  {name:<34} {detail}")
 
     # ---- steps ------------------------------------------------------------- #
@@ -65,7 +65,8 @@ class Checker:
         except Exception as e:
             self.add(name, False, f"{type(e).__name__}: {e}")
 
-    def set_and_back(self, name, p, new, body_of=lambda v: {"value": v}, read=lambda p: p.get("value")):
+    def set_and_back(self, name, p, new, body_of=lambda v: {"value": v}, read=lambda p: p.get("value"),
+                     info=False):
         old = p.get("value")
         code = self.put(p["id"], body_of(new))
         time.sleep(WAIT)
@@ -74,7 +75,7 @@ class Checker:
         time.sleep(WAIT)
         back = (self.param_by_id(p["id"]) or {}).get("value")
         ok = got == new and back == old
-        self.add(name, ok, f"HTTP {code}, sent {new!r}, read {got!r}, restored {back == old}")
+        self.add(name, "info" if info else ok, f"HTTP {code}, sent {new!r}, read {got!r}, restored {back == old}")
         return got == new
 
     def s_range(self, name):
@@ -97,11 +98,8 @@ class Checker:
         by_value = self.set_and_back(name + " (value)", p, other)
         p = resolve_node(self.layer(), "video/mixer/Blend Mode")
         i = opts.index(other)
-        by_index = self.set_and_back(name + " (index)", p, other, body_of=lambda v: {"index": i})
-        if not by_index:                       # informational: the bridge only sends the value
-            n, _, detail = self.results.pop()
-            self.results.append((n, None, detail))
-            print("        (index not accepted — fine, the bridge sends the option name)")
+        # informational only: the bridge sends the option name (Arena 7.23 rejects index, HTTP 400)
+        by_index = self.set_and_back(name + " (index)", p, other, body_of=lambda v: {"index": i}, info=True)
         self.add(name, by_value, f"by value: {by_value}, by index: {by_index}")
 
     def first_clip(self, layer):
