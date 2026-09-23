@@ -1,7 +1,7 @@
 # Push 2 → Resolume Arena
 
-Use an **Ableton Push 2** as a hands-on controller for **Resolume Arena**, without Ableton Live.
-Launch clips from the pads, turn clip and effect parameters with the knobs, dial in colours, mix
+Use an **Ableton Push 2** as a hands-on controller for **Resolume Arena**.
+Launch clips from the pads, change clip and effect parameters with the knobs, dial in colours, mix
 layers and tap the tempo, all with a custom interface on the Push's own display.
 
 It was built for live concert lighting (Resolume pixel-mapping LED bars behind a band), but
@@ -45,7 +45,7 @@ python push_resolume_bridge.py
 ```
 
 Before you run it: in Resolume, **Preferences → Webserver → Enable Webserver & REST API**
-(port 8080), and **quit Ableton Live**.
+(port 8080).
 
 ## Detailed installation (macOS)
 
