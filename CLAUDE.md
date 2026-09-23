@@ -57,8 +57,8 @@ python push_resolume_bridge.py --dump 3   # list parameter paths for layer 3 (fo
 | K9 | `Swing Encoder` | – |
 | K10 | `Tempo Encoder` | BPM ±1 (Shift ±0.1) |
 | K11 | `Master Encoder` | Selected layer opacity / composition master in MIX |
-| BU1–BU8 | `Upper Row 1..8` (above display) | Main menus. BU1 = PARAMS |
-| BD1–BD8 | `Lower Row 1..8` (below display) | Sub-menu of current menu. PARAMS: page 1–8 |
+| BU1–BU8 | `Upper Row 1..8` (above display) | Main menus. BU1 = PARAMS, BU2 = COLOR |
+| BD1–BD8 | `Lower Row 1..8` (below display) | Sub-menu of current menu. PARAMS: page 1–8, COLOR: palette |
 | B_1 | `Play` (bottom-left) | Hold + pad = launch clip (lit green while held) |
 | B_2 | `Record` (above B_1) | Hold + pad = stop layer (lit red while held) |
 | B_3 | `Mix` (right of display) | MIX menu toggle |
@@ -75,6 +75,10 @@ Plain press = select only (also `POST …/clips/{C}/select` so Resolume's clip p
   **Move:** Convert + touch knob picks a slot (`move_src`, absolute index), touch another knob on any
   page → swap. Order = priority list of scope-less keys (`Slot.key`) in `pins.yaml`, applied to
   auto layers only (`Bridge.swap`, sort in `slots()`). Turns are ignored while moving.
+- **color** (BU2): selected clip's `ParamColor`s (clip `video/**`, then layer `video/effects`).
+  K1–K3 R/G/B, K4–K6 H/S/B (`hsv_cache` keeps hue at 0 saturation), K8 = which colour param.
+  BD1–BD8 = the param's `palette` (8 hex colours from Resolume), LEDs via palette slots 80–87.
+  Values are `#rrggbbaa`; writes keep alpha.
 - **mix** (B_3 toggles, B_3 lit white): K1–K8 = `layer.master` (fallback `video/opacity`),
   K1 = top visible layer, going down; K11 = `composition.master`. Display shows layer names +
   values above, composition master bar centred below the line.
@@ -141,7 +145,9 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
 - Stop uses `POST /composition/layers/{L}/clear` — unverified on Arena. Fallback: `stop_column: N`
   in config.yaml triggers (press+release) column N on that layer instead.
 - Only the active deck is visible through the API.
-- Tempo uses `composition/tempocontroller/tempo` (ParamRange, BPM) — path unverified on Arena.
+- Tempo uses `composition/tempocontroller/tempo` (ParamRange 20–500, BPM) — path confirmed in the live
+  JSON; it also has `tempo_tap` / `resync` ParamEvents (unused).
+- ParamColor writes `PUT {"value": "#rrggbbaa"}` — shape confirmed in the live JSON, write unverified.
   Tap tempo is computed locally; beat phase is not resynced.
 
 ## Testing workflow

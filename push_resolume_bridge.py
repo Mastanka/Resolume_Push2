@@ -13,6 +13,8 @@ Encoders  Track 1-8 edit the 8 slots. Hold Shift for fine steps.
 Mix       Mix button toggles the mixer: Track 1-8 = layer masters (1 = top visible
           layer), Master encoder = composition master.
 Menus     Upper Row 1 = PARAMS view. Lower Row 1-8 = jump to parameter page 1-8.
+Color     Upper Row 2 = COLOR view for the selected clip: Track 1-3 = R/G/B, 4-6 = Hue/Sat/
+          Brightness, 8 = which colour param. Lower Row 1-8 = that param's palette colours.
 Order     Hold Convert + touch a knob, go to any page, touch the target knob -> the two
           params swap. The order is saved per param type in pins.yaml.
 Tempo     Tap Tempo = tap BPM, Tempo encoder = BPM +-1 (Shift +-0.1).
@@ -32,6 +34,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import colorsys
 import json
 import os
 import platform
@@ -59,6 +62,8 @@ MOVE_BUTTON = "Convert"                     # B_4: hold + touch knob = move para
 TAP_BUTTON = "Tap Tempo"                    # B_5
 TEMPO_ENCODER = "Tempo Encoder"             # K10
 PARAMS_BUTTON = "Upper Row 1"               # BU1
+COLOR_BUTTON = "Upper Row 2"                # BU2
+MENU_BUTTONS = {PARAMS_BUTTON: "params", COLOR_BUTTON: "color"}
 UPPER_ROW = [f"Upper Row {i}" for i in range(1, 9)]
 LOWER_ROW = [f"Lower Row {i}" for i in range(1, 9)]
 TEMPO_PATH = "tempocontroller/tempo"
@@ -79,6 +84,11 @@ LAYER_RGB = [
 ]
 DIM = 0.15            # brightness of loaded-but-not-playing pads
 PALETTE_BASE = 64     # Push palette slots 64..79 are overwritten with the layer colours
+SWATCH_BASE = 80      # slots 80..87 = the COLOR menu's palette swatches on Lower Row 1-8
+COLOR_SOURCES = [("clip", "video"), ("layer", "video/effects")]   # where colour params are searched
+# COLOR menu knobs: (label, kind, coarse step, fine step). kind r/g/b 0..255, h 0..360, s/v 0..100
+COLOR_KNOBS = [("Red", "r", 3, 1), ("Green", "g", 3, 1), ("Blue", "b", 3, 1),
+               ("Hue", "h", 2, 0.5), ("Saturation", "s", 1, 0.2), ("Brightness", "v", 1, 0.2)]
 
 EDITABLE = {"ParamRange", "ParamChoice", "ParamBoolean"}
 WALK_SKIP = {"clips", "name", "connected", "selected", "thumbnail", "audio"}
@@ -164,18 +174,18 @@ def resolve_node(node, path):
     return node
 
 
-def walk(node, prefix="", skip=WALK_SKIP):
-    """Yield (path, param) for every editable parameter below node.
+def walk(node, prefix="", skip=WALK_SKIP, types=EDITABLE):
+    """Yield (path, param) for every parameter of the given value types below node.
     Paths are built so resolve_node() can find them again."""
     if is_param(node):
-        if node.get("valuetype") in EDITABLE:
+        if node.get("valuetype") in types:
             yield prefix, node
         return
     if isinstance(node, dict):
         for k, v in node.items():
             if k.lower() in skip:
                 continue
-            yield from walk(v, f"{prefix}/{k}" if prefix else k, skip)
+            yield from walk(v, f"{prefix}/{k}" if prefix else k, skip, types)
     elif isinstance(node, list):
         seen = set()
         for i, item in enumerate(node):
@@ -183,7 +193,7 @@ def walk(node, prefix="", skip=WALK_SKIP):
             if not label or "/" in label or label.lower() in seen:
                 label = str(i)
             seen.add(label.lower())
-            yield from walk(item, f"{prefix}/{label}" if prefix else label, skip)
+            yield from walk(item, f"{prefix}/{label}" if prefix else label, skip, types)
 
 
 def fmt_value(p, v, spec):
@@ -206,6 +216,29 @@ def fmt_value(p, v, spec):
     else:
         txt = f"{v:.2f}"
     return txt, frac
+
+
+def hex_to_rgba(v):
+    """'#rrggbbaa' (Resolume ParamColor) -> [r, g, b, a] ints."""
+    v = (v or "").lstrip("#")
+    try:
+        vals = [int(v[i:i + 2], 16) for i in range(0, 8, 2)]
+        return vals if len(v) >= 8 else vals[:3] + [255]
+    except ValueError:
+        return [0, 0, 0, 255]
+
+
+def rgba_to_hex(rgba):
+    return "#" + "".join(f"{int(round(min(255, max(0, c)))):02x}" for c in rgba)
+
+
+def color_label(path):
+    """'video/effects/Colorize/params/Color' -> 'Colorize Color'; 'video/sourceparams/BG Color' -> 'BG Color'."""
+    parts = path.split("/")
+    if "effects" in parts and len(parts) > parts.index("effects") + 1:
+        fx = parts[parts.index("effects") + 1]
+        return f"{fx} {parts[-1]}" if fx.lower() != parts[-1].lower() else fx
+    return parts[-1]
 
 
 # --------------------------------------------------------------------------- #
@@ -324,7 +357,9 @@ class Bridge:
         self.coarse = float(cfg["encoders"]["coarse"])
         self.fine = float(cfg["encoders"]["fine"])
         self.sel = (1, 1)          # (layer, column), 1-based, as in Resolume
-        self.mode = "params"       # "params" or "mix"
+        self.mode = "params"       # "params", "color" or "mix"
+        self.color_idx = 0         # which colour param the COLOR menu edits
+        self.hsv_cache = {}        # param id -> (rgb, [h, s, v]) keeps hue while saturation is 0
         self.page = 0
         self.shift = False
         self.play_held = False     # B_1
@@ -499,6 +534,9 @@ class Bridge:
                 if p:
                     self._nudge(p, {}, inc)
                 return
+            if self.mode == "color":
+                self._turn_color(idx, inc)
+                return
             if self.move_src is not None:
                 return
             slots, _ = self.page_slots()
@@ -513,6 +551,80 @@ class Bridge:
                 p = resolve_node(self.layer_json(self.sel[0]), "video/opacity")
             if is_param(p):
                 self._nudge(p, {}, inc)
+
+    def color_params(self):
+        """[(label, param)] colour params of the selected clip, then of its layer's effects."""
+        L, C = self.sel
+        roots = {"layer": self.layer_json(L), "clip": self.clip_json(L, C)}
+        out, seen = [], set()
+        for scope, path in COLOR_SOURCES:
+            node = resolve_node(roots[scope], path) if roots[scope] else None
+            for p, param in (walk(node, path, types={"ParamColor"}) if node is not None else []):
+                if param["id"] not in seen:
+                    seen.add(param["id"])
+                    out.append((("Layer " if scope == "layer" else "") + color_label(p), param))
+        return out
+
+    def color_param(self):
+        cps = self.color_params()
+        if not cps:
+            return None, None, 0
+        self.color_idx = min(self.color_idx, len(cps) - 1)
+        label, p = cps[self.color_idx]
+        return label, p, len(cps)
+
+    def color_hsv(self, p):
+        rgb = hex_to_rgba(self.value_of(p))[:3]
+        cached = self.hsv_cache.get(p["id"])
+        if cached and cached[0] == rgb:
+            return list(cached[1])
+        h, sat, v = colorsys.rgb_to_hsv(*(c / 255 for c in rgb))
+        return [h * 360, sat * 100, v * 100]
+
+    def _turn_color(self, idx, inc):
+        if idx == 7:                                   # K8: which colour param
+            acc = self.choice_acc.get("color", 0) + inc
+            n = len(self.color_params())
+            if abs(acc) < 4 or not n:
+                self.choice_acc["color"] = acc
+                return
+            self.choice_acc["color"] = 0
+            self.color_idx = min(n - 1, max(0, self.color_idx + (1 if acc > 0 else -1)))
+            return
+        _, p, _ = self.color_param()
+        if p is None or idx >= len(COLOR_KNOBS):
+            return
+        _, kind, coarse, fine = COLOR_KNOBS[idx]
+        step = inc * (fine if self.shift else coarse)
+        rgba = hex_to_rgba(self.value_of(p))
+        if kind in "rgb":
+            i = "rgb".index(kind)
+            rgba[i] = int(min(255, max(0, rgba[i] + step)))
+            self.hsv_cache.pop(p["id"], None)
+        else:
+            hsv = self.color_hsv(p)
+            i = "hsv".index(kind)
+            hsv[i] = (hsv[i] + step) % 360 if kind == "h" else min(100.0, max(0.0, hsv[i] + step))
+            rgb = [round(c * 255) for c in colorsys.hsv_to_rgb(hsv[0] / 360, hsv[1] / 100, hsv[2] / 100)]
+            rgba[:3] = rgb
+            self.hsv_cache[p["id"]] = (rgb, hsv)
+        value = rgba_to_hex(rgba)
+        self._set(p["id"], value, {"value": value})
+
+    def set_palette_color(self, k):
+        _, p, _ = self.color_param()
+        palette = (p or {}).get("palette") or []
+        if k < len(palette):
+            self.hsv_cache.pop(p["id"], None)
+            self._set(p["id"], palette[k], {"value": palette[k]})
+
+    def swatches(self):
+        """RGB of the Lower Row buttons in the COLOR menu (the param's palette)."""
+        with self.lock:
+            if self.mode != "color":
+                return []
+            _, p, _ = self.color_param()
+            return [hex_to_rgba(c)[:3] for c in ((p or {}).get("palette") or [])[:8]]
 
     def tempo_param(self):
         p = resolve_node(self.comp, TEMPO_PATH) if self.comp else None
@@ -579,6 +691,7 @@ class Bridge:
                 self.page = 0
             if (L, C) != self.sel:
                 self.move_src = None
+                self.color_idx = 0
             self.sel = (L, C)
             self.sender.select(L, C)               # show it in Resolume's clip panel too
             if not self.play_held or clip_state(clip) == "Empty":
@@ -634,8 +747,11 @@ class Bridge:
             elif name == MIX_BUTTON:
                 self.mode = "params" if self.mode == "mix" else "mix"
                 self.move_src = None
-            elif name == PARAMS_BUTTON:
-                self.mode = "params"
+            elif name in MENU_BUTTONS:
+                self.mode = MENU_BUTTONS[name]
+                self.move_src = None
+            elif name in LOWER_ROW and self.mode == "color":
+                self.set_palette_color(LOWER_ROW.index(name))
             elif name in LOWER_ROW and self.mode == "params":
                 _, pages = self.page_slots()
                 k = LOWER_ROW.index(name)
@@ -653,9 +769,15 @@ class Bridge:
                    MOVE_BUTTON: "white" if self.move_src is not None or self.convert_held else "dark_gray",
                    TAP_BUTTON: "white" if time.time() - self.tap_flash < TAP_FLASH else "dark_gray"}
             for b in UPPER_ROW:
-                out[b] = ("white" if params else "dark_gray") if b == PARAMS_BUTTON else "black"
+                out[b] = "black"
+            for b, m in MENU_BUTTONS.items():
+                out[b] = "white" if self.mode == m else "dark_gray"
+            n_sw = len(self.swatches())
             for k, b in enumerate(LOWER_ROW):
-                out[b] = "black" if k >= pages else ("white" if k == self.page else "dark_gray")
+                if self.mode == "color":
+                    out[b] = f"P{k}" if k < n_sw else "black"
+                else:
+                    out[b] = "black" if k >= pages else ("white" if k == self.page else "dark_gray")
             return out
 
     def pad_colors(self):
@@ -708,7 +830,18 @@ class Bridge:
                 src_page, src_col = divmod(self.move_src, 8)
                 move = {"label": all_slots[self.move_src].label, "page": src_page, "col": src_col,
                         "here": src_page == self.page}
+            color = None
+            if self.mode == "color":
+                label, p, n = self.color_param()
+                if p is not None:
+                    rgba = hex_to_rgba(self.value_of(p))
+                    hsv = self.color_hsv(p)
+                    vals = rgba[:3] + hsv
+                    color = {"label": label, "idx": self.color_idx, "n": n, "rgb": rgba[:3],
+                             "hex": rgba_to_hex(rgba)[:7].upper(),
+                             "knobs": [(lbl, vals[i]) for i, (lbl, *_rest) in enumerate(COLOR_KNOBS)]}
             return {
+                "color": color,
                 "bpm": f"{float(self.value_of(tp) or 0):.1f} BPM" if tp else "",
                 "move": move,
                 "mode": self.mode, "mix": mix,
@@ -770,6 +903,51 @@ def render(snap, bgr=True):
         say(24, 70, f"Waiting for Resolume at {snap['url']}")
         col((150, 150, 150)); font(16)
         say(24, 104, "Arena → Preferences → Webserver → Enable Webserver & REST API")
+    elif snap["mode"] == "color":
+        c = snap["color"]
+        for k in range(8):
+            x = k * 120
+            if snap["touched"] == k:
+                col((45, 45, 45)); ctx.rectangle(x, 0, 120, 98); ctx.fill()
+            if k:
+                col((35, 35, 35)); ctx.rectangle(x, 6, 1, 86); ctx.fill()
+        if c is None:
+            col((200, 200, 200)); font(18, True)
+            say(24, 56, "No colour parameter on this clip")
+        else:
+            r, g, b = c["rgb"]
+            bars = [(255, 40, 40), (40, 220, 40), (60, 90, 255)]
+            for k, (label, v) in enumerate(c["knobs"]):
+                x = k * 120
+                col((150, 150, 150)); font(15)
+                say(x + 8, 24, label, 104)
+                col((255, 255, 255)); font(22, True)
+                if k < 3:
+                    say(x + 8, 58, f"{v:.0f}"); frac, bar = v / 255, bars[k]
+                elif k == 3:
+                    say(x + 8, 58, f"{v:.0f}°"); frac = v / 360
+                    bar = [round(q * 255) for q in colorsys.hsv_to_rgb(v / 360, 1, 1)]
+                else:
+                    say(x + 8, 58, f"{v:.0f}%"); frac, bar = v / 100, (r, g, b)
+                col((45, 45, 45)); ctx.rectangle(x + 8, 72, 104, 8); ctx.fill()
+                col(bar); ctx.rectangle(x + 8, 72, 104 * frac, 8); ctx.fill()
+            x = 7 * 120
+            col((150, 150, 150)); font(15)
+            say(x + 8, 24, f"Param {c['idx'] + 1}/{c['n']}", 104)
+            col((255, 255, 255)); font(17, True)
+            say(x + 8, 58, c["label"], 104)
+
+        col((60, 60, 60)); ctx.rectangle(0, 100, W, 1); ctx.fill()
+        if c is not None:
+            col(tuple(c["rgb"])); ctx.rectangle(10, 108, 90, 44); ctx.fill()
+            col((80, 80, 80)); ctx.set_line_width(1); ctx.rectangle(10.5, 108.5, 89, 43); ctx.stroke()
+        col((255, 255, 255)); font(18, True)
+        say(114, 128, "COLOR" + (f"   {c['label']}   {c['hex']}" if c else ""), 520)
+        col((200, 200, 200)); font(16)
+        say(114, 151, f"L{snap['L']} C{snap['C']}   {snap['clip_name'] or '—'}", 520)
+        col((140, 140, 140)); font(13)
+        say(950, 127, snap["bpm"], right=True)
+        say(950, 150, "FINE" if snap["shift"] else "BD1–8 = palette", right=True)
     elif snap["mode"] == "mix":
         for k in range(8):
             x = k * 120
@@ -935,6 +1113,7 @@ def run(cfg, rest, sim=False):
         print("Simulator: http://localhost:6128")
 
     pad_cache, btn_cache, palette_ok, display_warned = {}, {}, False, False
+    swatch_cache = None
     started, midi_warned = time.time(), False
     dt = 1.0 / float(cfg.get("display_fps", 20))
     try:
@@ -949,12 +1128,21 @@ def run(cfg, rest, sim=False):
                     midi_warned = True
             if bridge.midi_reset:
                 palette_ok, pad_cache, btn_cache, bridge.midi_reset = False, {}, {}, False
+                swatch_cache = None
             if push.midi_is_configured():
                 if not palette_ok:
                     apply_palette(push)
                     for b in NAV_BUTTONS:
                         push.buttons.set_button_color(b, "white")
                     palette_ok = True
+                swatches = bridge.swatches()
+                if swatches and swatches != swatch_cache:     # palette colours of the COLOR menu
+                    for k, rgb in enumerate(swatches):
+                        push.set_color_palette_entry(SWATCH_BASE + k, f"P{k}", rgb=rgb, allow_overwrite=True)
+                    push.reapply_color_palette()
+                    swatch_cache = swatches
+                    for b in LOWER_ROW:
+                        btn_cache.pop(b, None)
                 for name, color in bridge.button_colors().items():
                     if btn_cache.get(name) != color:
                         push.buttons.set_button_color(name, color)

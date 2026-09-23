@@ -11,6 +11,7 @@ Turns an Ableton Push 2 into a Resolume clip launcher with a live parameter disp
 | Master encoder | Opacity of the selected layer |
 | Upper Row 1 | PARAMS view |
 | Lower Row 1–8 | Jump to parameter page 1–8 (lit = page exists, white = current) |
+| Upper Row 2 | **COLOR** of the selected clip: encoders 1–3 = R/G/B, 4–6 = Hue/Sat/Brightness, 8 = which colour (Color, BG Color, Colorize…). Lower Row 1–8 = Resolume's palette colours, lit in their colour |
 | Convert + touch knob | Pick up that param → change page → touch target knob → the two swap. Saved per param type in `pins.yaml` |
 | Tap Tempo | Tap the BPM (2+ taps) |
 | Tempo encoder | BPM ±1, Shift ±0.1 |

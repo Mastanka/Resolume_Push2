@@ -136,10 +136,34 @@ time.sleep(0.4)
 bpm2 = rest.composition()["tempocontroller"]["tempo"]["value"]
 assert abs(bpm2 - bpm - 3) < 0.01, (bpm, bpm2)
 
+# --- COLOR menu on L1 C1 (Color #ff8b58ff, BG Color #00000000)
+fire("on_pad_pressed", 60, (7, 0), 100); fire("on_pad_released", 60, (7, 0), 0)
+fire("on_button_pressed", "Upper Row 2")
+colr = lambda: rest.composition()["layers"][0]["clips"][0]["video"]["sourceparams"]["Color"]["value"]
+bg = lambda: rest.composition()["layers"][0]["clips"][0]["video"]["sourceparams"]["BG Color"]["value"]
+fire("on_encoder_rotated", "Track3 Encoder", 10)  # blue 0x58 + 30 = 0x76
+time.sleep(0.4)
+assert colr() == "#ff8b76ff", colr()
+fire("on_encoder_rotated", "Track6 Encoder", -100)  # brightness → 0 = black, alpha kept
+time.sleep(0.4)
+assert colr() == "#000000ff", colr()
+fire("on_encoder_rotated", "Track6 Encoder", 100)   # hue/sat remembered → back to the same hue
+time.sleep(0.4)
+assert colr()[:3] == "#ff", colr()
+fire("on_button_pressed", "Lower Row 5")           # palette 5 = blue
+time.sleep(0.4)
+assert colr() == "#0000ffff", colr()
+assert ("btn", ("Lower Row 5", "P4")) in calls, "BD not lit with palette colours"
+fire("on_encoder_rotated", "Track8 Encoder", 4)    # K8 → BG Color
+fire("on_button_pressed", "Lower Row 2")           # red
+time.sleep(0.4)
+assert bg() == "#ff0000ff" and colr() == "#0000ffff", (bg(), colr())
+fire("on_button_pressed", "Upper Row 1")
+
 counts = {}
 for name, _ in calls:
     counts[name] = counts.get(name, 0) + 1
 print("calls:", counts)
 print("last pad colours:", [a for n, a in calls if n == "pad"][-6:])
-assert counts.get("palette") == 16 and counts.get("frame", 0) > 10, "loop did not run as expected"
+assert counts.get("palette", 0) >= 16 and counts.get("frame", 0) > 10, "loop did not run as expected"
 print("OK")

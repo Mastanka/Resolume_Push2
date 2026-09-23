@@ -6,6 +6,8 @@ import json, itertools
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ids = itertools.count(1000)
 def rng(v, lo=0.0, hi=1.0): return {"id": next(ids), "valuetype": "ParamRange", "value": v, "min": lo, "max": hi}
+PALETTE = ["#000000ff", "#ff0000ff", "#00ff00ff", "#ffff00ff", "#0000ffff", "#ff00ffff", "#ffffffff", "#ffb17bff"]
+def color(v): return {"id": next(ids), "valuetype": "ParamColor", "value": v, "palette": PALETTE, "view": {"suffix": ""}}
 def s(v): return {"id": next(ids), "valuetype": "ParamString", "value": v}
 def clip(name, state="Disconnected", gen=False):
     if name is None:
@@ -16,7 +18,8 @@ def clip(name, state="Disconnected", gen=False):
                    "params": {"Position X": rng(0, -16384, 16384), "Scale": rng(100, 0, 1000)}}]}}
     if gen:
         c["video"]["sourceparams"] = {"Frequency": rng(0.32), "Fade": {"id": next(ids), "valuetype": "ParamBoolean", "value": True},
-                                      "Width": rng(0.5), "Height": rng(0.5), "Offset": rng(0.0)}
+                                      "Width": rng(0.5), "Height": rng(0.5), "Offset": rng(0.0),
+                                      "Color": color("#ff8b58ff"), "BG Color": color("#00000000")}
     return c
 COMP = {"master": rng(0.9), "tempocontroller": {"tempo": rng(120.0, 20.0, 500.0)}, "video": {"opacity": rng(1.0)}, "layers": [
   {"name": s("Strobe"), "master": rng(1.0), "video": {"opacity": rng(0.8), "mixer": {"Blend Mode": {"id": next(ids), "valuetype": "ParamChoice", "value": "Add", "index": 1, "options": ["Alpha", "Add", "Multiply", "Screen"]}},

@@ -26,6 +26,12 @@ _, surf = B.render(br.snapshot(), bgr=False)          # bgr=False → correct co
 surf.write_to_png(str(HERE / "preview_auto.png"))
 
 br.touched = None
+br.button("Upper Row 2", True)                  # COLOR menu
+time.sleep(0.1)
+_, surf = B.render(br.snapshot(), bgr=False)
+surf.write_to_png(str(HERE / "preview_color.png"))
+br.button("Upper Row 1", True)
+
 br.button("Convert", True); br.touch(1); br.untouch(1); br.button("Convert", False)
 br.button("Lower Row 2", True)                  # move mode, looking at page 2
 _, surf = B.render(br.snapshot(), bgr=False)
@@ -41,4 +47,4 @@ br.button("Mix", True)
 br.online = False
 _, surf = B.render(br.snapshot(), bgr=False)
 surf.write_to_png(str(HERE / "preview_offline.png"))
-print("wrote", HERE / "preview_auto.png", "preview_mix/move/offline.png")
+print("wrote", HERE / "preview_auto.png", "preview_mix/move/color/offline.png")
