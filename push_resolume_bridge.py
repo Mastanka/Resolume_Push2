@@ -33,7 +33,8 @@ Live      Stop Clip = blackout (composition master 0 / back). Buttons right of t
 Buttons   Up/Down scroll layers, Left/Right scroll columns (Shift = jump by 8).
           Page < / Page > flip parameter pages when a layer has more than 8 slots.
 
-Talks to Resolume through its REST API:
+Talks to Resolume through its REST API, with live updates over its WebSocket
+(falls back to polling the REST API 4x per second when the WebSocket is not available):
     Arena -> Preferences -> Webserver -> Enable Webserver & REST API
 
 Usage
@@ -48,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import colorsys
+import importlib.util
 import json
 import os
 import platform
@@ -63,7 +65,7 @@ import yaml
 
 from display import LAYER_RGB, render  # noqa: F401  (render re-exported for tests/tools)
 from resolume_api import (  # noqa: F401
-    Resolume, Sender, clip_state, color_label, fmt_value, hex_to_rgba, is_param, label_of,
+    Resolume, ResolumeWS, Sender, clip_state, color_label, fmt_value, hex_to_rgba, is_param, label_of,
     master_param, resolve_node, rgba_to_hex, text, walk,
 )
 
@@ -122,7 +124,9 @@ AUTO_SOURCES = [                     # where "auto" layers look for parameters, 
 OVERRIDE_HOLD = 0.8   # s to trust our own sent value over polled state (prevents jitter)
 
 DEFAULT_CONFIG = {
-    "resolume": {"host": "127.0.0.1", "port": 8080, "poll_interval": 0.25},
+    "resolume": {"host": "127.0.0.1", "port": 8080, "poll_interval": 0.25,
+                 "websocket": True,     # live updates; False = always poll
+                 "ws_refresh": 5.0},    # s between full REST refreshes while the WebSocket is live
     "grid": {"layer_offset": 0, "column_offset": 0},
     "encoders": {"coarse": 0.01, "fine": 0.001},
     "display_fps": 20,
@@ -160,6 +164,9 @@ class Bridge:
         self.comp = None
         self.online = False
         self.poll_interval = float(cfg["resolume"]["poll_interval"])
+        self.ws_refresh = float(cfg["resolume"].get("ws_refresh", 5.0))
+        self.ws = None             # ResolumeWS when live updates are enabled
+        self.index = {}            # param id -> node in self.comp (for WebSocket updates)
         self.layer_offset = int(cfg["grid"]["layer_offset"])
         self.col_offset = int(cfg["grid"]["column_offset"])
         self.coarse = float(cfg["encoders"]["coarse"])
@@ -221,23 +228,88 @@ class Bridge:
     def max_cols(self):
         return max((len(l.get("clips") or []) for l in self.layers()), default=0)
 
+    def live(self):
+        return bool(self.ws and self.ws.live)
+
+    def set_comp(self, comp):
+        """New full composition (REST poll or WebSocket)."""
+        index, stack = {}, [comp]
+        while stack:
+            n = stack.pop()
+            if isinstance(n, dict):
+                if "valuetype" in n and "id" in n:
+                    index[n["id"]] = n
+                stack.extend(v for v in n.values() if isinstance(v, (dict, list)))
+            elif isinstance(n, list):
+                stack.extend(n)
+        if not self.online:
+            print(f"[resolume] connected — {len(comp.get('layers') or [])} layers")
+        with self.lock:
+            self.comp, self.index, self.online = comp, index, True
+            self._check_blackout()
+
+    def on_param(self, pid, value):
+        """WebSocket parameter_update: patch the value in place."""
+        with self.lock:
+            n = self.index.get(pid)
+            if n is not None and value is not None:
+                n["value"] = value
+                if pid == (master_param(self.comp) or {}).get("id"):
+                    self._check_blackout()
+
+    def desired_ids(self):
+        """Params to receive live: everything the pads, LEDs and the current menu show."""
+        ids = []
+
+        def add(node):
+            if is_param(node):
+                ids.append(node["id"])
+
+        def add_all(node):
+            stack = [node]
+            while stack:
+                n = stack.pop()
+                if isinstance(n, dict):
+                    add(n) if "valuetype" in n else stack.extend(n.values())
+                elif isinstance(n, list):
+                    stack.extend(n)
+
+        with self.lock:
+            comp = self.comp
+            if not comp:
+                return []
+            add(master_param(comp))
+            add(resolve_node(comp, TEMPO_PATH))
+            for col in comp.get("columns") or []:
+                add(col.get("connected"))
+            for layer in self.layers():
+                add(master_param(layer))
+                add(layer.get("bypassed"))
+                add(layer.get("solo"))
+                for clip in layer.get("clips") or []:
+                    add(clip.get("connected"))
+            L, C = self.sel
+            clip, layer = self.clip_json(L, C), self.layer_json(L)
+            if clip:
+                add_all(clip.get("video"))
+                add_all(clip.get("transport", {}).get("controls"))
+            if layer:
+                add_all(layer.get("video"))
+            add_all(resolve_node(comp, "video/effects"))
+        return ids
+
     def poll_loop(self):
         session = requests.Session()
         while True:
             try:
-                comp = self.rest.composition(session)
-                if not self.online:
-                    print(f"[resolume] connected — {len(comp.get('layers') or [])} layers")
-                with self.lock:
-                    self.comp, self.online = comp, True
-                    self._check_blackout()
+                self.set_comp(self.rest.composition(session))
             except Exception as e:
                 if self.online or not getattr(self, "_warned_offline", False):
                     print(f"[resolume] not reachable at {self.rest.url} ({type(e).__name__})")
                     self._warned_offline = True
                 with self.lock:
                     self.online = False
-            time.sleep(self.poll_interval)
+            time.sleep(self.ws_refresh if self.live() else self.poll_interval)
 
     def _check_blackout(self):
         """Master raised by someone else (Launch Control, mouse) = no longer blacked out."""
@@ -994,6 +1066,7 @@ class Bridge:
                     for tag, name, byp, amt in items]}
             return {
                 "fx": fx,
+                "link": "LIVE" if self.live() else "POLL",
                 "master_color": self.color_target == "master",
                 "paste": self.paste_held and self.mode == "color",
                 "note": note,
@@ -1090,6 +1163,13 @@ def run(cfg, rest, sim=False):
         bridge.button(name, False)
 
     threading.Thread(target=bridge.poll_loop, daemon=True).start()
+    if cfg["resolume"].get("websocket", True):
+        if importlib.util.find_spec("websocket"):      # websocket-client
+            bridge.ws = ResolumeWS(cfg["resolume"]["host"], cfg["resolume"]["port"],
+                                   bridge.set_comp, bridge.on_param, bridge.desired_ids)
+            bridge.ws.start()
+        else:
+            print("[resolume] pip install websocket-client for live updates; polling instead")
     bridge.sender.start()
 
     print(f"Bridge running → {rest.url}   (Ctrl+C to quit)")

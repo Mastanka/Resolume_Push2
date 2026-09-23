@@ -20,7 +20,7 @@ M ≈ a session, L = more than one session.
 | F13 | FX menu (BU3) | Clip + layer effects list, on/off on the buttons below the display | M | done |
 | F14 | Thumbnails + clip colours | Clip thumbnails on the display, Resolume clip colours on the pads | M | |
 | F15 | Deck switching | Switch Resolume decks from the Push | M | |
-| F16 | Live updates (WebSocket) | Resolume pushes changes instead of polling 4×/s: faster, lighter | L | |
+| F16 | Live updates (WebSocket) | Resolume pushes changes instead of polling 4×/s: faster, lighter | L | done |
 | F17 | Autostart + installer | Start with the Mac; simple install script | S–M | |
 
 Recommended order: F1 → F2 + F3 → F4 + F5 → F8 → F9.

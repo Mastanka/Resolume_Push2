@@ -255,6 +255,9 @@ def render(snap, bgr=True):
             else:
                 col((150, 150, 150))
             ctx.arc(906 + k * 14, 109, 4, 0, 6.3); ctx.fill()
+    if snap["online"] and snap.get("link"):                       # LIVE = WebSocket, POLL = fallback
+        col((0, 200, 90) if snap["link"] == "LIVE" else (120, 120, 120)); font(9, True)
+        say(894, 113, snap["link"], right=True)
 
     if snap["online"] and snap.get("paste"):                       # Duplicate held in COLOR
         col((70, 0, 60)); ctx.rectangle(0, 101, W, 59); ctx.fill()

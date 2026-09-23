@@ -7,6 +7,7 @@ Replaces push2_python.Push2 with a recorder, runs the real run() loop in a threa
 fires handlers through push2-python's action registry, and prints what was sent.
 Check the mock's output for the matching POST/PUT requests.
 """
+import os
 import sys
 import tempfile
 import threading
@@ -46,6 +47,9 @@ pins = Path(tempfile.mkdtemp()) / "pins.yaml"       # never touch the real pins.
 cfg["pins_file"] = str(pins)
 colors_file = pins.with_name("colors.yaml")          # never touch the real colors.yaml
 cfg["colors_file"] = str(colors_file)
+cfg["resolume"]["ws_refresh"] = 30.0     # REST safety refresh rare → everything below runs on live updates
+POLL_ONLY = os.environ.get("TEST_POLL") == "1"      # TEST_POLL=1: WebSocket off, test the polling fallback
+cfg["resolume"]["websocket"] = not POLL_ONLY
 rest = B.Resolume("127.0.0.1", 8080)
 threading.Thread(target=B.run, args=(cfg, rest), daemon=True).start()
 time.sleep(1.0)
@@ -269,6 +273,16 @@ assert tr is True, "BD1 must bypass the clip's Transform"
 assert abs(fx()["params"]["Opacity"]["value"] - (op0 - 0.1)) < 1e-6 and fx()["bypassed"]["value"] is True, fx()
 assert ("btn", ("Lower Row 2", "black")) in calls, "effect without bypass must stay unlit"
 fire("on_button_pressed", "Upper Row 1")
+
+# --- F16 live updates: a change made elsewhere (e.g. mouse in Arena) reaches the pads without polling
+L3 = rest.composition()["layers"][2]
+if not POLL_ONLY:
+    requests.put(f"http://127.0.0.1:8080/api/v1/parameter/by-id/{L3['bypassed']['id']}", json={"value": True})
+    n0 = len(calls)
+    time.sleep(0.6)
+    assert any(n == "pad" and a[0][0] == 5 and a[1] in ("dark_gray", "light_gray") for n, a in calls[n0:]), \
+        "external mute of layer 3 didn't reach the pads via WebSocket"
+    requests.put(f"http://127.0.0.1:8080/api/v1/parameter/by-id/{L3['bypassed']['id']}", json={"value": False})
 
 counts = {}
 for name, _ in calls:

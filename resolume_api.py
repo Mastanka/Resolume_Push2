@@ -241,3 +241,57 @@ class Sender(threading.Thread):
                 except Exception as e:
                     self._err(e)
 
+
+
+class ResolumeWS(threading.Thread):
+    """Live updates from Resolume's WebSocket (ws://host:port/api/v1).
+
+    Arena sends the whole composition on connect (and when its structure changes), then a
+    `parameter_update` for every subscribed parameter. Subscriptions go by id
+    (`/parameter/by-id/<id>`); subscribing by path is rejected by Arena 7.23.
+    The wanted ids come from `desired()` and are re-synced twice a second."""
+
+    def __init__(self, host, port, on_comp, on_param, desired):
+        super().__init__(daemon=True)
+        self.url = f"ws://{host}:{port}/api/v1"
+        self.on_comp, self.on_param, self.desired = on_comp, on_param, desired
+        self.live = False
+        self._warned = False
+
+    def run(self):
+        import websocket   # websocket-client; only needed when the bridge runs
+        while True:
+            ws, subs = None, set()
+            try:
+                ws = websocket.create_connection(self.url, timeout=3)
+                ws.settimeout(0.5)
+                self.live, self._warned = True, False
+                print("[resolume] live updates on (WebSocket)")
+                next_sync = 0.0
+                while True:
+                    try:
+                        msg = json.loads(ws.recv())
+                        if isinstance(msg, dict) and "layers" in msg and "type" not in msg:
+                            self.on_comp(msg)
+                        elif isinstance(msg, dict) and msg.get("type") in ("parameter_update", "parameter_subscribed"):
+                            self.on_param(msg.get("id"), msg.get("value"))
+                    except websocket.WebSocketTimeoutException:
+                        pass
+                    if time.time() >= next_sync:
+                        next_sync = time.time() + 0.5
+                        want = set(self.desired())
+                        for pid in want - subs:
+                            ws.send(json.dumps({"action": "subscribe", "parameter": f"/parameter/by-id/{pid}"}))
+                        for pid in subs - want:
+                            ws.send(json.dumps({"action": "unsubscribe", "parameter": f"/parameter/by-id/{pid}"}))
+                        subs = want
+            except Exception as e:
+                if self.live or not self._warned:
+                    print(f"[resolume] live updates off, polling instead ({type(e).__name__})")
+                    self._warned = True
+                self.live = False
+                try:
+                    ws and ws.close()
+                except Exception:
+                    pass
+                time.sleep(2.0)

@@ -2,7 +2,7 @@
 Serves a small composition on http://127.0.0.1:8080/api/v1 and logs every POST/PUT.
 Run:  python tests/mock_resolume.py
 """
-import json, itertools
+import json, itertools, base64, hashlib, struct, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ids = itertools.count(1000)
 def rng(v, lo=0.0, hi=1.0): return {"id": next(ids), "valuetype": "ParamRange", "value": v, "min": lo, "max": hi}
@@ -48,10 +48,66 @@ def index(n):
 index(COMP)
 LOG = []
 EVENTS = {}   # ParamEvent id -> times triggered (GET /api/v1/_events)
+# ---- WebSocket (ws://127.0.0.1:8080/api/v1), like Arena 7.23: full composition on connect,
+# subscribe / unsubscribe by "/parameter/by-id/<id>", then parameter_update on every change.
+WS_CLIENTS = []          # [handler], each with .subs {id: last value sent} and .ws_lock
+WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+def ws_send(h, obj):
+    data = json.dumps(obj).encode()
+    n = len(data)
+    head = bytes([0x81, n]) if n < 126 else (bytes([0x81, 126]) + struct.pack(">H", n) if n < 65536
+                                            else bytes([0x81, 127]) + struct.pack(">Q", n))
+    with h.ws_lock:
+        h.wfile.write(head + data); h.wfile.flush()
+
+def ws_recv(h):
+    b1, b2 = h.rfile.read(2)
+    n = b2 & 0x7F
+    if n == 126: n = struct.unpack(">H", h.rfile.read(2))[0]
+    elif n == 127: n = struct.unpack(">Q", h.rfile.read(8))[0]
+    mask = h.rfile.read(4) if b2 & 0x80 else b"\0\0\0\0"
+    data = bytes(c ^ mask[i % 4] for i, c in enumerate(h.rfile.read(n)))
+    return b1 & 0x0F, data
+
+def ws_broadcast():
+    for h in list(WS_CLIENTS):
+        for pid, last in list(h.subs.items()):
+            v = BYID[pid].get("value")
+            if v != last:
+                h.subs[pid] = v
+                try: ws_send(h, {**BYID[pid], "type": "parameter_update"})
+                except Exception: pass
+
 class H(BaseHTTPRequestHandler):
+    def ws_session(self):
+        accept = base64.b64encode(hashlib.sha1((self.headers["Sec-WebSocket-Key"] + WS_GUID).encode()).digest()).decode()
+        self.send_response(101); self.send_header("Upgrade", "websocket"); self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept); self.end_headers()
+        self.subs, self.ws_lock = {}, threading.Lock()
+        ws_send(self, COMP); ws_send(self, {"type": "sources_update", "value": []})
+        WS_CLIENTS.append(self)
+        try:
+            while True:
+                op, data = ws_recv(self)
+                if op == 8: break
+                if op != 1: continue
+                msg = json.loads(data); pid = int(msg.get("parameter", "").rsplit("/", 1)[-1] or 0)
+                if msg.get("action") == "subscribe" and pid in BYID:
+                    self.subs[pid] = BYID[pid].get("value")
+                    ws_send(self, {**BYID[pid], "type": "parameter_subscribed"})
+                elif msg.get("action") == "unsubscribe":
+                    self.subs.pop(pid, None)
+        except Exception:
+            pass
+        finally:
+            WS_CLIENTS.remove(self)
+            self.close_connection = True
     def log_message(self, *a): pass
     def _body(self): return self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()
     def do_GET(self):
+        if self.headers.get("Upgrade", "").lower() == "websocket":
+            return self.ws_session()
         if self.path.endswith("/product"):
             d = json.dumps({"name": "Mock Resolume", "major": 7, "minor": 23}).encode(); self.send_response(200); self.send_header("Content-Type","application/json"); self.end_headers(); self.wfile.write(d); return
         if self.path.endswith("/_events"):
@@ -83,6 +139,7 @@ class H(BaseHTTPRequestHandler):
                 if c["connected"]["value"].startswith("Connected"): c["connected"]["value"] = "Disconnected"
             COMP["layers"][L-1]["clips"][C-1]["connected"]["value"] = "Connected"
         self.send_response(204); self.end_headers()
+        ws_broadcast()
     def do_PUT(self):
         b = self._body(); print("PUT", self.path, b, flush=True)
         pid = int(self.path.rsplit("/",1)[-1]); body = json.loads(b)
@@ -91,4 +148,5 @@ class H(BaseHTTPRequestHandler):
         elif "value" in body: BYID[pid]["value"] = body["value"]
         elif "index" in body: BYID[pid]["value"] = BYID[pid]["options"][body["index"]]
         self.send_response(204); self.end_headers()
+        ws_broadcast()
 ThreadingHTTPServer(("127.0.0.1", 8080), H).serve_forever()
