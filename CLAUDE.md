@@ -148,7 +148,11 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
   "/parameter/by-id/<id>"}` → `parameter_subscribed` then `parameter_update` messages (full param +
   `path`). Subscribing by path returns `"Invalid parameter path"`.
 - `python push_resolume_bridge.py --check LAYER` (`resolume_check.py`) tests every call above on a spare
-  layer and undoes it. **Run it on Arena and update this section with the results.**
+  layer and undoes it. **Arena 7.23.2 result (2026-09-24), all OK:** PUT range / boolean (layer
+  `bypassed`, `solo`) / colour `#rrggbbaa` / tempo, event trigger `PUT {"value": true}` (204), clip
+  `select`, clip connect true/false, layer `/clear`, WebSocket subscribe by id.
+  **ParamChoice: only `{"value": "<option name>"}` works; `{"index": i}` → HTTP 400.**
+  Column launch not yet checked (`--check-columns`).
 
 **push2-python** (ffont/push2-python):
 - Only the **first** registered handler per action is called (`trigger_action` calls `func[0]`).
@@ -166,22 +170,18 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
 
 ## Not yet verified on hardware / known gaps
 
-- **ParamChoice** writes send `{"index": i, "value": name}` — unconfirmed which field Arena honours.
 - Composition JSON shapes (`video/sourceparams`, `transport/controls/speed`, effect `params`) were
   checked against the mock and `--dump`, not every Resolume source/effect type.
 - Big ranges (Transform Position X ±16384) are too coarse at 1 %/tick — handled per slot with `step`/`range`.
-- Column launch `POST /composition/columns/{n}/connect` true/false, events (`tempo_tap`, `resync`)
-  `PUT {"value": true}`, layer `bypassed`/`solo` writes — unverified until `--check` runs on Arena.
+- Column launch `POST /composition/columns/{n}/connect` true/false — unverified (`--check-columns`).
+  `tempo_tap` uses the same event call as `resync` (verified), its effect on BPM is untested.
 - Beat phase on the Push comes from the taps / resync (`beat_anchor`); Resolume doesn't expose its phase.
 - A new full composition only arrives on WS connect (and maybe on structure changes); the REST
   refresh every `ws_refresh` s catches added/removed clips.
-- Clip select uses `POST /composition/layers/{L}/clips/{C}/select` — unverified on Arena.
-- Stop uses `POST /composition/layers/{L}/clear` — unverified on Arena. Fallback: `stop_column: N`
-  in config.yaml triggers (press+release) column N on that layer instead.
+- `stop_column: N` in config.yaml is a fallback for stopping; not needed on 7.23 (`/clear` works).
 - Only the active deck is visible through the API.
 - Tempo uses `composition/tempocontroller/tempo` (ParamRange 20–500, BPM) — path confirmed in the live
   JSON; `tempo_tap` / `resync` ParamEvents are triggered by Tap / Shift+Tap.
-- ParamColor writes `PUT {"value": "#rrggbbaa"}` — shape confirmed in the live JSON, write unverified.
 
 ## Testing workflow
 

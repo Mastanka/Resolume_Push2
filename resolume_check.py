@@ -98,7 +98,11 @@ class Checker:
         p = resolve_node(self.layer(), "video/mixer/Blend Mode")
         i = opts.index(other)
         by_index = self.set_and_back(name + " (index)", p, other, body_of=lambda v: {"index": i})
-        self.add(name, by_value or by_index, f"by value: {by_value}, by index: {by_index}")
+        if not by_index:                       # informational: the bridge only sends the value
+            n, _, detail = self.results.pop()
+            self.results.append((n, None, detail))
+            print("        (index not accepted — fine, the bridge sends the option name)")
+        self.add(name, by_value, f"by value: {by_value}, by index: {by_index}")
 
     def first_clip(self, layer):
         clips = layer.get("clips") or []

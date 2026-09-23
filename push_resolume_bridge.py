@@ -427,7 +427,7 @@ class Bridge:
             cur = self.value_of(p)
             i = opts.index(cur) if cur in opts else int(p.get("index", 0))
             i = min(len(opts) - 1, max(0, i + (1 if acc > 0 else -1)))
-            self._set(pid, opts[i], {"index": i, "value": opts[i]})
+            self._set(pid, opts[i], {"value": opts[i]})    # Arena 7.23 rejects {"index": …} (HTTP 400)
 
     def turn(self, idx, inc):
         with self.lock:
