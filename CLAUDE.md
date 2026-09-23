@@ -18,7 +18,9 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 
 | File | Purpose |
 |---|---|
-| `push_resolume_bridge.py` | Whole app, single file (~750 lines) |
+| `push_resolume_bridge.py` | Entry point: constants, `Bridge` (state + input), `run()`, `--dump`, config |
+| `resolume_api.py` | Resolume JSON helpers (`resolve_node`, `walk`, colour helpers), REST client, `Sender` |
+| `display.py` | `render()`: draws a `Bridge.snapshot()` on the 960×160 display, `LAYER_RGB` |
 | `config.yaml` | Resolume host/port, grid offsets, encoder steps, per-layer parameter slots |
 | `pins.yaml` | Param order for auto layers, written by the bridge (Convert move). Štefan's show data |
 | `docs/specs/` | Short design specs per feature |
