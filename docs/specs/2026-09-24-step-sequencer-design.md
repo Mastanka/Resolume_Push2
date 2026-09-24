@@ -54,12 +54,14 @@ alone and reported. `--setup-chaser --dry-run` prints the plan. The bridge never
 column `sequencer.clip_column` (default 1) of every bar layer; **Browse + bar pad** = that bar
 only. Generator clips: `open` with `source:///video/<video/description>`, then copy every
 `video/sourceparams` value by name via `PUT`. File clips: `open` with the file URL from
-`video/fileinfo` (exact key confirmed at implementation with a file clip). After loading, the
+`video/fileinfo` (its exact shape is read from a real file clip during implementation; if no
+path can be found the display says "file clips: not supported yet"). Clip effects are not
+copied; the bar layer's own Crop does the masking. After loading, the
 bar clips are connected (they play; the layer opacity is what flashes). With nothing selected
 the display says "select a clip first".
 
-**Flashing:** bar level 0–1 → layer `video/opacity` (or `master`, whichever `master_param`
-resolves) over the WebSocket `set`, REST `PUT` as fallback. Only changed values are sent, at
+**Flashing:** bar level 0–1 → the bar layer's `video/opacity` (its `master` stays at 100 % as a
+manual override) over the WebSocket `set`, REST `PUT` as fallback. Only changed values are sent, at
 most 50/s per bar, 30/s when more than 16 bars change at once. Sequencer stopped = every bar
 layer at 0 (dark); the rest of the show is untouched. `CH:` layers are hidden from the pad
 grid and from MIX (visible-layer list replaces `layer_offset` arithmetic).
@@ -72,16 +74,18 @@ keeps running whichever menu is shown.
 ```
 rows 1–4   steps 1–32 of the selected bar   off = dark · on = bar colour, brighter = higher level
                                             green pad = playhead · steps beyond Length unlit
-rows 5–8   left 4×4  = bars 1–16 (bottom-left = bar 1, rising, as on Push)
+rows 5–8   left 4×4  = bars 1–16: bottom row = bars 1–4 left → right, the row above = 5–8,
+                       … top row of the block = 13–16 (Push's drum-pad numbering)
                        dim = idle · bright = lit right now · white ring = selected
-           right 4×4 = patterns 1–16   white = current, dim = has steps, off = empty
+           right 4×4 = patterns 1–16, numbered the same way   white = current, dim = has steps, off = empty
+steps      row 1 = steps 1–8 left → right, row 2 = 9–16, row 3 = 17–24, row 4 = 25–32
 ```
 
 | Control | SEQ meaning |
 |---|---|
 | Tap a step | Toggle. New step level = tap velocity (Accent on = 100 %), gate = pattern Gate |
 | Hold step(s) + knob | Edit those steps' Level / Gate (knobs 8 / 5) |
-| Bar pad press / release | Select the bar; flash it (attack → sustain while held, release on release) |
+| Bar pad press / release | Select the bar; flash it (attack → sustain while held, release on release). Works whether or not the sequencer runs |
 | Repeat + hold bar pad | Strobe that bar at the grid rate |
 | Pattern pad | Switch at the start of the next bar (4 beats); Shift + pad = now |
 | Buttons right of the pads | Grid 1/4 … 1/32t (step length = that note at Resolume's BPM); Flash is off in SEQ |
@@ -124,8 +128,10 @@ LIVE / POLL, and short messages (`note_msg`) for setup and load results.
   to 0). Bar pad presses use the same envelope with the gate held while the pad is down.
 - Direction changes the step order only; Length caps it. Random never repeats the same step
   twice in a row.
-- Pattern switches take effect at the next 4-beat boundary; the outgoing pattern's bars finish
-  their release.
+- Pattern switches take effect at the next bar boundary (every 4 beats counted from the beat
+  anchor, i.e. beat index 0 of `Bridge.beat()`); the outgoing pattern's bars finish their release.
+- "Swing delays every second grid step": steps 2, 4, 6 … (1-based) start later by
+  `swing × half a step`.
 
 ## Storage: `chases.yaml` (next to the script, config `chases_file`)
 
@@ -142,6 +148,7 @@ patterns:
       "Lumiverse 1": [[0, 1.0, null], [8, 0.8, null]]
 ```
 Bars are keyed by screen name so patterns survive layer renumbering. Saved on every edit.
+Without the file the bridge starts with 16 empty patterns P1–P16 using the defaults above.
 
 ## Config (`config.yaml`)
 
