@@ -179,6 +179,34 @@ class Resolume:
     def set_param(self, param_id, body):
         self.session.put(f"{self.api}/parameter/by-id/{param_id}", json=body, timeout=1)
 
+    # ---- composition editing (used by the step sequencer's layer engine) ---------- #
+    def _post_text(self, path, body=""):
+        r = self.session.post(self.api + path, data=body.encode("utf-8"),
+                              headers={"Content-Type": "text/plain"}, timeout=3)
+        return r.status_code
+
+    def add_layer(self, before=None):
+        """Append a layer on top, or insert before the 1-based layer index `before`."""
+        return self._post_text("/composition/layers/add", f"/composition/layers/{before}" if before else "")
+
+    def add_effect(self, layer, name):
+        return self._post_text(f"/composition/layers/{layer}/effects/video/add",
+                               "effect:///video/" + name.replace(" ", "%20"))
+
+    def delete_effect(self, layer, offset):
+        return self.session.delete(f"{self.api}/composition/layers/{layer}/effects/video/{offset}",
+                                   timeout=3).status_code
+
+    def set_effect_display_name(self, layer, index, name):
+        return self._post_text(f"/composition/layers/{layer}/effects/video/{index}/set-display-name", name)
+
+    def open_clip(self, layer, column, uri):
+        """uri: 'source:///video/Metaballs' or 'file:///path/with%20spaces.mov'."""
+        return self._post_text(f"/composition/layers/{layer}/clips/{column}/open", uri)
+
+    def clear_clip(self, layer, column):
+        return self._post_text(f"/composition/layers/{layer}/clips/{column}/clear")
+
 
 class Sender(threading.Thread):
     """Sends clip triggers in order and parameter changes coalesced (latest value
@@ -258,6 +286,12 @@ class ResolumeWS(threading.Thread):
         self.on_comp, self.on_param, self.desired = on_comp, on_param, desired
         self.live = False
         self._warned = False
+        self.outbox = queue.Queue()
+
+    def set(self, pid, value):
+        """Set a parameter over the socket (cheaper than a PUT). Dropped when not live."""
+        if self.live:
+            self.outbox.put({"action": "set", "parameter": f"/parameter/by-id/{pid}", "value": value})
 
     def run(self):
         import websocket   # websocket-client; only needed when the bridge runs
@@ -265,7 +299,7 @@ class ResolumeWS(threading.Thread):
             ws, subs = None, set()
             try:
                 ws = websocket.create_connection(self.url, timeout=3)
-                ws.settimeout(0.5)
+                ws.settimeout(0.02)
                 self.live, self._warned = True, False
                 print("[resolume] live updates on (WebSocket)")
                 next_sync = 0.0
@@ -278,6 +312,11 @@ class ResolumeWS(threading.Thread):
                             self.on_param(msg.get("id"), msg.get("value"))
                     except websocket.WebSocketTimeoutException:
                         pass
+                    while True:                                   # parameter sets from the bridge
+                        try:
+                            ws.send(json.dumps(self.outbox.get_nowait()))
+                        except queue.Empty:
+                            break
                     if time.time() >= next_sync:
                         next_sync = time.time() + 0.5
                         want = set(self.desired())

@@ -55,6 +55,14 @@ class FakePush:
 push2_python.Push2 = FakePush
 import push_resolume_bridge as B  # noqa: E402
 
+# Never run against a real Arena: only the mock answers /product with this name.
+try:
+    _name = requests.get("http://127.0.0.1:8080/api/v1/product", timeout=2).json().get("name")
+except Exception as e:
+    sys.exit(f"mock not running on 127.0.0.1:8080 ({e}) — start tests/mock_resolume.py first")
+if _name != "Mock Resolume":
+    sys.exit(f"refusing to run: 127.0.0.1:8080 is {_name!r}, not the mock")
+
 cfg = B.load_config(Path(B.__file__).with_name("config.yaml"))
 pins = Path(tempfile.mkdtemp()) / "pins.yaml"       # never touch the real pins.yaml
 cfg["pins_file"] = str(pins)
