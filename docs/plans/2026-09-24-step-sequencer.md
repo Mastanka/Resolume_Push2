@@ -1382,8 +1382,7 @@ fire("on_button_pressed", "Browse"); fire("on_button_released", "Browse")       
 time.sleep(1.5)
 ch = [l for l in rest.composition()["layers"] if l["name"]["value"].startswith("CH: T1")]
 assert ch and all(l["clips"][0]["video"]["description"] == "Stroboscope" for l in ch), "Browse must load the texture"
-fire("on_button_pressed", "1/4t"); fire("on_button_released", "1/4t")               # grid 1/4t? no: use 1/16
-fire("on_button_pressed", "1/16"); fire("on_button_released", "1/16")
+fire("on_button_pressed", "1/16"); fire("on_button_released", "1/16")               # grid 1/16
 fire("on_pad_pressed", 60, (7, 0), 100); fire("on_pad_released", 60, (7, 0), 0)     # select bar 1 (Bar A) + audition
 fire("on_pad_pressed", 60, (0, 0), 127); fire("on_pad_released", 60, (0, 0), 0)     # step 1 on
 fire("on_pad_pressed", 60, (0, 4), 64); fire("on_pad_released", 60, (0, 4), 0)      # step 5 on, half level
@@ -1408,8 +1407,6 @@ assert ("btn", ("Play", "green")) in calls
 fire("on_button_pressed", "Session"); time.sleep(0.3)
 assert ("btn", ("Note", "dark_gray")) in calls[-400:], "Session leaves SEQ"
 ```
-
-(Remove the stray `1/4t` line from the block above when copying: keep only the `1/16` grid press.)
 
 - [ ] **Step 2: Run to see it fail** — `python tests/test_fake_push.py` → the first assertion (no `CH:T1:Bar A` layer) fails.
 
@@ -1591,9 +1588,9 @@ Add these methods to `Bridge` (after `desired_ids`):
                     if self.dup_src is None:
                         self.dup_src = p
                     else:
-                        self.seq.copy_pattern(self.dup_src, p)
-                        self.dup_src = None
-                        self.note_msg(f"P{self.dup_src + 1 if self.dup_src is not None else ''} copied to P{p + 1}")
+                        src, self.dup_src = self.dup_src, None
+                        self.seq.copy_pattern(src, p)
+                        self.note_msg(f"P{src + 1} copied to P{p + 1}")
                 else:
                     self.seq.switch_pattern(p, bt, now=self.shift)
 
@@ -1613,8 +1610,6 @@ Add these methods to `Bridge` (after `desired_ids`):
                 self.note_msg(msg)
         threading.Thread(target=work, daemon=True).start()
 ```
-
-(Fix the copy message: compute `src = self.dup_src` before resetting it and use `f"P{src + 1} copied to P{p + 1}"`.)
 
 - [ ] **Step 5: Wire pads and buttons.** Change `def pad_pressed(self, ij):` to `def pad_pressed(self, ij, velocity=100):` and insert as its first lines:
 
@@ -2041,9 +2036,8 @@ Test by hand against the mock: `python push_resolume_bridge.py --setup-chaser --
         C = next((i + 1 for i, c in enumerate(layer.get("clips") or []) if clip_state(c) == "Empty"), None)
         if not C:
             return self.add(name, None, "no empty clip slot on this layer")
-        code = self.req("POST", f"/composition/layers/{self.L}/clips/{C}/open", None)[0] if False else \
-            self.s.post(f"{self.base}/composition/layers/{self.L}/clips/{C}/open", data=b"source:///video/Checkered",
-                        headers={"Content-Type": "text/plain"}, timeout=3).status_code
+        code = self.s.post(f"{self.base}/composition/layers/{self.L}/clips/{C}/open", data=b"source:///video/Checkered",
+                           headers={"Content-Type": "text/plain"}, timeout=3).status_code
         time.sleep(WAIT)
         clip = self.layer()["clips"][C - 1]
         desc = ((clip.get("video") or {}).get("description"))
@@ -2085,7 +2079,7 @@ Test by hand against the mock: `python push_resolume_bridge.py --setup-chaser --
         self.add(name, got == old + " ✓", f"HTTP {code}, read {got!r} (informational: the bridge only names layers best-effort)")
 ```
 
-(Simplify `s_open_clip`'s `code = …` line to the plain `self.s.post(...)` call; add `text` to the imports from `resolume_api` if missing.) Register them in `run()`:
+(`text` is already imported from `resolume_api` in `resolume_check.py`.) Register them in `run()`:
 
 ```python
         self.step("WebSocket set", self.s_ws_set)
