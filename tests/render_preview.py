@@ -15,6 +15,7 @@ import push_resolume_bridge as B  # noqa: E402
 cfg = B.load_config(HERE.parent / "config.yaml")
 cfg["pins_file"] = str(Path(tempfile.mkdtemp()) / "pins.yaml")
 cfg["colors_file"] = str(Path(tempfile.mkdtemp()) / "colors.yaml")
+cfg["chases_file"] = str(Path(tempfile.mkdtemp()) / "chases.yaml")
 br = B.Bridge(cfg, B.Resolume("127.0.0.1", 8080))
 br.sender.start()
 threading.Thread(target=br.poll_loop, daemon=True).start()
@@ -69,6 +70,17 @@ br.button("Mix", True)
 br.toggle_blackout()
 shot("blackout")
 br.toggle_blackout()
+
+from sequencer import Bar, Envelope  # noqa: E402
+br.mode = "seq"
+br.bars = [Bar("Lumiverse 1", 145, 72, 175, 530), Bar("Lumiverse 2", 345, 70, 375, 532)]
+br.seq.toggle_step("Lumiverse 1", 0); br.seq.toggle_step("Lumiverse 1", 8)
+br.seq.pattern.tracks[0].texture = {"source": "Metaballs"}
+br.seq.pattern.tracks[0].envelope = Envelope(attack=0.2, decay=0.3, sustain=0.6, release=0.5)
+br.seq.start(br.beat_time() or 0.0)
+br.seq.tick(br.beat_time() or 0.0)
+shot("seq")
+br.seq.stop(); br.mode = "params"
 
 br.online = False
 _, surf = B.render(br.snapshot(), bgr=False)

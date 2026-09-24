@@ -1451,7 +1451,35 @@ class Bridge:
                      "on": None if byp is None else not self.value_of(byp),
                      "amount": fmt_value(amt, self.value_of(amt), {}) if amt else None}
                     for tag, name, byp, amt in items]}
+            seq = None
+            if self.mode == "seq":
+                sq, tr = self.seq, self.seq.pattern.tracks[self.seq.track]
+                e = tr.envelope
+
+                def beats(v):
+                    return f"{v:.2f} b", min(1.0, v / 4.0)
+
+                def pct(v):
+                    return f"{v * 100:.0f}%", v
+
+                knobs = [("Attack",) + beats(e.attack), ("Decay",) + beats(e.decay), ("Sustain",) + pct(e.sustain),
+                         ("Release",) + beats(e.release), ("Gate",) + pct(tr.gate),
+                         ("Direction", sq.pattern.direction, 0.0),
+                         ("Length", f"{sq.pattern.length} steps", sq.pattern.length / 32),
+                         ("Level",) + pct(tr.level)]
+                first = sq.bank * 16 + 1
+                tex = tr.texture or {}
+                seq = {"knobs": knobs, "track": sq.track, "pattern": sq.pattern.name, "running": sq.running,
+                       "pos": sq.position(self.beat_time() or 0.0), "length": sq.pattern.length, "grid": sq.grid,
+                       "bars": (first, min(first + 15, len(self.bars))),
+                       "bar": self.bars[sq.bar].name if sq.bar < len(self.bars) else "—",
+                       "texture": tex.get("source") or (tex.get("file") or "").rsplit("/", 1)[-1] or "no texture — Browse",
+                       "env": {"attack": e.attack, "decay": e.decay, "sustain": e.sustain, "release": e.release,
+                               "gate": tr.gate},
+                       "pending": sq.pending, "swing": sq.pattern.swing, "n_bars": len(self.bars),
+                       "warning": self.bar_warnings[0] if not self.bars and self.bar_warnings else ""}
             return {
+                "seq": seq,
                 "fx": fx,
                 "link": "LIVE" if self.live() else "POLL",
                 "master_color": self.color_target == "master",
