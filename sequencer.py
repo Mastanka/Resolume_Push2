@@ -4,6 +4,8 @@ Resolume or the Push; the bridge feeds it beat time and sends the levels it retu
 
 from __future__ import annotations
 
+import math
+import random
 import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -281,6 +283,96 @@ class Sequencer:
         if d in DIRECTIONS:
             self.pattern.direction = d
             self.save()
+
+    # ---- playback (pure: the bridge passes beat time in, gets levels out) ------- #
+    def step_beats(self):
+        return GRIDS[self.grid]
+
+    def start(self, bt):
+        self.running = True
+        self.start_beat = math.floor(bt / BAR_BEATS) * BAR_BEATS
+        self.last_step = None
+        self.last_bt = bt
+
+    def stop(self):
+        self.running = False        # voices keep ticking so releases finish
+
+    def switch_pattern(self, p, bt, now=False):
+        if now or not self.running:
+            self.current, self.pending = p, None
+            self.start_beat = math.floor(bt / BAR_BEATS) * BAR_BEATS
+            self.last_step = None
+        else:
+            self.pending = p
+
+    def abs_step(self, bt):
+        """Grid steps since the pattern start, with swing (steps 2, 4, 6 … start later)."""
+        sb = self.step_beats()
+        k = int(math.floor((bt - self.start_beat) / sb))
+        if k % 2 == 1 and bt < self.start_beat + k * sb + self.pattern.swing * sb / 2:
+            k -= 1
+        return max(0, k)
+
+    def pattern_step(self, k):
+        L = max(1, self.pattern.length)
+        d = self.pattern.direction
+        if d == "reverse":
+            return L - 1 - k % L
+        if d == "bounce":
+            period = max(1, 2 * L - 2)
+            m = k % period
+            return m if m < L else period - m
+        if d == "random":
+            choices = [s for s in range(L) if s != self.last_random] or [0]
+            self.last_random = random.choice(choices)
+            return self.last_random
+        return k % L
+
+    def position(self, bt):
+        return self.last_pattern_step if self.running else None
+
+    def trigger(self, track, bar, level, gate_beats, bt):
+        t = self.pattern.tracks[track]
+        old = self.voices.get((track, bar))
+        frm = (old.env_value(bt) or 0.0) if old else 0.0
+        self.voices[(track, bar)] = Voice(track, bar, bt, float(level), gate_beats, t.envelope, min(1.0, frm))
+
+    def release(self, track, bar, bt):
+        v = self.voices.get((track, bar))
+        if v and v.gate is None:
+            v.gate = max(0.0, bt - v.start)
+
+    def tick(self, bt):
+        """Advance to beat time bt. Returns {(track, bar): level} for every level that changed."""
+        if self.running:
+            if self.pending is not None and self.last_bt is not None \
+                    and math.floor(bt / BAR_BEATS) > math.floor(self.last_bt / BAR_BEATS):
+                self.switch_pattern(self.pending, bt, now=True)
+            k = self.abs_step(bt)
+            if k != self.last_step:
+                self.last_step = k
+                s = self.pattern_step(k)
+                self.last_pattern_step = s
+                sb = self.step_beats()
+                for ti, tr in enumerate(self.pattern.tracks[:self.n_tracks]):
+                    for bar, steps in tr.steps.items():
+                        if s in steps:
+                            level, gate = steps[s]
+                            self.trigger(ti, bar, level, (tr.gate if gate is None else gate) * sb, bt)
+        self.last_bt = bt
+        out = {}
+        for key, v in list(self.voices.items()):
+            e = v.env_value(bt)
+            if e is None:
+                del self.voices[key]
+                value = 0.0
+            else:
+                value = e * v.level * self.pattern.tracks[key[0]].level
+            value = round(value, 4)
+            if self.levels.get(key) != value:
+                self.levels[key] = value
+                out[key] = value
+        return out
 
     # ---- storage ------------------------------------------------------------ #
     def to_dict(self):

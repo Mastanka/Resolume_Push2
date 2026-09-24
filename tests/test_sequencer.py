@@ -84,6 +84,51 @@ def test_patterns_and_yaml():
     assert sq2.pattern.length == 16
 
 
+def test_playback():
+    sq = S.Sequencer()
+    sq.grid = "1/4"                                     # 1 beat per step
+    sq.set_length(4)
+    sq.toggle_step("A", 0); sq.toggle_step("B", 2, level=0.5)
+    sq.track = 1
+    sq.pattern.tracks[1].envelope = S.Envelope(release=0.0)
+    sq.pattern.tracks[1].gate = 1.0
+    sq.toggle_step("A", 1)
+    sq.start(4.3)                                        # aligned to the last bar boundary (4.0)
+    assert sq.start_beat == 4.0
+    out = sq.tick(4.3)
+    assert out == {(0, "A"): 1.0}, out                   # step 0 fires for track 0, gate 0.5 beat
+    assert sq.tick(4.4) == {}                            # nothing changed
+    assert sq.tick(4.95) == {(0, "A"): 0.0}              # gate 0.5 + release 0.1 → off after 4.9; edge sent once
+    out = sq.tick(5.1)
+    assert out == {(1, "A"): 1.0}, out                   # track 1's step 1
+    out = sq.tick(6.15)
+    assert out == {(1, "A"): 0.0, (0, "B"): 0.5}, out    # track 1's 1-beat gate closed at 6.1, step 2 fires
+    assert sq.position(6.15) == 2
+    assert sq.tick(7.0) == {(0, "B"): 0.0}
+    sq.set_direction("reverse")
+    assert [sq.pattern_step(k) for k in range(5)] == [3, 2, 1, 0, 3]
+    sq.set_direction("bounce")
+    assert [sq.pattern_step(k) for k in range(7)] == [0, 1, 2, 3, 2, 1, 0]
+    sq.set_direction("random")
+    seen = {sq.pattern_step(k) for k in range(50)}
+    assert seen <= {0, 1, 2, 3} and len(seen) > 1
+    # swing: odd steps start later
+    sq.set_direction("forward"); sq.pattern.swing = 0.5
+    assert sq.abs_step(5.2) == 0 and sq.abs_step(5.3) == 1
+    # manual trigger / release (pad held)
+    sq.stop()
+    sq.trigger(0, "C", 1.0, None, 20.0)
+    assert sq.tick(21.0) == {(0, "C"): 1.0}
+    sq.release(0, "C", 21.0)
+    assert sq.tick(21.2) == {(0, "C"): 0.0}                # 0.1 beat release finished
+    # pattern switch waits for the bar boundary
+    sq.start(8.0)
+    sq.copy_pattern(0, 1); sq.switch_pattern(1, 8.5)
+    sq.tick(8.5); assert sq.current == 0 and sq.pending == 1
+    sq.tick(12.01); assert sq.current == 1 and sq.pending is None and sq.start_beat == 12.0
+    sq.switch_pattern(2, 13.0, now=True); assert sq.current == 2
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):
