@@ -22,5 +22,6 @@ M ≈ a session, L = more than one session.
 | F15 | Deck switching | Switch Resolume decks from the Push | M | |
 | F16 | Live updates (WebSocket) | Resolume pushes changes instead of polling 4×/s: faster, lighter | L | done |
 | F17 | Autostart + installer | Start with the Mac; simple install script | S–M | |
+| F18 | Step sequencer (SEQ) | Drum-rack style chaser for the LED bars with ADSR, patterns, per-bar layers engine — see `docs/specs/2026-09-24-step-sequencer-design.md` | L | spec approved |
 
 Placement of the done features: see the controls table in README.md.
