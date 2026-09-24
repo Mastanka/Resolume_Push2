@@ -23,6 +23,12 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 | `resolume_check.py` | `--check LAYER`: tries every Resolume call on a spare layer, undoes it, prints OK/FAIL |
 | `colors.yaml` | Own COLOR palette (Shift + BD saves), Štefan's show data |
 | `display.py` | `render()`: draws a `Bridge.snapshot()` on the 960×160 display, `LAYER_RGB` |
+| `sequencer.py` | SEQ logic, pure: bars from the Advanced Output preset XML, `Envelope`, `Track` / `Pattern`, `Sequencer` (editing, `tick()`, `chases.yaml`) |
+| `chaser_engine.py` | `LayerEngine`: one Resolume layer per (track, bar), found by the Crop effect's display name `CH:T<n>:<bar>` |
+| `chases.yaml` | Sequencer patterns, Štefan's show data |
+| `tests/test_sequencer.py` | Pure tests for `sequencer.py` (no mock) |
+| `tests/test_engine.py` | `LayerEngine` + new REST calls against the mock |
+| `tests/fixtures/preset_small.xml` | 3-bar Advanced Output preset for tests |
 | `config.yaml` | Resolume host/port, grid offsets, encoder steps, per-layer parameter slots |
 | `pins.yaml` | Param order for auto layers, written by the bridge (Convert move). Štefan's show data |
 | `docs/specs/` | Short design specs per feature |
@@ -76,7 +82,9 @@ python push_resolume_bridge.py --dump 3   # list parameter paths for layer 3 (fo
 | – | `Mute` / `Solo` | Hold + pad = mute (layer `bypassed`) / solo that layer |
 | – | `Master` (right of BD row) | COLOR on the composition's Colorize (master colour) |
 | – | `Duplicate` | COLOR: hold + pad / scene button / BD = paste colour to clip / layer / column |
-| – | `1/32t` … `1/4` (right of pads) | Flash: hold = that row's layer master 100 % |
+| – | `1/32t` … `1/4` (right of pads) | Flash: hold = that row's layer master 100 %. SEQ: grid |
+| – | `Note` / `Session` / BU4 | SEQ mode / back to the clip grid. Shift + Note = build bar layers |
+| – | `Browse`, `Repeat`, `Accent`, `Delete`, `Double Loop`, `Fixed Length`, `Octave Up/Down`, `Swing Encoder` | SEQ only, see `docs/specs/2026-09-24-step-sequencer-design.md` |
 
 ## Pads
 
@@ -98,6 +106,11 @@ Playing pads pulse between full and `L{k}_mid` on the beat; muted / non-solo lay
   Opacity, K8 = on/off (`bypassed`). Paste (`paste_color`) matches the param by `color_label()`.
 - **fx** (BU3): `fx_list()` = clip, layer, composition effects; K = effect `Opacity` param, BD = `bypassed`.
   Page ◀▶ = `fx_page`.
+- **seq** (Note / BU4): pads = Push's Loop Selector layout (steps / bars / patterns), BD1–4 = texture
+  tracks, knobs = the selected track's ADSR + Gate + Level and the pattern's Direction + Length.
+  `Bridge.seq` (`Sequencer`), `Bridge.engine` (`LayerEngine`), `Bridge.bars` (from the preset in
+  `sequencer.preset`), `seq_loop` thread at 100 Hz → `engine.set_level` → WebSocket `set`. Bar layers
+  are hidden from the pad grid and MIX via `visible_layers()`. Spec + plan in `docs/`.
 - **mix** (B_3 toggles, B_3 lit white): K1–K8 = `layer.master` (fallback `video/opacity`),
   K1 = top visible layer, going down; K11 = `composition.master`. BD = mute, Solo + BD = solo.
 - Always: blackout (`Bridge.blackout` = saved master), flash (`Bridge.flash`), beat clock
@@ -153,6 +166,13 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
   `select`, clip connect true/false, layer `/clear`, WebSocket subscribe by id.
   **ParamChoice: only `{"value": "<option name>"}` works; `{"index": i}` → HTTP 400.**
   Column launch `POST /composition/columns/{n}/connect` true/false works too (`--check-columns`).
+- Composition editing (verified on the mock, on Arena via `--check` steps "WebSocket set", "Open source
+  into a clip", "Add Crop + display name + delete", "Set string (layer name)"): `POST /composition/layers/add`
+  (text body `/composition/layers/N` or empty = on top), `POST …/layers/{L}/effects/video/add` (text
+  `effect:///video/Crop`, spaces as `%20` — verified on Arena), `DELETE …/effects/video/{offset}`
+  (0-based, verified), `POST …/effects/video/{i}/set-display-name` (text), `POST …/clips/{C}/open`
+  (text `source:///video/<name>` or `file:///…`), `POST …/clips/{C}/clear`, WebSocket
+  `{"action": "set", "parameter": "/parameter/by-id/<id>", "value": v}`.
 
 **push2-python** (ffont/push2-python):
 - Only the **first** registered handler per action is called (`trigger_action` calls `func[0]`).
@@ -187,12 +207,15 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
 Always run before handing changes back:
 ```
 python tests/mock_resolume.py &
+python tests/test_sequencer.py      # pure logic, no mock needed
+python tests/test_engine.py         # restart the mock before each script: they change its composition
 python tests/test_fake_push.py      # must print OK (runs on the mock's WebSocket)
 TEST_POLL=1 python tests/test_fake_push.py   # same with the WebSocket off (polling fallback)
 python tests/render_preview.py      # then look at tests/preview_*.png for display changes
 python -c "import ast; ast.parse(open('push_resolume_bridge.py').read(), feature_version=(3,9))"
 ```
-Extend `tests/mock_resolume.py` when touching new parts of the JSON. Final check is always on the
+Extend `tests/mock_resolume.py` when touching new parts of the JSON. The test scripts refuse to run
+unless `GET /product` says "Mock Resolume" (the mock binds 127.0.0.1:8080 even while Arena runs on *:8080). Final check is always on the
 real Push + Arena, done by Štefan.
 
 ## Backlog (ideas, not commitments)

@@ -43,6 +43,7 @@ Usage
     python push_resolume_bridge.py --dump 3        list parameter paths for layer 3 (for config.yaml)
     python push_resolume_bridge.py --dump 3 --clip 2
     python push_resolume_bridge.py --check 8       test every Resolume call on layer 8 (undone after)
+    python push_resolume_bridge.py --setup-chaser  build the step sequencer's bar layers (--dry-run = plan only)
 """
 
 from __future__ import annotations
@@ -1710,6 +1711,9 @@ def main():
     ap.add_argument("--check", type=int, metavar="LAYER",
                     help="try every Resolume call on this (spare) layer, undo each, report OK/FAIL")
     ap.add_argument("--check-columns", action="store_true", help="with --check: also launch a column")
+    ap.add_argument("--setup-chaser", action="store_true",
+                    help="build / update the step sequencer's bar layers from the Advanced Output preset")
+    ap.add_argument("--dry-run", action="store_true", help="with --setup-chaser: only print what would change")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -1718,6 +1722,19 @@ def main():
         from resolume_check import Checker
         ok = Checker(cfg["resolume"]["host"], cfg["resolume"]["port"], args.check).run(args.check_columns)
         sys.exit(0 if ok else 1)
+    elif args.setup_chaser:
+        bridge = Bridge(cfg, rest)
+        for w in bridge.bar_warnings:
+            print("warning:", w)
+        if not bridge.bars:
+            sys.exit(1)
+        print(f"{len(bridge.bars)} bars:", ", ".join(b.name for b in bridge.bars))
+        bridge.refresh_comp()
+        if bridge.comp is None:
+            sys.exit(f"Resolume not reachable at {rest.url}")
+        tracks = max(1, len([t for t in bridge.seq.pattern.tracks if t.texture]) or 1)
+        for line in bridge.engine.setup(bridge.bars, tracks, args.dry_run):
+            print(" ", line)
     elif args.dump:
         dump(rest, args.dump, args.clip)
     else:

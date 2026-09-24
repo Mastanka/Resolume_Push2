@@ -30,6 +30,8 @@ it works with any Resolume deck.
 - **FX:** switch the clip's, layer's and composition's effects on and off, with their amount on the knobs.
 - **Mix:** one knob per layer master, plus the composition master; mute and solo per layer.
 - **Tempo:** Tap Tempo (Resolume's own tap), resync, a BPM knob, and a beat indicator.
+- **Step sequencer:** a drum-rack style chaser for LED bars. Up to 4 textures flash across the bars in
+  16-pattern step sequences with ADSR envelopes, edited on the pads like Push's own drum sequencer.
 
 It talks to Resolume through Resolume's own REST API and WebSocket (live updates), so there is nothing to install in Resolume and
 your deck stays unchanged. Other MIDI controllers mapped in Resolume keep working alongside it.
@@ -141,6 +143,31 @@ The Push display shows your deck. Press **Ctrl+C** to quit.
 | **Tempo knob** (far left) | BPM ±1, Shift ±0.1 |
 | **Metronome** | Pads pulse on the beat on / off |
 
+**Step sequencer (SEQ)** — press **Note** (or the 4th button above the display); **Session** goes back to the clip grid.
+Run `python push_resolume_bridge.py --setup-chaser` once (or **Shift + Note**): it reads your saved Advanced Output
+preset and builds one cropped layer per bar and texture track.
+
+```
+rows 1–4   32 steps of the selected track on the selected bar (green = playhead)
+rows 5–8   left 4×4 = bars (bottom-left = bar 1)   right 4×4 = patterns 1–16
+```
+
+| Control | Does |
+|---|---|
+| Tap a step | On / off; tap harder for a brighter flash (**Accent** = always full) |
+| Hold a step + knob 8 / 5 | That step's level / gate |
+| Bar pad | Select the bar and flash it; **Repeat** on + hold = strobe at the grid rate |
+| Buttons below the display 1–4 | Select the texture track (each has its own envelope) |
+| **Browse** / Browse + track button / Browse + bar pad | Load the clip selected in the grid as texture into the selected track / that track / one bar |
+| Pattern pad | Switch at the next bar; Shift = now |
+| **Play** | Run / stop |
+| Buttons right of the pads | Grid 1/4 … 1/32t |
+| **Delete** + step / bar / track / pattern | Clear |
+| **Duplicate** + pattern → pattern | Copy |
+| **Double Loop** / **Fixed Length** + button 1–8 | Double the pattern / length 4–32 |
+| **Octave ▲ ▼** | Next 16 bars (rigs with more than 16) |
+| Knobs | Attack, Decay, Sustain, Release, Gate, Direction, Length, Level; Swing encoder = swing |
+
 ## Configuration
 
 Everything is in [`config.yaml`](config.yaml): Resolume address, knob step sizes, and optionally
@@ -152,7 +179,7 @@ python push_resolume_bridge.py --dump 3 --clip 2   # layer 3, clip 2
 ```
 
 The parameter order you set with **Convert** is saved in `pins.yaml`, your own colours in
-`colors.yaml`. Delete either file to go back to the defaults.
+`colors.yaml`, sequencer patterns in `chases.yaml`. Delete any of them to go back to the defaults.
 
 | Command line | |
 |---|---|
@@ -161,6 +188,7 @@ The parameter order you set with **Convert** is saved in `pins.yaml`, your own c
 | `--dump LAYER [--clip COLUMN]` | List parameter paths for `config.yaml` |
 | `--config FILE` | Use a different config file |
 | `--check LAYER` | Test every Resolume command on a spare layer (each change is undone) and print OK / FAIL. Add `--check-columns` to also launch a column |
+| `--setup-chaser` | Build / update the step sequencer's bar layers from your Advanced Output preset (`--dry-run` = only print the plan) |
 
 ## Ideas and feedback welcome
 
