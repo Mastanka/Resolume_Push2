@@ -85,3 +85,49 @@ def load_preset_bars(path, groups=None, disabled=()):
             bars.append(Bar(name, *r, [name]))
     bars.sort(key=lambda b: (b.left, b.top))
     return bars, warnings
+
+
+# --------------------------------------------------------------------------- #
+# Envelope
+# --------------------------------------------------------------------------- #
+
+@dataclass
+class Envelope:
+    attack: float = 0.0      # beats
+    decay: float = 0.0       # beats
+    sustain: float = 1.0     # 0..1
+    release: float = 0.1     # beats
+
+
+def env_value(env, t, gate, from_level=0.0):
+    """Envelope level at t beats after the trigger. `gate` = beats the gate stays open
+    (None = still held). Returns None once the release has finished."""
+    def held(t):
+        if t < env.attack:
+            return from_level + (1.0 - from_level) * t / env.attack
+        t2 = t - env.attack
+        if t2 < env.decay:
+            return 1.0 + (env.sustain - 1.0) * t2 / env.decay
+        return env.sustain
+
+    if gate is None or t < gate:
+        return held(t)
+    if env.release <= 0:
+        return None
+    r = (t - gate) / env.release
+    return None if r >= 1.0 else held(gate) * (1.0 - r)
+
+
+@dataclass
+class Voice:
+    """One flash of a track on a bar."""
+    track: int
+    bar: str
+    start: float           # beat time of the trigger
+    level: float           # step level 0..1 (pad velocity)
+    gate: float            # beats, or None while a pad is held
+    env: Envelope
+    from_level: float = 0.0
+
+    def env_value(self, bt):
+        return env_value(self.env, bt - self.start, self.gate, self.from_level)
