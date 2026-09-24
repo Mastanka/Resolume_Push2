@@ -50,6 +50,40 @@ def test_envelope():
     assert abs(v.env_value(10.5) - 0.5) < 1e-9
 
 
+def test_patterns_and_yaml():
+    import tempfile
+    path = Path(tempfile.mkdtemp()) / "chases.yaml"
+    sq = S.Sequencer(path)
+    assert len(sq.patterns) == 16 and sq.pattern.name == "P1" and sq.pattern.length == 16
+    assert sq.toggle_step("Bar A", 0, level=0.8) is True
+    assert sq.toggle_step("Bar A", 4) is True
+    assert sq.toggle_step("Bar A", 0) is False                       # toggled off
+    assert sq.pattern.tracks[0].steps == {"Bar A": {4: [1.0, None]}}
+    sq.track = 1
+    sq.toggle_step("Bar B", 2, level=0.5, gate=0.9)
+    sq.set_step_values("Bar B", [2], level=0.6)
+    assert sq.pattern.tracks[1].steps["Bar B"][2] == [0.6, 0.9]
+    sq.pattern.tracks[1].envelope.attack = 0.5
+    sq.set_length(8)
+    sq.double_loop()
+    assert sq.pattern.length == 16 and sq.pattern.tracks[0].steps["Bar A"] == {4: [1.0, None], 12: [1.0, None]}
+    sq.set_direction("bounce")
+    sq.copy_pattern(0, 3)
+    assert sq.patterns[3].direction == "bounce" and sq.patterns[3].tracks[1].steps["Bar B"][2] == [0.6, 0.9]
+    assert sq.patterns[3].tracks[1].envelope.attack == 0.5
+    sq.clear_steps("Bar A", track=0)
+    assert "Bar A" not in sq.pattern.tracks[0].steps
+    sq.clear_pattern(3)
+    assert sq.patterns[3].tracks[1].steps == {} and sq.patterns[3].direction == "forward"
+    sq.pattern.tracks[0].texture = {"source": "Metaballs", "params": {"Grid": 20}}
+    sq.save()
+    sq2 = S.Sequencer(path)
+    assert sq2.pattern.tracks[1].steps["Bar B"][2] == [0.6, 0.9]
+    assert sq2.pattern.tracks[1].envelope.attack == 0.5 and sq2.pattern.direction == "bounce"
+    assert sq2.pattern.tracks[0].texture == {"source": "Metaballs", "params": {"Grid": 20}}
+    assert sq2.pattern.length == 16
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):
