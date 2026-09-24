@@ -98,6 +98,12 @@ def ws_recv(h):
     data = bytes(c ^ mask[i % 4] for i, c in enumerate(h.rfile.read(n)))
     return b1 & 0x0F, data
 
+def ws_broadcast_comp():
+    """Like Arena: the whole composition goes to every socket when its structure changes."""
+    for h in list(WS_CLIENTS):
+        try: ws_send(h, COMP)
+        except Exception: pass
+
 def ws_broadcast():
     for h in list(WS_CLIENTS):
         for pid, last in list(h.subs.items()):
@@ -154,7 +160,7 @@ class H(BaseHTTPRequestHandler):
                 COMP["layers"].insert(int(b.strip().rsplit("/", 1)[-1]) - 1, L)
             else:
                 COMP["layers"].append(L)
-            self.send_response(204); self.end_headers(); return
+            self.send_response(204); self.end_headers(); ws_broadcast_comp(); return
         if len(parts) > 8 and parts[6] == "effects" and parts[7] == "video":
             layer = COMP["layers"][int(parts[5]) - 1]
             if parts[8] == "add":
@@ -165,14 +171,14 @@ class H(BaseHTTPRequestHandler):
                 index(fx); layer["video"]["effects"].append(fx)
             elif len(parts) > 9 and parts[9] == "set-display-name":
                 layer["video"]["effects"][int(parts[8])]["display_name"] = b.strip()
-            self.send_response(204); self.end_headers(); return
+            self.send_response(204); self.end_headers(); ws_broadcast_comp(); return
         if len(parts) > 8 and parts[6] == "clips" and parts[8] in ("open", "clear"):
             layer, C = COMP["layers"][int(parts[5]) - 1], int(parts[7]) - 1
             if parts[8] == "clear": c = clip(None)
             elif b.startswith("source:///video/"): c = source_clip(unquote(b[len("source:///video/"):].strip()))
             else: c = file_clip(unquote(b[len("file://"):].strip()))
             index(c); layer["clips"][C] = c
-            self.send_response(204); self.end_headers(); ws_broadcast(); return
+            self.send_response(204); self.end_headers(); ws_broadcast_comp(); return
         if parts[-2:-1] and parts[-3] == "columns" and parts[-1] == "connect" and b == "true":
             n = int(parts[-2])
             for layer in COMP["layers"]:
@@ -202,7 +208,7 @@ class H(BaseHTTPRequestHandler):
         if len(parts) > 8 and parts[6] == "effects" and parts[7] == "video":
             fx = COMP["layers"][int(parts[5]) - 1]["video"]["effects"]; i = int(parts[8])
             if i >= len(fx): self.send_response(404); self.end_headers(); return
-            fx.pop(i); self.send_response(204); self.end_headers(); return
+            fx.pop(i); self.send_response(204); self.end_headers(); ws_broadcast_comp(); return
         self.send_response(404); self.end_headers()
     def do_PUT(self):
         b = self._body(); print("PUT", self.path, b, flush=True)

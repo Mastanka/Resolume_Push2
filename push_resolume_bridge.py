@@ -63,6 +63,7 @@ from pathlib import Path
 import requests
 import yaml
 
+from chaser_engine import LayerEngine
 from display import LAYER_RGB, render  # noqa: F401  (render re-exported for tests/tools)
 from resolume_api import (  # noqa: F401
     Resolume, ResolumeWS, Sender, clip_state, color_label, fmt_value, hex_to_rgba, is_param, label_of,
@@ -211,6 +212,10 @@ class Bridge:
     def layers(self):
         return (self.comp or {}).get("layers") or []
 
+    def visible_layers(self):
+        """1-based indices of layers shown on the pads and in MIX (bar layers are hidden)."""
+        return [i for i, l in enumerate(self.layers(), 1) if not LayerEngine.is_bar_layer(l)]
+
     def layer_json(self, L):
         layers = self.layers()
         return layers[L - 1] if 1 <= L <= len(layers) else None
@@ -222,8 +227,9 @@ class Bridge:
 
     def mix_layers(self):
         """Layers on encoders 1-8 in mix mode: top visible layer first."""
-        top = min(self.layer_offset + 8, len(self.layers()))
-        return list(range(top, max(self.layer_offset, 0), -1))[:8]
+        vis = self.visible_layers()
+        top = min(self.layer_offset + 8, len(vis))
+        return [vis[k] for k in range(top - 1, self.layer_offset - 1, -1)][:8]
 
     def max_cols(self):
         return max((len(l.get("clips") or []) for l in self.layers()), default=0)
@@ -725,8 +731,8 @@ class Bridge:
                 self.blackout = None
 
     def flash_layer(self, row, down):
-        L = self.layer_offset + (8 - row)
         with self.lock:
+            L = self.pad_to_cell(row, 0)[0]
             p = master_param(self.layer_json(L))
             if p is None:
                 return
@@ -762,7 +768,9 @@ class Bridge:
         return text(cols[n - 1].get("connected"), "Empty") if 1 <= n <= len(cols) else "Empty"
 
     def pad_to_cell(self, i, j):
-        return self.layer_offset + (8 - i), self.col_offset + j + 1
+        vis = self.visible_layers()
+        k = self.layer_offset + (7 - i)
+        return (vis[k] if 0 <= k < len(vis) else 0), self.col_offset + j + 1
 
     def pad_pressed(self, ij):
         L, C = self.pad_to_cell(*ij)
@@ -827,11 +835,11 @@ class Bridge:
             if down:
                 with self.lock:
                     if name in SCENE_BUTTONS:          # whole layer of that pad row
-                        L = self.layer_offset + (8 - SCENE_BUTTONS.index(name))
+                        L = self.pad_to_cell(SCENE_BUTTONS.index(name), 0)[0]
                         cells = [(L, c) for c in range(1, len((self.layer_json(L) or {}).get("clips") or []) + 1)]
                     else:                              # whole column above that button
                         C = self.col_offset + LOWER_ROW.index(name) + 1
-                        cells = [(l, C) for l in range(1, len(self.layers()) + 1)]
+                        cells = [(l, C) for l in self.visible_layers()]
                     self.paste_color(cells)
             return
         if name in SCENE_BUTTONS:
@@ -865,7 +873,7 @@ class Bridge:
             return
         jump = 8 if self.shift else 1
         with self.lock:
-            max_l = max(0, len(self.layers()) - 8)
+            max_l = max(0, len(self.visible_layers()) - 8)
             max_c = max(0, self.max_cols() - 8)
             if name == "Up":
                 self.layer_offset = min(max_l, self.layer_offset + jump)
@@ -971,7 +979,7 @@ class Bridge:
                 else:
                     out[b] = "black" if k >= pages else ("white" if k == self.page else "dark_gray")
             for i, b in enumerate(SCENE_BUTTONS):
-                L = self.layer_offset + (8 - i)
+                L = self.pad_to_cell(i, 0)[0]
                 out[b] = ("black" if self.layer_json(L) is None
                           else f"L{(L - 1) % 8}" if L in self.flash else f"L{(L - 1) % 8}_dim")
             all_l = range(1, len(self.layers()) + 1)

@@ -309,6 +309,23 @@ if not POLL_ONLY:
         "external mute of layer 3 didn't reach the pads via WebSocket"
     requests.put(f"http://127.0.0.1:8080/api/v1/parameter/by-id/{L3['bypassed']['id']}", json={"value": False})
 
+# --- bar layers (CH:) are hidden from the pad grid and MIX
+n_before = len(rest.composition()["layers"])
+assert rest.add_layer() == 204
+assert rest.add_effect(n_before + 1, "Crop") == 204
+assert rest.set_effect_display_name(n_before + 1, 0, "CH:T1:Test bar") == 204
+time.sleep(1.2)                                   # WebSocket / poll picks the new layer up
+n0 = len(calls)
+fire("on_button_pressed", "Up"); fire("on_button_pressed", "Down")
+time.sleep(0.3)
+top_pads = [a for n, a in calls[n0:] if n == "pad" and a[0][0] == 0]
+assert all(a[1] == "black" for a in top_pads), "hidden bar layer must not appear on the top pad row"
+fire("on_button_pressed", "Mix"); time.sleep(0.3)
+assert ("btn", ("Lower Row 3", "L0")) in calls[n0:], "MIX: K3 must be layer 1 (3 visible layers, top first)"
+assert not any(n == "btn" and a[0] == "Lower Row 4" and a[1] != "black" for n, a in calls[n0:]), \
+    "MIX must not show the hidden bar layer"
+fire("on_button_pressed", "Mix")
+
 if not POLL_ONLY:
     assert "live updates off" not in "".join(sys.stdout.text), "WebSocket thread crashed during the test"
 
