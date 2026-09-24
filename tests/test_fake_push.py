@@ -68,6 +68,9 @@ pins = Path(tempfile.mkdtemp()) / "pins.yaml"       # never touch the real pins.
 cfg["pins_file"] = str(pins)
 colors_file = pins.with_name("colors.yaml")          # never touch the real colors.yaml
 cfg["colors_file"] = str(colors_file)
+cfg["sequencer"] = {"preset": str(Path(__file__).resolve().parent / "fixtures" / "preset_small.xml"),
+                    "bars": "auto", "disabled": ["Bar A copy"], "layer_prefix": "CH: ", "clip_column": 1, "tracks": 4}
+cfg["chases_file"] = str(pins.with_name("chases.yaml"))
 cfg["resolume"]["ws_refresh"] = 30.0     # REST safety refresh rare → everything below runs on live updates
 POLL_ONLY = os.environ.get("TEST_POLL") == "1"      # TEST_POLL=1: WebSocket off, test the polling fallback
 cfg["resolume"]["websocket"] = not POLL_ONLY
@@ -325,6 +328,48 @@ assert ("btn", ("Lower Row 3", "L0")) in calls[n0:], "MIX: K3 must be layer 1 (3
 assert not any(n == "btn" and a[0] == "Lower Row 4" and a[1] != "black" for n, a in calls[n0:]), \
     "MIX must not show the hidden bar layer"
 fire("on_button_pressed", "Mix")
+
+# --- F18 SEQ: setup, steps, run, LEDs
+fire("on_pad_pressed", 60, (7, 0), 100); fire("on_pad_released", 60, (7, 0), 0)     # select L1 C1 (Stroboscope)
+fire("on_button_pressed", "Shift"); fire("on_button_pressed", "Note")               # Shift + Note = setup
+fire("on_button_released", "Note"); fire("on_button_released", "Shift")
+time.sleep(2.5)
+names = [e["display_name"] for l in rest.composition()["layers"] for e in l["video"]["effects"] if e["name"] == "Crop"]
+assert "CH:T1:Bar A" in names and "CH:T1:Bar C" in names and "CH:T1:Bar A copy" not in names, names
+fire("on_button_pressed", "Note")                                                    # SEQ mode
+time.sleep(0.3)
+assert ("btn", ("Note", "white")) in calls and ("btn", ("Lower Row 1", "L0")) in calls, "SEQ LEDs"
+fire("on_button_pressed", "Browse"); fire("on_button_released", "Browse")           # texture → track 1
+time.sleep(1.5)
+ch = [l for l in rest.composition()["layers"] if l["name"]["value"].startswith("CH: T1")]
+assert ch and all(l["clips"][0]["video"]["description"] == "Stroboscope" for l in ch), "Browse must load the texture"
+fire("on_button_pressed", "1/16"); fire("on_button_released", "1/16")               # grid 1/16
+fire("on_pad_pressed", 60, (7, 0), 100); fire("on_pad_released", 60, (7, 0), 0)     # select bar 1 (Bar A) + audition
+fire("on_pad_pressed", 60, (0, 0), 127); fire("on_pad_released", 60, (0, 0), 0)     # step 1 on
+fire("on_pad_pressed", 60, (0, 4), 64); fire("on_pad_released", 60, (0, 4), 0)      # step 5 on, half level
+fire("on_pad_pressed", 60, (7, 1), 100); fire("on_pad_released", 60, (7, 1), 0)     # select bar 2 (Bar B)
+fire("on_pad_pressed", 60, (0, 2), 127); fire("on_pad_released", 60, (0, 2), 0)     # step 3 on
+time.sleep(0.3)
+assert ("pad", ((0, 2), "L0")) in calls, "step pads show the track colour"
+chases = yaml.safe_load(open(cfg["chases_file"]).read())
+assert chases["patterns"][0]["tracks"][0]["steps"]["Bar A"][1][1] < 0.6, "step level = pad velocity"
+log0 = len(requests.get("http://127.0.0.1:8080/api/v1/_opacity_log").json())
+fire("on_button_pressed", "Play")                                                    # run
+time.sleep(2.6)                                                                      # > one 16-step pattern at ~120 BPM
+fire("on_button_pressed", "Play")                                                    # stop
+time.sleep(0.5)
+log = requests.get("http://127.0.0.1:8080/api/v1/_opacity_log").json()[log0:]
+ids = {l["name"]["value"]: l["video"]["opacity"]["id"] for l in rest.composition()["layers"] if l["name"]["value"].startswith("CH: T1")}
+a_on = [t for t, pid, v in log if pid == ids["CH: T1 Bar A"] and v > 0.9]
+b_on = [t for t, pid, v in log if pid == ids["CH: T1 Bar B"] and v > 0.9]
+assert a_on and b_on, (a_on, b_on)
+step = 60.0 / rest.composition()["tempocontroller"]["tempo"]["value"] / 4          # 1/16 at the mock's BPM
+assert any(1.5 * step < b - a < 2.5 * step for a in a_on for b in b_on), "Bar B (step 3) must follow Bar A (step 1) by 2 steps"
+assert any(pid == ids["CH: T1 Bar A"] and v == 0.0 for _, pid, v in log), "release must reach 0"
+assert ("btn", ("Play", "green")) in calls
+n1 = len(calls)
+fire("on_button_pressed", "Session"); time.sleep(0.3)
+assert ("btn", ("Note", "dark_gray")) in calls[n1:], "Session leaves SEQ"
 
 if not POLL_ONLY:
     assert "live updates off" not in "".join(sys.stdout.text), "WebSocket thread crashed during the test"

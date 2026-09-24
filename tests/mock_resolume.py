@@ -21,6 +21,7 @@ def clip(name, state="Disconnected", gen=False):
          "video": {"opacity": rng(1), "effects": [{"name": "Transform", "id": next(ids), "bypassed": {"id": next(ids), "valuetype": "ParamBoolean", "value": False},
                    "params": {"Position X": rng(0, -16384, 16384), "Scale": rng(100, 0, 1000)}}]}}
     if gen:
+        c["video"]["description"] = name                   # Arena: generator clips carry the source name
         c["video"]["sourceparams"] = {"Frequency": rng(0.32), "Fade": {"id": next(ids), "valuetype": "ParamBoolean", "value": True},
                                       "Width": rng(0.5), "Height": rng(0.5), "Offset": rng(0.0),
                                       "Color": color("#ff8b58ff"), "BG Color": color("#00000000")}

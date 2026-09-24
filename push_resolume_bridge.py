@@ -64,6 +64,7 @@ import requests
 import yaml
 
 from chaser_engine import LayerEngine
+from sequencer import DIRECTIONS, Sequencer, load_preset_bars, newest_preset
 from display import LAYER_RGB, render  # noqa: F401  (render re-exported for tests/tools)
 from resolume_api import (  # noqa: F401
     Resolume, ResolumeWS, Sender, clip_state, color_label, fmt_value, hex_to_rgba, is_param, label_of,
@@ -98,7 +99,16 @@ NOTE_TIME = 1.8       # s a short message stays on the display
 PARAMS_BUTTON = "Upper Row 1"               # BU1
 COLOR_BUTTON = "Upper Row 2"                # BU2
 FX_BUTTON = "Upper Row 3"                   # BU3
-MENU_BUTTONS = {PARAMS_BUTTON: "params", COLOR_BUTTON: "color", FX_BUTTON: "fx"}
+SEQ_BUTTON = "Upper Row 4"                  # BU4 (also Note)
+NOTE_BUTTON, SESSION_BUTTON = "Note", "Session"
+BROWSE_BUTTON, REPEAT_BUTTON, ACCENT_BUTTON = "Browse", "Repeat", "Accent"
+DELETE_BUTTON, DOUBLE_LOOP_BUTTON, FIXED_LENGTH_BUTTON = "Delete", "Double Loop", "Fixed Length"
+OCTAVE_UP, OCTAVE_DOWN = "Octave Up", "Octave Down"
+SWING_ENCODER = "Swing Encoder"
+SEQ_KNOBS = ["Attack", "Decay", "Sustain", "Release", "Gate", "Direction", "Length", "Level"]
+SEQ_HZ = 100          # sequencer clock ticks per second
+PRESET_FOLDER = Path.home() / "Documents" / "Resolume Arena" / "Presets" / "Advanced Output"
+MENU_BUTTONS = {PARAMS_BUTTON: "params", COLOR_BUTTON: "color", FX_BUTTON: "fx", SEQ_BUTTON: "seq"}
 FX_SOURCES = [("Clip", "clip"), ("Layer", "layer"), ("Comp", "comp")]   # FX menu order
 UPPER_ROW = [f"Upper Row {i}" for i in range(1, 9)]
 LOWER_ROW = [f"Lower Row {i}" for i in range(1, 9)]
@@ -134,6 +144,9 @@ DEFAULT_CONFIG = {
     "stop_column": None,   # None = stop via /clear; N = trigger column N instead
     "pins_file": None,     # param order file; None = pins.yaml next to this script
     "colors_file": None,   # own palette (Shift + Lower Row in COLOR); None = colors.yaml here
+    "chases_file": None,   # step sequencer patterns; None = chases.yaml next to this script
+    "sequencer": {"preset": "newest", "bars": "auto", "disabled": [], "layer_prefix": "CH: ",
+                  "clip_column": 1, "tracks": 4},
     "layers": {"default": "auto"},
 }
 
@@ -207,6 +220,22 @@ class Bridge:
         self.overrides = {}        # param id -> (value, time sent)
         self.choice_acc = {}
         self.midi_reset = False
+        # ---- step sequencer (SEQ) ----
+        sc = cfg.get("sequencer") or {}
+        self.seq = Sequencer(cfg.get("chases_file") or Path(__file__).with_name("chases.yaml"),
+                             n_tracks=int(sc.get("tracks", 4)))
+        self.bars, self.bar_warnings = self.load_bars()
+        self.engine = LayerEngine(rest, lambda: self.comp, self.refresh_comp, self._send_level,
+                                  sc.get("layer_prefix", "CH: "), sc.get("clip_column", 1))
+        self.repeat = False
+        self.accent = False
+        self.delete_held = self.browse_held = self.fixed_len_held = False
+        self.browse_used = False
+        self.held_steps = set()    # step indices held on the pads
+        self.held_bars = {}        # bar name -> track, while a bar pad is held
+        self.dup_src = None        # Duplicate + pattern: source pattern
+        self.seq_note = ""         # last setup / load message (shown on the display)
+        self.last_grid_step = None
 
     # ---- composition access --------------------------------------------- #
     def layers(self):
@@ -303,6 +332,313 @@ class Bridge:
                 add_all(layer.get("video"))
             add_all(resolve_node(comp, "video/effects"))
         return ids
+
+    # ---- step sequencer ---------------------------------------------------------- #
+    def load_bars(self):
+        sc = self.cfg.get("sequencer") or {}
+        preset = sc.get("preset") or "newest"
+        path = Path(preset) if str(preset).endswith(".xml") else None
+        if path is None:
+            path = newest_preset(PRESET_FOLDER) if preset == "newest" else PRESET_FOLDER / f"{preset}.xml"
+        if not path or not Path(path).exists():
+            return [], [f"no Advanced Output preset ({preset}) — save one in Arena"]
+        groups = sc.get("bars") if isinstance(sc.get("bars"), list) else None
+        try:
+            bars, warnings = load_preset_bars(path, groups, sc.get("disabled") or [])
+        except Exception as e:
+            return [], [f"can't read {path}: {e}"]
+        for w in warnings:
+            print(f"[seq] {w}")
+        return bars, warnings
+
+    def refresh_comp(self):
+        try:
+            self.set_comp(self.rest.composition())
+        except Exception as e:
+            print(f"[seq] refresh failed: {e}", file=sys.stderr)
+
+    def _send_level(self, pid, value):
+        with self.lock:
+            n = self.index.get(pid)
+            if n is not None:
+                n["value"] = value
+        if self.live():
+            self.ws.set(pid, value)
+        else:
+            self.sender.param(pid, {"value": value})
+
+    def beat_time(self, now=None):
+        """Continuous beats since the beat anchor, or None without a tempo."""
+        p = self.tempo_param()
+        bpm = float(self.value_of(p) or 0) if p else 0.0
+        if bpm <= 0:
+            return None
+        t0, b0 = self.beat_anchor
+        return b0 + ((now or time.time()) - t0) * bpm / 60.0
+
+    def run_setup(self, dry_run=False):
+        if not self.bars:
+            msg = self.bar_warnings[0] if self.bar_warnings else "no bars"
+            self.seq_note = msg
+            self.note_msg(msg)
+            return [msg]
+        tracks = max(1, len([t for t in self.seq.pattern.tracks if t.texture]) or 1)
+        report = self.engine.setup(self.bars, tracks, dry_run)
+        self.seq_note = f"setup: {len(report)} layers" + (" (dry run)" if dry_run else "")
+        self.note_msg(self.seq_note)
+        return report
+
+    def seq_loop(self):
+        """100 Hz: feed beat time to the sequencer, send changed levels, handle Repeat."""
+        while True:
+            bt = self.beat_time()
+            changed = {}
+            if bt is not None:
+                with self.lock:
+                    sb = self.seq.step_beats()
+                    g = math.floor(bt / sb)
+                    if self.repeat and self.held_bars and g != self.last_grid_step:
+                        for bar, track in self.held_bars.items():
+                            tr = self.seq.pattern.tracks[track]
+                            self.seq.trigger(track, bar, 1.0, tr.gate * sb, bt)
+                    self.last_grid_step = g
+                    changed = self.seq.tick(bt)
+            for (track, bar), v in changed.items():
+                self.engine.set_level(track, bar, v)
+            time.sleep(1.0 / SEQ_HZ)
+
+    def bar_index(self, i, j):
+        """Pad (row i, col j) in the bar block → index into self.bars, or None."""
+        k = self.seq.bank * 16 + (7 - i) * 4 + j
+        return k if k < len(self.bars) else None
+
+    def pattern_index(self, i, j):
+        return (7 - i) * 4 + (j - 4)
+
+    def _seq_pad(self, ij, velocity, down):
+        i, j = ij
+        with self.lock:
+            bt = self.beat_time() or 0.0
+            if i < 4:                                              # steps
+                step = i * 8 + j
+                if not down:
+                    self.held_steps.discard(step)
+                    return
+                bar = self.bars[self.seq.bar].name if self.seq.bar < len(self.bars) else None
+                if bar is None or step >= self.seq.pattern.length:
+                    return
+                if self.delete_held:
+                    self.seq._steps(bar).pop(step, None)
+                    self.seq.save()
+                    return
+                self.held_steps.add(step)
+                self.seq.toggle_step(bar, step, 1.0 if self.accent else max(0.05, velocity / 127.0))
+            elif j < 4:                                            # bars
+                k = self.bar_index(i, j)
+                if k is None:
+                    return
+                bar = self.bars[k].name
+                track = self.seq.track
+                if not down:
+                    if bar in self.held_bars:
+                        self.seq.release(self.held_bars.pop(bar), bar, bt)
+                    return
+                if self.delete_held:
+                    self.seq.clear_steps(bar)
+                    return
+                if self.browse_held:
+                    self.browse_used = True
+                    self._load_texture(track, [bar])
+                    return
+                self.seq.bar = k
+                self.held_bars[bar] = track
+                self.seq.trigger(track, bar, 1.0, None, bt)
+            else:                                                  # patterns
+                if not down:
+                    return
+                p = self.pattern_index(i, j)
+                if self.delete_held:
+                    self.seq.clear_pattern(p)
+                elif self.paste_held:
+                    if self.dup_src is None:
+                        self.dup_src = p
+                    else:
+                        src, self.dup_src = self.dup_src, None
+                        self.seq.copy_pattern(src, p)
+                        self.note_msg(f"P{src + 1} copied to P{p + 1}")
+                else:
+                    self.seq.switch_pattern(p, bt, now=self.shift)
+
+    def _load_texture(self, track, bars=None):
+        clip = self.clip_json(*self.sel)
+
+        def work():
+            if not self.engine.ready(track) and self.bars:
+                self.engine.setup(self.bars, track + 1)
+            msg = self.engine.load_texture(track, clip, bars)
+            with self.lock:
+                if clip and (clip.get("video") or {}):
+                    v = clip["video"]
+                    info = v.get("fileinfo") if isinstance(v.get("fileinfo"), dict) else {}
+                    tex = {"file": info["path"]} if info and info.get("path") else {"source": text(v.get("description"))}
+                    self.seq.pattern.tracks[track].texture = tex
+                    self.seq.save()
+                self.note_msg(msg)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _seq_button(self, name, down):
+        """Buttons that mean something else while the pads are the sequencer. True = consumed."""
+        bt = self.beat_time() or 0.0
+        if name == DELETE_BUTTON:
+            self.delete_held = down
+            return True
+        if name == FIXED_LENGTH_BUTTON:
+            self.fixed_len_held = down
+            return True
+        if name == BROWSE_BUTTON:
+            if down:
+                self.browse_held, self.browse_used = True, False
+            else:
+                self.browse_held = False
+                if not self.browse_used:
+                    self._load_texture(self.seq.track)
+            return True
+        if name == PASTE_BUTTON:                                   # Duplicate: copy pattern
+            self.paste_held = down
+            if not down:
+                self.dup_src = None
+            return True
+        if not down:
+            return name in (PLAY_BUTTON, REPEAT_BUTTON, ACCENT_BUTTON, DOUBLE_LOOP_BUTTON,
+                            OCTAVE_UP, OCTAVE_DOWN) or name in SCENE_BUTTONS or name in LOWER_ROW
+        with self.lock:
+            if name == PLAY_BUTTON:
+                if self.seq.running:
+                    self.seq.stop()
+                else:
+                    self.seq.start(bt)
+                return True
+            if name == REPEAT_BUTTON:
+                self.repeat = not self.repeat
+                return True
+            if name == ACCENT_BUTTON:
+                self.accent = not self.accent
+                return True
+            if name == DOUBLE_LOOP_BUTTON:
+                self.seq.double_loop()
+                return True
+            if name in (OCTAVE_UP, OCTAVE_DOWN):
+                banks = max(1, math.ceil(len(self.bars) / 16))
+                self.seq.bank = min(banks - 1, max(0, self.seq.bank + (1 if name == OCTAVE_UP else -1)))
+                return True
+            if name in SCENE_BUTTONS:                              # grid, top button = 1/32t
+                self.seq.grid = name
+                return True
+            if name in LOWER_ROW:
+                k = LOWER_ROW.index(name)
+                if self.fixed_len_held:
+                    self.seq.set_length((k + 1) * 4)
+                elif k < self.seq.n_tracks:
+                    if self.delete_held:
+                        self.seq.clear_steps(track=k)
+                    elif self.browse_held:
+                        self.browse_used = True
+                        self._load_texture(k)
+                    else:
+                        self.seq.track = k
+                return True
+        return False
+
+    def _turn_seq(self, idx, inc):
+        seq, tr = self.seq, self.seq.pattern.tracks[self.seq.track]
+        fine = 0.2 if self.shift else 1.0
+        bar = self.bars[seq.bar].name if seq.bar < len(self.bars) else None
+        if self.held_steps and bar and idx in (4, 7):              # hold step + knob
+            st = seq._steps(bar)
+            for s_ in self.held_steps:
+                if s_ in st:
+                    if idx == 7:
+                        seq.set_step_values(bar, [s_], level=st[s_][0] + inc * 0.02 * fine)
+                    else:
+                        gate = st[s_][1] if st[s_][1] is not None else tr.gate
+                        seq.set_step_values(bar, [s_], gate=gate + inc * 0.02 * fine)
+            return
+        e = tr.envelope
+        if idx == 0:
+            e.attack = max(0.0, min(4.0, e.attack + inc * 0.05 * fine))
+        elif idx == 1:
+            e.decay = max(0.0, min(4.0, e.decay + inc * 0.05 * fine))
+        elif idx == 2:
+            e.sustain = max(0.0, min(1.0, e.sustain + inc * 0.01 * fine))
+        elif idx == 3:
+            e.release = max(0.0, min(4.0, e.release + inc * 0.05 * fine))
+        elif idx == 4:
+            tr.gate = max(0.1, min(1.0, tr.gate + inc * 0.02 * fine))
+        elif idx == 5:
+            acc = self.choice_acc.get("seqdir", 0) + inc
+            if abs(acc) >= 4:
+                i = (DIRECTIONS.index(seq.pattern.direction) + (1 if acc > 0 else -1)) % len(DIRECTIONS)
+                seq.set_direction(DIRECTIONS[i])
+                acc = 0
+            self.choice_acc["seqdir"] = acc
+        elif idx == 6:
+            seq.set_length(seq.pattern.length + inc)
+        elif idx == 7:
+            tr.level = max(0.0, min(1.0, tr.level + inc * 0.01 * fine))
+        seq.save()
+
+    def turn_swing(self, inc):
+        with self.lock:
+            p = self.seq.pattern
+            p.swing = max(0.0, min(1.0, p.swing + inc * 0.02))
+            self.seq.save()
+
+    def _seq_pad_colors(self):
+        grid = {}
+        seq = self.seq
+        pos = seq.position(self.beat_time() or 0.0)
+        bar_name = self.bars[seq.bar].name if seq.bar < len(self.bars) else None
+        steps = seq.pattern.tracks[seq.track].steps.get(bar_name, {}) if bar_name else {}
+        tc = seq.track % 8
+        lit = {}                                                   # bar name -> tracks with level > 0
+        for (t, bar), v in seq.levels.items():
+            if v > 0.02:
+                lit.setdefault(bar, set()).add(t)
+        blink = int(time.time() / BLINK) % 2 == 0
+        for i in range(8):
+            for j in range(8):
+                color = "black"
+                if i < 4:
+                    step = i * 8 + j
+                    if step < seq.pattern.length:
+                        if step == pos:
+                            color = "green"
+                        elif step in steps:
+                            lv = steps[step][0]
+                            color = f"L{tc}" if lv >= 0.66 else (f"L{tc}_mid" if lv >= 0.33 else f"L{tc}_dim")
+                        else:
+                            color = "dark_gray"
+                elif j < 4:
+                    k = self.bar_index(i, j)
+                    if k is not None:
+                        tracks = lit.get(self.bars[k].name, set())
+                        if len(tracks) > 1:
+                            color = "white"
+                        elif tracks:
+                            color = f"L{next(iter(tracks)) % 8}"
+                        elif k == seq.bar:
+                            color = "light_gray"
+                        else:
+                            color = "dark_gray"
+                else:
+                    p = self.pattern_index(i, j)
+                    has = any(t.steps for t in seq.patterns[p].tracks)
+                    if seq.pending == p:
+                        color = "white" if blink else "dark_gray"
+                    else:
+                        color = "white" if p == seq.current else ("dark_gray" if has else "black")
+                grid[(i, j)] = color
+        return grid
 
     def poll_loop(self):
         session = requests.Session()
@@ -437,6 +773,9 @@ class Bridge:
 
     def turn(self, idx, inc):
         with self.lock:
+            if self.mode == "seq":
+                self._turn_seq(idx, inc)
+                return
             if self.mode == "mix":
                 layers = self.mix_layers()
                 p = master_param(self.layer_json(layers[idx])) if idx < len(layers) else None
@@ -772,7 +1111,9 @@ class Bridge:
         k = self.layer_offset + (7 - i)
         return (vis[k] if 0 <= k < len(vis) else 0), self.col_offset + j + 1
 
-    def pad_pressed(self, ij):
+    def pad_pressed(self, ij, velocity=100):
+        if self.mode == "seq":
+            return self._seq_pad(ij, velocity, True)
         L, C = self.pad_to_cell(*ij)
         with self.lock:
             clip = self.clip_json(L, C)
@@ -805,6 +1146,8 @@ class Bridge:
         self.sender.trigger(L, C, True)
 
     def pad_released(self, ij):
+        if self.mode == "seq":
+            return self._seq_pad(ij, 0, False)
         cell = self.pad_to_cell(*ij)
         with self.lock:
             if cell not in self.pressed:
@@ -815,6 +1158,8 @@ class Bridge:
     def button(self, name, down):
         if name == "Shift":
             self.shift = down
+            return
+        if self.mode == "seq" and self._seq_button(name, down):
             return
         if name == PLAY_BUTTON:
             self.play_held = down
@@ -900,6 +1245,18 @@ class Bridge:
                 self.mode = MENU_BUTTONS[name]
                 self.move_src = None
                 self.color_target = "clip"
+                self.held_steps.clear()
+                self.held_bars.clear()
+            elif name == NOTE_BUTTON:
+                if self.shift:
+                    threading.Thread(target=self.run_setup, daemon=True).start()
+                else:
+                    self.mode = "seq"
+                    self.move_src = None
+            elif name == SESSION_BUTTON:
+                self.mode = "params"
+                self.held_steps.clear()
+                self.held_bars.clear()
             elif name == MASTER_COLOR_BUTTON:
                 master = self.mode == "color" and self.color_target == "master"
                 self.mode, self.color_target, self.color_idx = "color", "clip" if master else "master", 0
@@ -946,6 +1303,17 @@ class Bridge:
                    else "dark_gray",
                    PASTE_BUTTON: ("white" if self.paste_held else "dark_gray") if self.mode == "color"
                    else "black"}
+            seq = self.mode == "seq"
+            out[NOTE_BUTTON] = "white" if seq else "dark_gray"
+            out[SESSION_BUTTON] = "dark_gray" if seq else "white"
+            for b_, on in ((REPEAT_BUTTON, self.repeat), (ACCENT_BUTTON, self.accent), (DELETE_BUTTON, self.delete_held),
+                           (BROWSE_BUTTON, self.browse_held), (DOUBLE_LOOP_BUTTON, False),
+                           (FIXED_LENGTH_BUTTON, self.fixed_len_held),
+                           (OCTAVE_UP, len(self.bars) > 16), (OCTAVE_DOWN, len(self.bars) > 16)):
+                out[b_] = ("white" if on else "dark_gray") if seq else "black"
+            if seq:
+                out[PLAY_BUTTON] = "green" if self.seq.running else "dark_gray"
+                out[PASTE_BUTTON] = "white" if self.paste_held else "dark_gray"
             for b in UPPER_ROW:
                 out[b] = "black"
             for b, m in MENU_BUTTONS.items():
@@ -956,7 +1324,13 @@ class Bridge:
             mix_layers = self.mix_layers()
             fx_items = self.fx_page_items()[0] if self.mode == "fx" else []
             for k, b in enumerate(LOWER_ROW):
-                if self.play_held:                          # column launch view
+                if seq:
+                    if k < self.seq.n_tracks:
+                        has = self.seq.pattern.tracks[k].texture is not None
+                        out[b] = f"L{k}" if k == self.seq.track else (f"L{k}_dim" if has else "dark_gray")
+                    else:
+                        out[b] = "black"
+                elif self.play_held:                        # column launch view
                     st = self.column_state(self.col_offset + k + 1)
                     out[b] = {"Connected": "green", "Disconnected": "dark_gray"}.get(st, "black")
                 elif self.mode == "color":
@@ -979,6 +1353,9 @@ class Bridge:
                 else:
                     out[b] = "black" if k >= pages else ("white" if k == self.page else "dark_gray")
             for i, b in enumerate(SCENE_BUTTONS):
+                if seq:                                     # grid selection
+                    out[b] = "white" if b == self.seq.grid else "dark_gray"
+                    continue
                 L = self.pad_to_cell(i, 0)[0]
                 out[b] = ("black" if self.layer_json(L) is None
                           else f"L{(L - 1) % 8}" if L in self.flash else f"L{(L - 1) % 8}_dim")
@@ -995,6 +1372,8 @@ class Bridge:
     def pad_colors(self):
         grid = {}
         with self.lock:
+            if self.mode == "seq":
+                return self._seq_pad_colors()
             dim_live = self.pulse and self.online and not self.on_beat()
             for i in range(8):
                 for j in range(8):
@@ -1137,7 +1516,7 @@ def run(cfg, rest, sim=False):
 
     @push2_python.on_pad_pressed()
     def _pad_down(push, pad_n, pad_ij, velocity):
-        bridge.pad_pressed(pad_ij)
+        bridge.pad_pressed(pad_ij, velocity)
 
     @push2_python.on_pad_released()
     def _pad_up(push, pad_n, pad_ij, velocity):
@@ -1151,6 +1530,8 @@ def run(cfg, rest, sim=False):
             bridge.turn_master(inc)
         elif name == TEMPO_ENCODER:
             bridge.turn_tempo(inc)
+        elif name == SWING_ENCODER:
+            bridge.turn_swing(inc)
 
     @push2_python.on_encoder_touched()
     def _enc_touch(push, name):
@@ -1179,6 +1560,7 @@ def run(cfg, rest, sim=False):
         else:
             print("[resolume] pip install websocket-client for live updates; polling instead")
     bridge.sender.start()
+    threading.Thread(target=bridge.seq_loop, daemon=True).start()
 
     print(f"Bridge running → {rest.url}   (Ctrl+C to quit)")
     if sim:
