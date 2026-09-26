@@ -39,5 +39,14 @@ set_target_properties(BarChaser PROPERTIES
 # ---- unit test for the preset parser (no OpenGL needed) --------------------
 add_executable(test_preset tests/test_preset.cpp src/Preset.cpp ${PUGI}/pugixml.cpp)
 target_include_directories(test_preset PRIVATE ${PUGI} src)
+# ---- offscreen host test: loads the bundle, renders a frame, checks pixels ----
+add_executable(host_test tests/host_test.cpp)
+target_include_directories(host_test PRIVATE ${SDK})
+target_compile_options(host_test PRIVATE -Wno-deprecated-declarations)
+target_link_libraries(host_test PRIVATE "-framework OpenGL")
+add_dependencies(host_test BarChaser)
+
 enable_testing()
 add_test(NAME preset COMMAND test_preset ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/preset_small.xml)
+add_test(NAME host COMMAND host_test "$<TARGET_BUNDLE_DIR:BarChaser>/Contents/MacOS/Bar Chaser"
+         ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/preset_small.xml)
