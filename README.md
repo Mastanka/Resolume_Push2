@@ -31,7 +31,8 @@ it works with any Resolume deck.
 - **Mix:** one knob per layer master, plus the composition master; mute and solo per layer.
 - **Tempo:** Tap Tempo (Resolume's own tap), resync, a BPM knob, and a beat indicator.
 - **Step sequencer:** a drum-rack style chaser for LED bars. Up to 4 textures flash across the bars in
-  16-pattern step sequences with ADSR envelopes, edited on the pads like Push's own drum sequencer.
+  16-pattern step sequences with ADSR envelopes, edited on the pads like Push's own drum sequencer. The
+  flashing itself is done by the **Bar Chaser** effect (included, `plugin/`) on your own layers.
 
 It talks to Resolume through Resolume's own REST API and WebSocket (live updates), so there is nothing to install in Resolume and
 your deck stays unchanged. Other MIDI controllers mapped in Resolume keep working alongside it.
@@ -144,29 +145,38 @@ The Push display shows your deck. Press **Ctrl+C** to quit.
 | **Metronome** | Pads pulse on the beat on / off |
 
 **Step sequencer (SEQ)** — press **Note** (or the 4th button above the display); **Session** goes back to the clip grid.
-Run `python push_resolume_bridge.py --setup-chaser` once (or **Shift + Note**): it reads your saved Advanced Output
-preset and builds one cropped layer per bar and texture track.
+
+It needs the **Bar Chaser** effect (in `plugin/`, built with `plugin/build.sh`, installed with
+`python push_resolume_bridge.py --install-plugin`, then restart Arena). Save your Advanced Output as a
+preset once (Arena → Output → Advanced → Presets → Save): the effect reads it and lists your screens
+in its **Pad 1 … Pad 24** dropdowns. Put one Bar Chaser on each layer whose clip you want to flash,
+as the **last** effect on the layer (or press **Shift + Note** with a clip of that layer selected),
+and set its **Track** (1–4) — or hold **Browse** and press track button 1–4 on the Push.
 
 ```
-rows 1–4   32 steps of the selected track on the selected bar (green = playhead)
-rows 5–8   left 4×4 = bars (bottom-left = bar 1)   right 4×4 = patterns 1–16
+rows 1–4   32 steps of the selected track on the selected pads (green = playhead)
+row 5      patterns 1–8 (Shift = 9–16)
+rows 6–8   pads 1–24, bottom-left = pad 1, each = a slice chosen in the effect
 ```
 
 | Control | Does |
 |---|---|
-| Tap a step | On / off; tap harder for a brighter flash (**Accent** = always full) |
-| Hold a step + knob 8 / 5 | That step's level / gate |
-| Bar pad | Select the bar and flash it; **Repeat** on + hold = strobe at the grid rate |
-| Buttons below the display 1–4 | Select the texture track (each has its own envelope) |
-| **Browse** / Browse + track button / Browse + bar pad | Load the clip selected in the grid as texture into the selected track / that track / one bar |
-| Pattern pad | Switch at the next bar; Shift = now |
+| Pad | Select only that pad and flash it; **Shift** + pad = add to / remove from the selection |
+| Tap a step | On / off for every selected pad; tap harder for a brighter flash (**Accent** = always full) |
+| Hold a step + knob 8 / 5 | That step's level / gate on the selected pads |
+| **Repeat** on + hold a pad | Strobe at the grid rate |
+| Buttons below the display 1–4 | Select the texture track; **Browse** + button = the selected clip's layer joins that track |
+| Pattern pad (row 5) | Switch at the next bar; press it again to switch now |
 | **Play** | Run / stop |
 | Buttons right of the pads | Grid 1/4 … 1/32t |
-| **Delete** + step / bar / track / pattern | Clear |
+| **Delete** + step / pad / track / pattern | Clear |
 | **Duplicate** + pattern → pattern | Copy |
 | **Double Loop** / **Fixed Length** + button 1–8 | Double the pattern / length 4–32 |
-| **Octave ▲ ▼** | Next 16 bars (rigs with more than 16) |
 | Knobs | Attack, Decay, Sustain, Release, Gate, Direction, Length, Level; Swing encoder = swing |
+
+**In the effect's panel:** Preset (empty = newest), Reload, Track, Master, Edge (soft edges), Outside
+(transparent / black / pass through), Mode (Texture / Solid white / Show pads = numbered rectangles for
+setup), Pad 1–24 (which slice), Level 1–24 (the live levels, also a manual test).
 
 ## Configuration
 
@@ -188,7 +198,7 @@ The parameter order you set with **Convert** is saved in `pins.yaml`, your own c
 | `--dump LAYER [--clip COLUMN]` | List parameter paths for `config.yaml` |
 | `--config FILE` | Use a different config file |
 | `--check LAYER` | Test every Resolume command on a spare layer (each change is undone) and print OK / FAIL. Add `--check-columns` to also launch a column |
-| `--setup-chaser` | Build / update the step sequencer's bar layers from your Advanced Output preset (`--dry-run` = only print the plan) |
+| `--install-plugin [BUNDLE]` | Copy the built Bar Chaser effect into Resolume's Extra Effects folder (then restart Arena) |
 
 ## Ideas and feedback welcome
 

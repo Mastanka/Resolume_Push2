@@ -24,11 +24,12 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 | `colors.yaml` | Own COLOR palette (Shift + BD saves), Štefan's show data |
 | `display.py` | `render()`: draws a `Bridge.snapshot()` on the 960×160 display, `LAYER_RGB` |
 | `sequencer.py` | SEQ logic, pure: bars from the Advanced Output preset XML, `Envelope`, `Track` / `Pattern`, `Sequencer` (editing, `tick()`, `chases.yaml`) |
-| `chaser_engine.py` | `LayerEngine`: one Resolume layer per (track, bar), found by the Crop effect's display name `CH:T<n>:<bar>` |
+| `chaser_engine.py` | `PluginEngine`: levels → `Level n` params of the Bar Chaser effect instances (grouped by their `Track`) |
+| `plugin/` | The **Bar Chaser** FFGL effect (C++, CMake, vendored FFGL SDK lib + pugixml). `plugin/build.sh` → `plugin/dist/Bar Chaser.bundle`; `ctest` runs the preset-parser test and an offscreen GL host test |
 | `chases.yaml` | Sequencer patterns, Štefan's show data |
 | `tests/test_sequencer.py` | Pure tests for `sequencer.py` (no mock) |
 | `tests/test_engine.py` | `LayerEngine` + new REST calls against the mock |
-| `tests/fixtures/preset_small.xml` | 3-bar Advanced Output preset for tests |
+| `tests/fixtures/preset_small.xml` | 4-screen Advanced Output preset for the plugin tests |
 | `config.yaml` | Resolume host/port, grid offsets, encoder steps, per-layer parameter slots |
 | `pins.yaml` | Param order for auto layers, written by the bridge (Convert move). Štefan's show data |
 | `docs/specs/` | Short design specs per feature |
@@ -106,11 +107,15 @@ Playing pads pulse between full and `L{k}_mid` on the beat; muted / non-solo lay
   Opacity, K8 = on/off (`bypassed`). Paste (`paste_color`) matches the param by `color_label()`.
 - **fx** (BU3): `fx_list()` = clip, layer, composition effects; K = effect `Opacity` param, BD = `bypassed`.
   Page ◀▶ = `fx_page`.
-- **seq** (Note / BU4): pads = Push's Loop Selector layout (steps / bars / patterns), BD1–4 = texture
-  tracks, knobs = the selected track's ADSR + Gate + Level and the pattern's Direction + Length.
-  `Bridge.seq` (`Sequencer`), `Bridge.engine` (`LayerEngine`), `Bridge.bars` (from the preset in
-  `sequencer.preset`), `seq_loop` thread at 100 Hz → `engine.set_level` → WebSocket `set`. Bar layers
-  are hidden from the pad grid and MIX via `visible_layers()`. Spec + plan in `docs/`.
+- **seq** (Note / BU4): rows 1–4 steps, row 5 patterns 1–8 (Shift 9–16), rows 6–8 pads 1–24
+  (bottom-left = 1). `Bridge.sel_pads` = multi-selection (Shift + pad toggles); steps act on all
+  selected pads. BD1–4 = texture tracks = layers carrying a **Bar Chaser** effect with that `Track`.
+  Knobs = the selected track's ADSR + Gate + Level and the pattern's Direction + Length. `Bridge.seq`
+  (`Sequencer`, bars named `pad 1`…`pad 24`), `Bridge.engine` (`PluginEngine`), `seq_loop` thread at
+  100 Hz → `engine.set_level` → WebSocket `set` of the instance's `Level n`. Shift + Note = add the
+  effect to the selected clip's layer; Browse (+ BDn) = that layer's `Track`. Specs + plans in `docs/`.
+  **The effect must be the last effect on the layer** (it masks in composition space; a Transform after
+  it moves the bars).
 - **mix** (B_3 toggles, B_3 lit white): K1–K8 = `layer.master` (fallback `video/opacity`),
   K1 = top visible layer, going down; K11 = `composition.master`. BD = mute, Solo + BD = solo.
 - Always: blackout (`Bridge.blackout` = saved master), flash (`Bridge.flash`), beat clock
@@ -202,12 +207,23 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
 - Tempo uses `composition/tempocontroller/tempo` (ParamRange 20–500, BPM) — path confirmed in the live
   JSON; `tempo_tap` / `resync` ParamEvents are triggered by Tap / Shift+Tap.
 
+## Bar Chaser plugin (plugin/)
+
+FFGL 2.1 effect, universal bundle. 55 params: `Preset` (text), `Reload` (event), `Track` (1–4),
+`Master`, `Edge`, `Outside`, `Mode` (Texture / Solid / Show pads), `Pad 1..24` (option, elements from the
+Advanced Output preset via `SetParamElements`), `Level 1..24`. Hosts reset every param to its declared
+default after creation, so defaults must carry the initial pad assignment. `plugin/tests/host_test.cpp`
+is a tiny CGL host: loads the bundle, feeds a red/green picture, checks pass-through, masking, solid,
+show pads. Build needs Xcode CLT + `brew install cmake`. Verified on Arena 7.23.2: loads from
+`~/Documents/Resolume Arena/Extra Effects`, preset dropdowns fill, Solid and Show pads render.
+
 ## Testing workflow
 
 Always run before handing changes back:
 ```
 python tests/mock_resolume.py &
 python tests/test_sequencer.py      # pure logic, no mock needed
+plugin/build.sh                     # C++: builds the bundle and runs ctest (preset parser + GL host test)
 python tests/test_engine.py         # restart the mock before each script: they change its composition
 python tests/test_fake_push.py      # must print OK (runs on the mock's WebSocket)
 TEST_POLL=1 python tests/test_fake_push.py   # same with the WebSocket off (polling fallback)

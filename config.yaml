@@ -28,14 +28,10 @@ pins_file: null
 # Own COLOR palette (Shift + button below the display) is saved here (default: colors.yaml).
 colors_file: null
 
-# Step sequencer (Note button / 4th button above the display)
+# Step sequencer (Note button / 4th button above the display). Which slice each of the 24 pads
+# means is chosen in the "Bar Chaser" effect's own panel in Arena (Pad 1 … Pad 24).
 sequencer:
-  preset: newest          # Advanced Output preset name (Arena → Output → Advanced → Presets → Save), or newest
-  bars: auto              # or a list of groups: [{name: Left, screens: [Lumiverse 1, Lumiverse 2]}]
-  disabled: []            # screen names to ignore (e.g. spares sitting on top of another bar)
-  layer_prefix: "CH: "    # bar layers are named "<prefix>T<track> <bar>"
-  clip_column: 1          # which column of a bar layer holds the texture
-  tracks: 4               # textures at once (1-4)
+  tracks: 4               # texture tracks at once (1-4) = layers carrying a Bar Chaser effect
 
 # Patterns are saved here (default: chases.yaml next to the script).
 chases_file: null
