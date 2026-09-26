@@ -39,6 +39,19 @@ def file_clip(path):
     c = clip(path.rsplit("/", 1)[-1])
     c["video"]["fileinfo"] = {"path": path}
     return c
+def choice(v, options):
+    return {"id": next(ids), "valuetype": "ParamChoice", "value": v, "index": options.index(v), "options": list(options)}
+def bar_chaser_effect():
+    """The Bar Chaser FFGL effect as Arena shows it: 55 params, pads 1-3 assigned by default."""
+    slices = ["\u2014", "Bar A", "Bar B", "Bar C"]
+    params = {"Preset": s(""), "Reload": ev(), "Track": choice("1", ["1", "2", "3", "4"]),
+              "Master": rng(1.0), "Edge": rng(0.0, 0, 20),
+              "Outside": choice("Transparent", ["Transparent", "Black", "Pass through"]), "Show pads": b_(False)}
+    for k in range(24):
+        params[f"Pad {k + 1}"] = choice(slices[k + 1] if k < 3 else slices[0], slices)
+    for k in range(24):
+        params[f"Level {k + 1}"] = rng(0.0)
+    return {"name": "Bar Chaser", "display_name": "Bar Chaser", "id": next(ids), "bypassed": b_(False), "params": params}
 def crop_effect():
     return {"name": "Crop", "display_name": "Crop", "id": next(ids), "bypassed": b_(False),
             "params": {"Opacity": rng(1.0), "Left": rng(0.0, 0, 16384), "Right": rng(1920.0, 0, 16384),
@@ -49,9 +62,13 @@ def new_layer(n):
             "clips": [clip(None) for _ in range(4)]}
 OPACITY_LOG = []   # [t, pid, value] for every write to a layer's video/opacity (GET /api/v1/_opacity_log)
 def note_opacity(pid, value):
+    """Log writes to layer opacities and to Bar Chaser 'Level n' params (GET /api/v1/_opacity_log)."""
     for layer in COMP["layers"]:
         if layer["video"]["opacity"]["id"] == pid:
-            OPACITY_LOG.append([time.time(), pid, value])
+            OPACITY_LOG.append([time.time(), pid, value]); return
+        for fx in layer["video"].get("effects") or []:
+            if fx.get("name") == "Bar Chaser" and any(v.get("id") == pid for k, v in fx["params"].items() if k.startswith("Level ")):
+                OPACITY_LOG.append([time.time(), pid, value]); return
 COMP = {"master": rng(0.9),
   "tempocontroller": {"tempo": rng(120.0, 20.0, 500.0), "tempo_tap": ev(), "resync": ev()},
   "video": {"opacity": rng(1.0), "effects": [
@@ -167,6 +184,7 @@ class H(BaseHTTPRequestHandler):
             if parts[8] == "add":
                 name = unquote(b.strip().rsplit("/", 1)[-1])
                 if name == "Crop": fx = crop_effect()
+                elif name == "Bar Chaser": fx = bar_chaser_effect()
                 elif name == "Slice Transform": fx = {"name": "ScreenLayerTransform", "display_name": "Slice Transform", "id": next(ids), "bypassed": b_(False), "params": {"Opacity": rng(1.0)}}
                 else: self.send_response(400); self.end_headers(); return
                 index(fx); layer["video"]["effects"].append(fx)
