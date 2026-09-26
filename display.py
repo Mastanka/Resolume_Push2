@@ -154,18 +154,18 @@ def render(snap, bgr=True):
         pos = "" if sq["pos"] is None else f"  step {sq['pos'] + 1}/{sq['length']}"
         say(144, 128, f"SEQ  {sq['pattern']}  {'RUN' if sq['running'] else 'STOP'}{pos}   {sq['grid']}", 520)
         col((200, 200, 200)); font(15)
-        say(144, 151, f"T{sq['track'] + 1} {sq['texture']}   ·   bar: {sq['bar']}"
+        names = ", ".join(n for _, n in sq["pads"])
+        nums = ", ".join(str(k) for k, _ in sq["pads"])
+        say(144, 151, f"T{sq['track'] + 1} · {sq['layer'] or '—'}   ·   pad{'s' * (len(sq['pads']) != 1)} {nums} ({names})"
                       + (f"   ·   next: P{sq['pending'] + 1}" if sq["pending"] is not None else ""), 560)
         col((140, 140, 140)); font(13)
         say(950, 127, snap["bpm"], right=True)
         if sq["warning"]:
             bottom = sq["warning"]
         elif snap["shift"]:
-            bottom = "FINE"
-        elif sq["n_bars"]:
-            bottom = f"bars {sq['bars'][0]}–{sq['bars'][1]} of {sq['n_bars']}"
+            bottom = "FINE  ·  Shift + pad = add to selection"
         else:
-            bottom = "no bars — save an output preset"
+            bottom = "24 pads  ·  Shift + pad = multi-select"
         say(950, 150, bottom, 400, right=True)
     elif snap["mode"] == "fx":
         fx = snap["fx"] or {"items": [], "page": 0, "pages": 1}

@@ -1,7 +1,6 @@
 """LayerEngine + new REST calls against the mock.   python tests/mock_resolume.py &   then
 python tests/test_engine.py → OK"""
 import sys
-import time
 from pathlib import Path
 
 import requests
@@ -57,55 +56,37 @@ def test_rest_additions():
     assert rest.add_layer(before=1) == 204 and comp()["layers"][0]["name"]["value"].startswith("Layer")
 
 
-def test_layer_engine():
-    from chaser_engine import LayerEngine
-    from sequencer import Bar
+def test_plugin_engine():
+    from chaser_engine import PluginEngine, pad_key, pad_from_key
+    assert pad_key(4) == "pad 5" and pad_from_key("pad 5") == 4 and pad_from_key("Bar A") is None
     state = {"comp": comp()}
     sent = []
-    eng = LayerEngine(rest, lambda: state["comp"], lambda: state.update(comp=comp()),
-                      lambda pid, v: (sent.append((pid, v)), rest.set_param(pid, {"value": v})))
-    bars = [Bar("Bar A", 145, 72, 175, 530, ["Bar A"]), Bar("Bar B", 345, 70, 375, 532, ["Bar B"])]
-    n0 = len(state["comp"]["layers"])
-    plan = eng.setup(bars, 2, dry_run=True)
-    assert len(state["comp"]["layers"]) == n0 and any("create" in p for p in plan), plan
-    report = eng.setup(bars, 2)
-    c = state["comp"]
-    assert len(c["layers"]) == n0 + 4, report
-    found = eng.find_layers()
-    assert set(found) == {(0, "Bar A"), (0, "Bar B"), (1, "Bar A"), (1, "Bar B")}
-    L, layer = found[(1, "Bar B")]
-    crop = layer["video"]["effects"][0]
-    assert crop["display_name"] == "CH:T2:Bar B" and crop["params"]["Left"]["value"] == 345
-    assert crop["params"]["Bottom"]["value"] == 532 and layer["video"]["mixer"]["Blend Mode"]["value"] == "Add"
-    assert layer["video"]["opacity"]["value"] == 0.0 and layer["name"]["value"] == "CH: T2 Bar B"
-    assert LayerEngine.is_bar_layer(layer) and not LayerEngine.is_bar_layer(c["layers"][0])
-    assert eng.ready(1) and not eng.ready(2)
-    bars[1].right = 380
-    eng.setup(bars, 2)                                             # idempotent: updates, no new layers
-    assert len(state["comp"]["layers"]) == n0 + 4
-    assert eng.find_layers()[(1, "Bar B")][1]["video"]["effects"][0]["params"]["Right"]["value"] == 380
-    # texture: the mock's Strobe/Stroboscope clip is a generator with sourceparams
-    src = state["comp"]["layers"][0]["clips"][0]
-    src["video"]["description"] = "Metaballs"
-    msg = eng.load_texture(0, src)
-    assert "2 bars" in msg, msg
-    for key in ((0, "Bar A"), (0, "Bar B")):
-        L, layer = eng.find_layers()[key]
-        cl = layer["clips"][0]
-        assert cl["video"]["description"] == "Metaballs" and cl["connected"]["value"].startswith("Connected")
-        assert cl["video"]["sourceparams"]["Color"]["value"] == src["video"]["sourceparams"]["Color"]["value"]
-    assert "select a clip" in eng.load_texture(0, None)
-    # levels: rate limited, edges always sent, quantised to 1/255
-    eng.set_level(0, "Bar A", 0.5); eng.set_level(0, "Bar A", 0.5); eng.set_level(0, "Bar A", 0.501)
-    assert len(sent) == 1 and abs(sent[0][1] - 0.5) < 0.01
-    eng.set_level(0, "Bar A", 0.7)                                 # too soon after the last send → skipped
+    eng = PluginEngine(rest, lambda: state["comp"], lambda: state.update(comp=comp()),
+                       lambda pid, v: (sent.append((pid, v)), rest.set_param(pid, {"value": v})))
+    assert eng.instances() == [] and not eng.ready(0)
+    assert eng.add_to_layer(1) == 204 and eng.add_to_layer(1) == 200          # second call: already there
+    assert eng.set_track(2, 2)                                              # adds to layer 2, Track = 2
+    inst = eng.instances()
+    assert [(i["track"], i["layer"], i["clip"]) for i in inst] == [(0, 1, None), (1, 2, None)], inst
+    assert eng.ready(0) and eng.ready(1) and not eng.ready(2)
+    assert eng.layers_of(1) == [2] and eng.layer_name(0) == "Strobe"
+    assert eng.pad_name(0, 0) == "Bar A" and eng.pad_name(0, 2) == "Bar C" and eng.pad_name(0, 5) == ""
+    assert eng.pad_assigned(1, 1) and not eng.pad_assigned(2, 0)
+    fx1 = state["comp"]["layers"][0]["video"]["effects"][-1]
+    fx2 = state["comp"]["layers"][1]["video"]["effects"][-1]
+    eng.set_level(0, "pad 1", 0.5)
+    assert sent == [(fx1["params"]["Level 1"]["id"], 128 / 255)], sent          # layer 1 only, quantised
+    assert comp()["layers"][0]["video"]["effects"][-1]["params"]["Level 1"]["value"] == 128 / 255
+    assert comp()["layers"][1]["video"]["effects"][-1]["params"]["Level 1"]["value"] == 0.0
+    eng.set_level(0, 0, 0.5); eng.set_level(0, 0, 0.7)                        # same value / too soon → skipped
     assert len(sent) == 1
-    eng.set_level(0, "Bar A", 0.0)                                 # edge → always sent
-    assert len(sent) == 2 and sent[-1][1] == 0.0
-    time.sleep(0.03)
-    eng.set_level(0, "Bar A", 0.7); assert len(sent) == 3
+    eng.set_level(0, 0, 0.0); assert len(sent) == 2 and sent[-1][1] == 0.0    # edge always sent
+    eng.set_level(1, "pad 3", 1.0)
+    assert sent[-1] == (fx2["params"]["Level 3"]["id"], 1.0)
+    eng.set_level(3, "pad 1", 1.0); eng.set_level(0, "pad 99", 1.0)          # no instance / bad pad → nothing
+    assert len(sent) == 3
     eng.all_dark()
-    assert sent[-1][1] == 0.0 and len([1 for p, v in sent if v == 0.0]) >= 4
+    assert len(sent) == 3 + 48 and all(v == 0.0 for _, v in sent[3:])
 
 
 if __name__ == "__main__":
