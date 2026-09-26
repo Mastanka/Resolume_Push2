@@ -46,7 +46,8 @@ def bar_chaser_effect():
     slices = ["\u2014", "Bar A", "Bar B", "Bar C"]
     params = {"Preset": s(""), "Reload": ev(), "Track": choice("1", ["1", "2", "3", "4"]),
               "Master": rng(1.0), "Edge": rng(0.0, 0, 20),
-              "Outside": choice("Transparent", ["Transparent", "Black", "Pass through"]), "Show pads": b_(False)}
+              "Outside": choice("Transparent", ["Transparent", "Black", "Pass through"]),
+              "Mode": choice("Texture", ["Texture", "Solid", "Show pads"])}
     for k in range(24):
         params[f"Pad {k + 1}"] = choice(slices[k + 1] if k < 3 else slices[0], slices)
     for k in range(24):

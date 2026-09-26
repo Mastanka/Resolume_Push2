@@ -43,7 +43,7 @@ private:
 	float master  = 1.f;
 	float edge    = 0.f;            // px
 	float outside = 0.f;            // 0 transparent, 1 black, 2 pass through
-	bool showPads = false;
+	float mode    = 0.f;            // 0 texture, 1 solid, 2 show pads
 	std::array< std::string, NPADS > padName;   // "" = unassigned ("—")
 	std::array< float, NPADS > padValue{};      // option value = element index (0 = "—")
 	std::array< float, NPADS > level{};

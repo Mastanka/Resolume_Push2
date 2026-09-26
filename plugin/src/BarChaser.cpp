@@ -13,7 +13,7 @@ enum ParamIndex : unsigned int
 	P_MASTER,
 	P_EDGE,
 	P_OUTSIDE,
-	P_SHOWPADS,
+	P_MODE,
 	P_PAD0,                          // 24 pad assignments
 	P_LEVEL0 = P_PAD0 + BarChaser::NPADS,// 24 live levels
 	P_COUNT  = P_LEVEL0 + BarChaser::NPADS
@@ -54,7 +54,7 @@ uniform int NumPads;
 uniform float Master;
 uniform vec2 EdgeUV;
 uniform int Outside;
-uniform int ShowPads;
+uniform int Mode;            // 0 texture, 1 solid white, 2 show pads
 in vec2 uv;
 out vec4 fragColor;
 
@@ -118,7 +118,7 @@ void main()
 		float f = Levels[ i ] * Master * soft;
 		if( f > factor ) { factor = f; hit = i; }
 	}
-	if( ShowPads == 1 )
+	if( Mode == 2 )
 	{
 		if( hit < 0 ) { fragColor = vec4( 0.0 ); return; }
 		float num = numberMask( hit + 1, Rects[ hit ], p );
@@ -132,6 +132,8 @@ void main()
 		else fragColor = vec4( 0.0 );
 		return;
 	}
+	factor = clamp( factor, 0.0, 1.0 );
+	if( Mode == 1 ) { fragColor = vec4( factor ); return; }    // solid white, premultiplied
 	fragColor = color * factor;                          // premultiplied in, premultiplied out
 }
 )";
@@ -153,10 +155,13 @@ BarChaser::BarChaser()
 	SetParamElementInfo( P_OUTSIDE, 0, "Transparent", 0.f );
 	SetParamElementInfo( P_OUTSIDE, 1, "Black", 1.f );
 	SetParamElementInfo( P_OUTSIDE, 2, "Pass through", 2.f );
-	SetParamInfo( P_SHOWPADS, "Show pads", FF_TYPE_BOOLEAN, false );
+	SetOptionParamInfo( P_MODE, "Mode", 3, 0.f );
+	SetParamElementInfo( P_MODE, 0, "Texture", 0.f );
+	SetParamElementInfo( P_MODE, 1, "Solid", 1.f );
+	SetParamElementInfo( P_MODE, 2, "Show pads", 2.f );
 	for( unsigned int i = P_PRESET; i <= P_TRACK; i++ )
 		SetParamGroup( i, "Setup" );
-	for( unsigned int i = P_MASTER; i <= P_SHOWPADS; i++ )
+	for( unsigned int i = P_MASTER; i <= P_MODE; i++ )
 		SetParamGroup( i, "Look" );
 	for( unsigned int k = 0; k < NPADS; k++ )
 	{
@@ -296,7 +301,7 @@ FFResult BarChaser::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	glUniform1f( shader.FindUniform( "Master" ), master );
 	glUniform2f( shader.FindUniform( "EdgeUV" ), edge / preset.width, edge / preset.height );
 	glUniform1i( shader.FindUniform( "Outside" ), int( outside + 0.5f ) );
-	glUniform1i( shader.FindUniform( "ShowPads" ), showPads ? 1 : 0 );
+	glUniform1i( shader.FindUniform( "Mode" ), int( mode + 0.5f ) );
 	quad.Draw();
 	return FF_SUCCESS;
 }
@@ -341,8 +346,8 @@ FFResult BarChaser::SetFloatParameter( unsigned int index, float value )
 	case P_OUTSIDE:
 		outside = value;
 		return FF_SUCCESS;
-	case P_SHOWPADS:
-		showPads = value != 0.f;
+	case P_MODE:
+		mode = value;
 		return FF_SUCCESS;
 	}
 	return FF_FAIL;
@@ -364,8 +369,8 @@ float BarChaser::GetFloatParameter( unsigned int index )
 		return edge;
 	case P_OUTSIDE:
 		return outside;
-	case P_SHOWPADS:
-		return showPads ? 1.f : 0.f;
+	case P_MODE:
+		return mode;
 	}
 	return 0.f;
 }
