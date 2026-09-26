@@ -245,6 +245,13 @@ void BarChaser::refillPadElements( bool raiseEvents )
 		padValue[ k ] = idx < 0 ? 0.f : float( idx + 1 );
 		if( idx < 0 )
 			padName[ k ].clear();
+		if( !raiseEvents )
+		{
+			// Hosts set every parameter to its declared default right after creating the instance,
+			// so the default must be the assignment itself or it would be wiped to "—".
+			std::string name = "Pad " + std::to_string( k + 1 );
+			SetOptionParamInfo( P_PAD0 + k, name.c_str(), (unsigned int)names.size(), padValue[ k ] );
+		}
 		SetParamElements( P_PAD0 + k, names, values, raiseEvents );
 		if( raiseEvents )
 			RaiseParamEvent( P_PAD0 + k, FF_EVENT_FLAG_VALUE );
