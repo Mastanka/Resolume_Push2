@@ -1686,6 +1686,21 @@ def dump(rest, layer_no, col_no=None):
     print("\nCopy a path into config.yaml, e.g.  - {label: Scale, path: <path>, scope: clip}\n")
 
 
+def install_plugin(bundle):
+    """Copy the built Bar Chaser bundle into ~/Documents/Resolume Arena/Extra Effects."""
+    import shutil
+    src = Path(bundle)
+    if not (src / "Contents" / "MacOS").is_dir():
+        sys.exit(f"{src} is not a plugin bundle — build it first: plugin/build.sh")
+    folder = Path.home() / "Documents" / "Resolume Arena" / "Extra Effects"
+    folder.mkdir(parents=True, exist_ok=True)
+    dst = folder / src.name
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+    print(f"installed {dst}\nRestart Resolume Arena, then add the effect 'Bar Chaser' to a layer.")
+
+
 def load_config(path):
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))  # deep copy
     p = Path(path)
@@ -1714,10 +1729,15 @@ def main():
     ap.add_argument("--setup-chaser", action="store_true",
                     help="build / update the step sequencer's bar layers from the Advanced Output preset")
     ap.add_argument("--dry-run", action="store_true", help="with --setup-chaser: only print what would change")
+    ap.add_argument("--install-plugin", nargs="?", const="", metavar="BUNDLE",
+                    help="copy the Bar Chaser effect into Resolume's Extra Effects folder (default: plugin/dist/Bar Chaser.bundle)")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
     rest = Resolume(cfg["resolume"]["host"], cfg["resolume"]["port"])
+    if args.install_plugin is not None:
+        install_plugin(args.install_plugin or str(Path(__file__).with_name("plugin") / "dist" / "Bar Chaser.bundle"))
+        return
     if args.check:
         from resolume_check import Checker
         ok = Checker(cfg["resolume"]["host"], cfg["resolume"]["port"], args.check).run(args.check_columns)
