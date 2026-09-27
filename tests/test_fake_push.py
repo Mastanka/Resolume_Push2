@@ -55,13 +55,14 @@ class FakePush:
 push2_python.Push2 = FakePush
 import push_resolume_bridge as B  # noqa: E402
 
+PORT = int(os.environ.get("MOCK_PORT", "18080"))   # tests/mock_resolume.py listens here
 # Never run against a real Arena: only the mock answers /product with this name.
 try:
-    _name = requests.get("http://127.0.0.1:8080/api/v1/product", timeout=2).json().get("name")
+    _name = requests.get(f"http://127.0.0.1:{PORT}/api/v1/product", timeout=2).json().get("name")
 except Exception as e:
-    sys.exit(f"mock not running on 127.0.0.1:8080 ({e}) — start tests/mock_resolume.py first")
+    sys.exit(f"mock not running on 127.0.0.1:{PORT} ({e}) — start tests/mock_resolume.py first")
 if _name != "Mock Resolume":
-    sys.exit(f"refusing to run: 127.0.0.1:8080 is {_name!r}, not the mock")
+    sys.exit(f"refusing to run: 127.0.0.1:{PORT} is {_name!r}, not the mock")
 
 cfg = B.load_config(Path(B.__file__).with_name("config.yaml"))
 pins = Path(tempfile.mkdtemp()) / "pins.yaml"       # never touch the real pins.yaml
@@ -74,7 +75,8 @@ cfg["sequencer"]["preset_folder"] = str(Path(__file__).resolve().parent / "fixtu
 cfg["resolume"]["ws_refresh"] = 30.0     # REST safety refresh rare → everything below runs on live updates
 POLL_ONLY = os.environ.get("TEST_POLL") == "1"      # TEST_POLL=1: WebSocket off, test the polling fallback
 cfg["resolume"]["websocket"] = not POLL_ONLY
-rest = B.Resolume("127.0.0.1", 8080)
+cfg["resolume"]["port"] = PORT
+rest = B.Resolume("127.0.0.1", PORT)
 threading.Thread(target=B.run, args=(cfg, rest), daemon=True).start()
 time.sleep(1.0)
 
@@ -193,7 +195,7 @@ assert ("btn", ("Upper Row 6", "white")) in calls and ("btn", ("Upper Row 1", "d
 tap("Upper Row 1")
 
 # --- F8 tempo: taps → Resolume's own tap event, Shift + Tap → resync; K10 +3 BPM
-events = lambda: requests.get("http://127.0.0.1:8080/api/v1/_events").json()
+events = lambda: requests.get(f"http://127.0.0.1:{PORT}/api/v1/_events").json()
 tc = rest.composition()["tempocontroller"]
 tap_id, resync_id = str(tc["tempo_tap"]["id"]), str(tc["resync"]["id"])
 for _ in range(3):
@@ -252,7 +254,7 @@ fire("on_button_pressed", "Stop")
 time.sleep(0.4)
 assert rest.composition()["master"]["value"] == m0, "blackout off must restore the master"
 # Arena sometimes closes a connection without answering: the blackout must still arrive and stay
-drop = lambda n: requests.post("http://127.0.0.1:8080/api/v1/_drop_puts", data=str(n))
+drop = lambda n: requests.post(f"http://127.0.0.1:{PORT}/api/v1/_drop_puts", data=str(n))
 drop(1)                                               # one lost try: the request goes out again at once
 fire("on_button_pressed", "Stop")
 time.sleep(1.5)
@@ -384,12 +386,12 @@ time.sleep(1.0)
 # --- F16 live updates: a change made elsewhere (e.g. mouse in Arena) reaches the pads without polling
 L3 = rest.composition()["layers"][2]
 if not POLL_ONLY:
-    requests.put(f"http://127.0.0.1:8080/api/v1/parameter/by-id/{L3['bypassed']['id']}", json={"value": True})
+    requests.put(f"http://127.0.0.1:{PORT}/api/v1/parameter/by-id/{L3['bypassed']['id']}", json={"value": True})
     n0 = len(calls)
     time.sleep(0.6)
     assert any(n == "pad" and a[0][0] == 5 and a[1] in ("dark_gray", "light_gray") for n, a in calls[n0:]), \
         "external mute of layer 3 didn't reach the pads via WebSocket"
-    requests.put(f"http://127.0.0.1:8080/api/v1/parameter/by-id/{L3['bypassed']['id']}", json={"value": False})
+    requests.put(f"http://127.0.0.1:{PORT}/api/v1/parameter/by-id/{L3['bypassed']['id']}", json={"value": False})
 
 # --- F18 SEQ with the Bar Chaser effect: setup, multi-select, steps, run, LEDs
 fire("on_pad_pressed", 60, (7, 0), 100); fire("on_pad_released", 60, (7, 0), 0)     # select L1 C1
@@ -465,12 +467,12 @@ assert not any(n == "pad" for n, _ in calls[n0:]), "MUTE on SEQ must not change 
 tap("Mute")
 time.sleep(0.2)
 assert ("btn", ("Lower Row 1", "L0")) in calls[n0:], "back in SEQ: BD1 = track 1"
-log0 = len(requests.get("http://127.0.0.1:8080/api/v1/_opacity_log").json())
+log0 = len(requests.get(f"http://127.0.0.1:{PORT}/api/v1/_opacity_log").json())
 fire("on_button_pressed", "Play")                                                    # run
 time.sleep(2.6)
 fire("on_button_pressed", "Play")                                                    # stop
 time.sleep(0.5)
-log = requests.get("http://127.0.0.1:8080/api/v1/_opacity_log").json()[log0:]
+log = requests.get(f"http://127.0.0.1:{PORT}/api/v1/_opacity_log").json()[log0:]
 fx1 = [e for e in rest.composition()["layers"][0]["video"]["effects"] if e["name"] == "Bar Chaser"][0]
 l1, l2 = fx1["params"]["Level 1"]["id"], fx1["params"]["Level 2"]["id"]
 a_on = [t for t, pid, v in log if pid == l1 and v > 0.9]

@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 import random
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -21,6 +22,7 @@ BAR_BEATS = 4          # pattern switches happen on this boundary
 N_PATTERNS = 16
 N_TRACKS = 4
 N_GROUPS = 8           # pad groups on the 8 buttons right of the pads
+SAVE_DELAY = 0.2       # s after the last knob tick / step press before chases.yaml is written
 
 
 # --------------------------------------------------------------------------- #
@@ -153,6 +155,7 @@ class Sequencer:
         self.pad_config = None     # 24 fixture names shared by every track: the last Bar Chaser pad mapping
         self.voices = {}           # (track, bar name) -> Voice
         self.levels = {}           # (track, bar name) -> last level returned by tick()
+        self.dirty, self.dirty_t = False, 0.0   # a deferred save is waiting (save_later / flush)
         if self.path and self.path.exists():
             self.load()
 
@@ -182,6 +185,28 @@ class Sequencer:
         self.save()
         return on
 
+    def toggle_steps(self, bars, step, level=1.0):
+        """A step pressed on the Push for every selected pad: on for all when any is off, else off
+        for all. Returns True when the step is on afterwards. An edit: the pattern stops following
+        its preset."""
+        self.mark_edited()
+        sts = [self._steps(b) for b in bars]
+        all_on = all(step in st for st in sts)
+        for st in sts:
+            if all_on:
+                st.pop(step, None)
+            elif step not in st:
+                st[step] = [float(level), None]
+        self.save_later()
+        return not all_on
+
+    def remove_steps(self, bars, step):
+        """Delete + step on the Push, for every selected pad."""
+        self.mark_edited()
+        for b in bars:
+            self._steps(b).pop(step, None)
+        self.save_later()
+
     def set_step_values(self, bar, steps, level=None, gate=None, track=None):
         self.mark_edited()
         st = self._steps(bar, track)
@@ -191,7 +216,7 @@ class Sequencer:
                     st[s][0] = max(0.0, min(1.0, float(level)))
                 if gate is not None:
                     st[s][1] = max(0.1, min(1.0, float(gate)))
-        self.save()
+        self.save_later()
 
     def clear_steps(self, bar=None, track=None):
         self.mark_edited()
@@ -250,12 +275,12 @@ class Sequencer:
 
     def set_length(self, n):
         self.pattern.length = max(1, min(MAX_STEPS, int(n)))
-        self.save()
+        self.save_later()
 
     def set_direction(self, d):
         if d in DIRECTIONS:
             self.pattern.direction = d
-            self.save()
+            self.save_later()
 
     # ---- playback (pure: the bridge passes beat time in, gets levels out) ------- #
     def step_beats(self):
@@ -396,11 +421,34 @@ class Sequencer:
         self.patterns = pats
 
     def save(self):
+        """Write the file now (single actions: a stored preset, a group, the pad mapping)."""
+        self.dirty = False
+        self.write(self.to_dict())
+
+    def save_later(self, now=None):
+        """Write the file SAVE_DELAY after the last change. Knob ticks and step presses come many
+        times a second and a full write takes tens of ms on the MIDI thread."""
+        self.dirty, self.dirty_t = True, (now or time.time())
+
+    def take_dirty(self, now=None, force=False):
+        """The data of a due deferred save (None when nothing is due). Take it under the bridge lock,
+        then write() outside it."""
+        if not self.dirty or (not force and (now or time.time()) - self.dirty_t < SAVE_DELAY):
+            return None
+        self.dirty = False
+        return self.to_dict()
+
+    def flush(self, now=None, force=False):
+        data = self.take_dirty(now, force)
+        if data is not None:
+            self.write(data)
+
+    def write(self, data):
         if not self.path:
             return
         try:
             self.path.write_text("# Step sequencer patterns, written by the bridge. Safe to edit or delete.\n"
-                                 + yaml.safe_dump(self.to_dict(), sort_keys=False), encoding="utf-8")
+                                 + yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
         except Exception as e:
             print(f"[seq] can't write {self.path}: {e}", file=sys.stderr)
 

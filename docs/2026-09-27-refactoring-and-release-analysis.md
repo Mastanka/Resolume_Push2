@@ -4,6 +4,14 @@ Date: 2026-09-27, updated the same evening for the PRESETS / MAPPING / blackout-
 Reviewed: `main` at `2990927` (PR #6 merged). `docs/seq-banks-handover/` exists only untracked in
 the main checkout and was not reviewed.
 
+**Status (same day, branch `claude/refactoring-ux-analysis-56595f`):** fixed with tests: B1, B2, B3, B4 and
+the six stuck states T1–T6 (`2026-09-27-state-isolation.md`), S1 (guarded handlers), S6 (bounded outbox), S7
+(checker uses `Resolume`), S8 (legacy mode names gone), S12 (README), S13 (`tests/test_helpers.py`), S14
+(retry only a dropped connection), S16 (`Sequencer.toggle_steps` / `remove_steps`), S18 (CLAUDE.md), plus
+`hex_to_rgba` accepting `#rrggbb`. Still open, by design of this pass: S2, S3, S9, S10, S11 (the package /
+app-lifecycle refactoring, section 4), S4 (harmless, left as is), S5 (revalidation added, no rename), S15
+(geometry from the plugin, a plugin change to agree on first), S17 (goes with S15).
+
 ## 0. Baseline
 
 | Check | Result |

@@ -3,6 +3,13 @@
 Date: 2026-09-27, on `main` at `2990927`. Companion to
 `2026-09-27-refactoring-and-release-analysis.md`.
 
+**Status (same day):** T1–T6 and the lost-release case are fixed on branch
+`claude/refactoring-ux-analysis-56595f` with the four structural changes of section 4 in their minimal form
+(physical layer `Bridge.held` / `HELD_FLAGS` at the top of `button()`, momentary actions keyed by the control
+with `_button_up` / `_end_clip` / `release_all()`, `_revalidate()` in `set_comp`, releases handled before any
+menu in `_seq_pad` and `set_view` releasing held voices). `tests/test_states.py` holds one test per row of
+section 1 plus the random walk as an assertion; `tests/fuzz_states.py 16 2500` reports 0 violations.
+
 ## Short answer
 
 Yes, both are possible, and both were done here:

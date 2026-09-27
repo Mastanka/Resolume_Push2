@@ -1,10 +1,14 @@
 """Minimal fake of Resolume Arena's REST API for offline testing.
-Serves a small composition on http://127.0.0.1:8080/api/v1 and logs every POST/PUT.
+Serves a small composition on http://127.0.0.1:18080/api/v1 (MOCK_PORT) and logs every POST/PUT.
 Run:  python tests/mock_resolume.py
 """
 import json, itertools, base64, hashlib, struct, threading, time
 from urllib.parse import unquote
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+PORT = int(os.environ.get("MOCK_PORT", "18080"))   # not 8080: on macOS a mock on 127.0.0.1:8080 would
+#                                                      # answer every loopback client of a running Arena
 ids = itertools.count(1000)
 def rng(v, lo=0.0, hi=1.0): return {"id": next(ids), "valuetype": "ParamRange", "value": v, "min": lo, "max": hi}
 PALETTE = ["#000000ff", "#ff0000ff", "#00ff00ff", "#ffff00ff", "#0000ffff", "#ff00ffff", "#ffffffff", "#ffb17bff"]
@@ -99,7 +103,7 @@ index(COMP)
 LOG = []
 EVENTS = {}   # ParamEvent id -> times triggered (GET /api/v1/_events)
 DROP_PUTS = [0]   # POST /api/v1/_drop_puts N: the next N PUTs get no answer (connection closed), like Arena
-# ---- WebSocket (ws://127.0.0.1:8080/api/v1), like Arena 7.23: full composition on connect,
+# ---- WebSocket (ws://127.0.0.1:<MOCK_PORT>/api/v1), like Arena 7.23: full composition on connect,
 # subscribe / unsubscribe by "/parameter/by-id/<id>", then parameter_update on every change.
 WS_CLIENTS = []          # [handler], each with .subs {id: last value sent} and .ws_lock
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -247,4 +251,6 @@ class H(BaseHTTPRequestHandler):
         elif "index" in body: BYID[pid]["value"] = BYID[pid]["options"][body["index"]]
         self.send_response(204); self.end_headers()
         ws_broadcast()
-ThreadingHTTPServer(("127.0.0.1", 8080), H).serve_forever()
+if __name__ == "__main__":
+    print(f"Mock Resolume on http://127.0.0.1:{PORT}/api/v1")
+    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()

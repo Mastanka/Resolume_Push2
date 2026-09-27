@@ -1,5 +1,6 @@
 """LayerEngine + new REST calls against the mock.   python tests/mock_resolume.py &   then
 python tests/test_engine.py → OK"""
+import os
 import sys
 from pathlib import Path
 
@@ -8,8 +9,9 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from resolume_api import Resolume, resolve_node  # noqa: E402
 
-API = "http://127.0.0.1:8080/api/v1"
-rest = Resolume("127.0.0.1", 8080)
+PORT = int(os.environ.get("MOCK_PORT", "18080"))   # tests/mock_resolume.py listens here
+API = f"http://127.0.0.1:{PORT}/api/v1"
+rest = Resolume("127.0.0.1", PORT)
 
 
 def require_mock():
@@ -185,7 +187,7 @@ def test_fixtures():
 def test_global_group_isolation():
     """A global group used on track 2 only puts steps on track 2: it never plays track 1's layers."""
     br = _bridge()
-    br.mode = "seq"
+    br.mode = "seq_env"
     br.sel_pads = {0, 4}
     br.button("Select", True); br.button("Shift", True)
     br.button("1/32t", True); br.button("1/32t", False)                 # Select + Shift + button 1 = GG1
@@ -277,8 +279,8 @@ def test_screens():
         br.button(name, True); br.button(name, False)
 
     assert br.view == "clip" and br.mode == "clip_params"
-    br.mode = "seq"; assert br.view == "seq" and br.mode == "seq_env"              # legacy names still work
-    br.mode = "params"; assert br.view == "clip" and br.mode == "clip_params"
+    br.mode = "seq_env"; assert br.view == "seq" and br.mode == "seq_env"
+    br.mode = "clip_params"; assert br.view == "clip" and br.mode == "clip_params"
     br.page = 1; br.mode = "layer_params"; assert br.page == 0                        # page per menu
     br.mode = "clip_params"; assert br.page == 1
     click("Mix"); assert br.mode == "mix"                                             # click: stays

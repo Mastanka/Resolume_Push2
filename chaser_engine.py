@@ -72,6 +72,7 @@ class PluginEngine:
         self.store = store             # has .pad_config [24 names] and .save()
         self.send_param = send_param   # (param id, body) -> None
         self._last = {}            # level param id -> (time, quantised value)
+        self._pending = {}         # level param id -> value held back by the rate limit, sent by flush()
         self._cache_comp = None
         self._cache = []
         self._known = {}           # effect id -> (pads we expect, our writes pending until)
@@ -234,12 +235,37 @@ class PluginEngine:
             return
         now = now or time.time()
         q = round(max(0.0, min(1.0, float(value))) * 255) / 255
-        busy = sum(1 for t, _ in self._last.values() if now - t < 0.1) > MANY
+        window = self._window(now)
         for pid in self._pids(track, k):
             last = self._last.get(pid)
             if last and last[1] == q:
+                self._pending.pop(pid, None)
                 continue
-            if last and q != 0.0 and now - last[0] < (0.033 if busy else MIN_DT):
+            if last and q != 0.0 and now - last[0] < window:
+                self._pending[pid] = q                     # too soon: kept for flush(), never dropped
+                continue
+            self._pending.pop(pid, None)
+            self._last[pid] = (now, q)
+            self.send_level(pid, q)
+
+    def _window(self, now):
+        busy = sum(1 for t, _ in self._last.values() if now - t < 0.1) > MANY
+        return 0.033 if busy else MIN_DT
+
+    def flush(self, now=None):
+        """Send the levels set_level held back because their instance was written too recently.
+        Called by the sequencer clock every tick; without it a flash that followed the previous
+        one within the window (1/16 steps with the default envelope) was never shown at all."""
+        if not self._pending:
+            return
+        now = now or time.time()
+        window = self._window(now)
+        for pid, q in list(self._pending.items()):
+            last = self._last.get(pid)
+            if last and now - last[0] < window:
+                continue
+            del self._pending[pid]
+            if last and last[1] == q:
                 continue
             self._last[pid] = (now, q)
             self.send_level(pid, q)
@@ -316,5 +342,6 @@ class PluginEngine:
                 p = (inst["fx"].get("params") or {}).get(f"Level {k + 1}")
                 if is_param(p):
                     self._last.pop(p["id"], None)
+                    self._pending.pop(p["id"], None)
                     self.send_level(p["id"], 0.0)
                     self._last[p["id"]] = (time.time(), 0.0)

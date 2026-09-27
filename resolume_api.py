@@ -10,6 +10,7 @@ import time
 import traceback
 
 import requests
+import urllib3
 
 EDITABLE = {"ParamRange", "ParamChoice", "ParamBoolean"}
 WALK_SKIP = {"clips", "name", "connected", "selected", "thumbnail", "audio"}
@@ -122,11 +123,13 @@ def fmt_value(p, v, spec):
 
 
 def hex_to_rgba(v):
-    """'#rrggbbaa' (Resolume ParamColor) -> [r, g, b, a] ints."""
+    """'#rrggbbaa' (Resolume ParamColor) or '#rrggbb' (a hand-edited palette) -> [r, g, b, a] ints."""
     v = (v or "").lstrip("#")
     try:
-        vals = [int(v[i:i + 2], 16) for i in range(0, 8, 2)]
-        return vals if len(v) >= 8 else vals[:3] + [255]
+        if len(v) not in (6, 8):
+            raise ValueError(v)
+        vals = [int(v[i:i + 2], 16) for i in range(0, len(v), 2)]
+        return vals if len(vals) == 4 else vals + [255]
     except ValueError:
         return [0, 0, 0, 255]
 
@@ -149,6 +152,14 @@ def color_label(path):
 # --------------------------------------------------------------------------- #
 
 RETRIES = 2           # extra attempts when Resolume drops a connection without answering
+OUTBOX = 256          # WebSocket sets waiting for the socket; older ones make room for newer ones
+
+
+def _dropped(e):
+    """True for a connection Arena closed without answering (safe to repeat), not for a refusal
+    (would only be refused again) and not for a timeout (the request may have run)."""
+    inner = e.args[0] if e.args else None
+    return isinstance(inner, urllib3.exceptions.ProtocolError) or "without response" in str(e)
 
 
 class Resolume:
@@ -158,16 +169,16 @@ class Resolume:
         self.session = requests.Session()   # the sender thread, plus one-off setup calls
 
     def _req(self, method, url, session=None, **kw):
-        """One HTTP request. When the connection breaks before an answer arrives (Arena closing a
-        kept-alive connection: "Remote end closed connection without response"), the request did
-        not run, so it goes out again on a fresh connection. Timeouts are not repeated: a slow
-        request may still have run, and a trigger must not fire twice."""
+        """One HTTP request. When Arena closes a kept-alive connection before answering ("Remote
+        end closed connection without response"), the request did not run, so it goes out again on
+        a fresh connection. Nothing else is repeated: a refused connection stays refused (Arena is
+        not running), and a timed-out request may still have run (a trigger must not fire twice)."""
         s = session or self.session
         for attempt in range(RETRIES + 1):
             try:
                 return s.request(method, url, **kw)
-            except requests.exceptions.ConnectionError:
-                if attempt == RETRIES:
+            except requests.exceptions.ConnectionError as e:
+                if attempt == RETRIES or not _dropped(e):
                     raise
 
     def composition(self, session=None):
@@ -300,12 +311,23 @@ class ResolumeWS(threading.Thread):
         self.on_comp, self.on_param, self.desired = on_comp, on_param, desired
         self.live = False
         self._warned = False
-        self.outbox = queue.Queue()
+        self.outbox = queue.Queue(maxsize=OUTBOX)
 
     def set(self, pid, value):
-        """Set a parameter over the socket (cheaper than a PUT). Dropped when not live."""
-        if self.live:
-            self.outbox.put({"action": "set", "parameter": f"/parameter/by-id/{pid}", "value": value})
+        """Set a parameter over the socket (cheaper than a PUT). Dropped when not live; when the
+        socket stalls, the oldest waiting set gives way to the newest (the levels are 100/s)."""
+        if not self.live:
+            return
+        msg = {"action": "set", "parameter": f"/parameter/by-id/{pid}", "value": value}
+        while True:
+            try:
+                self.outbox.put_nowait(msg)
+                return
+            except queue.Full:
+                try:
+                    self.outbox.get_nowait()
+                except queue.Empty:
+                    pass
 
     def run(self):
         import websocket   # websocket-client; only needed when the bridge runs

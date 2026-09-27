@@ -17,7 +17,7 @@ cfg["pins_file"] = str(Path(tempfile.mkdtemp()) / "pins.yaml")
 cfg["colors_file"] = str(Path(tempfile.mkdtemp()) / "colors.yaml")
 cfg["chases_file"] = str(Path(tempfile.mkdtemp()) / "chases.yaml")
 cfg["sequencer"]["preset_folder"] = str(HERE / "fixtures" / "rig")
-br = B.Bridge(cfg, B.Resolume("127.0.0.1", 8080))
+br = B.Bridge(cfg, B.Resolume("127.0.0.1", 18080))
 br.sender.start()
 threading.Thread(target=br.poll_loop, daemon=True).start()
 time.sleep(0.6)
@@ -85,7 +85,7 @@ br.toggle_blackout()
 
 from sequencer import Envelope  # noqa: E402
 br.engine.add_to_layer(1)                       # a Bar Chaser on layer 1 = track 1
-br.mode = "seq"
+br.mode = "seq_env"
 br.sel_pads = {1}
 br.seq.toggle_step("pad 2", 0); br.seq.toggle_step("pad 2", 8)
 br.seq.pattern.tracks[0].envelope = Envelope(attack=0.2, decay=0.3, sustain=0.6, release=0.5)
@@ -107,7 +107,7 @@ br.button("Upper Row 4", True)                  # MAPPING, a fixture picked
 br.map_armed = 1
 shot("seq_mapping")
 br.map_armed = None
-br.seq.stop(); br.mode = "params"
+br.seq.stop(); br.mode = "clip_params"
 
 br.online = False
 _, surf = B.render(br.snapshot(), bgr=False)

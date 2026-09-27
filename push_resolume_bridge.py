@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import colorsys
+import functools
 import importlib.util
 import json
 import os
@@ -114,6 +115,12 @@ OCTAVE_UP, OCTAVE_DOWN = "Octave Up", "Octave Down"
 SELECT_BUTTON = "Select"                    # SEQ: tap = multi-select on / off; hold + group button = store
 LAYOUT_BUTTON, SCALE_BUTTON = "Layout", "Scale"   # SEQ: buttons right of the pads = pad groups / grid
 SWING_ENCODER = "Swing Encoder"
+# Buttons whose "held" state other controls read. Kept by the physical layer at the top of
+# Bridge.button() for every press and release, whatever screen is showing.
+HELD_FLAGS = {"Shift": "shift", PLAY_BUTTON: "play_held", STOP_BUTTON: "stop_held", PASTE_BUTTON: "paste_held",
+              MUTE_BUTTON: "mute_held", SOLO_BUTTON: "solo_held", MOVE_BUTTON: "convert_held",
+              DELETE_BUTTON: "delete_held", BROWSE_BUTTON: "browse_held", FIXED_LENGTH_BUTTON: "fixed_len_held",
+              SELECT_BUTTON: "select_held"}
 SEQ_HZ = 100          # sequencer clock ticks per second
 # Menus on the buttons above the display, per view. CLIP view (Session): white; SEQUENCER view (Note): red.
 CLIP_MENUS = {"Upper Row 1": "clip_params", "Upper Row 2": "color", "Upper Row 3": "clip_fx",
@@ -131,7 +138,6 @@ FX_MODES = ("clip_fx", "layer_fx")
 MIX_MODES = ("mix", "mute", "solo")       # screens on top of either view (Mix / Mute / Solo button)
 OVERLAY_BUTTONS = {MIX_BUTTON: "mix", MUTE_BUTTON: "mute", SOLO_BUTTON: "solo"}
 HOLD_TIME = 0.4       # s: shorter press = click (the screen stays), longer = hold (back on release)
-LEGACY_MODES = {"params": "clip_params", "fx": "clip_fx", "seq": "seq_env"}
 SEQ_RED, SEQ_RED_DIM = "L6", "L6_dim"     # layer colour 7 is red: the SEQUENCER menu buttons
 FX_SOURCES = [("Clip", "clip"), ("Layer", "layer")]   # FX menus: CLIP EFFECTS / LAYER EFFECTS
 UPPER_ROW = [f"Upper Row {i}" for i in range(1, 9)]
@@ -238,8 +244,8 @@ class Bridge:
         self.blackout_seen = False # Resolume has reported the master at 0 since this blackout began
         self.restore = None        # master value being restored, until Resolume reports it
         self.bo_sent, self.bo_tries = 0.0, 0   # last (re)send of the blackout / restore value
-        self.flash = {}            # layer -> master value before the flash button was pressed
-        self.col_pressed = set()   # columns we sent a "down" for
+        self.flash = {}            # flash button row -> (master param id, value before, layer) while held
+        self.col_pressed = {}      # lower-row button -> column we sent a "down" for
         self.move_src = None       # absolute slot index being moved
         self.taps = []
         self.tap_flash = 0.0
@@ -249,7 +255,8 @@ class Bridge:
         self.pins_path = Path(cfg.get("pins_file") or Path(__file__).with_name("pins.yaml"))
         self.order = self._load_order()
         self.touched = None        # encoder slot index being touched
-        self.pressed = set()       # cells we sent a "down" for
+        self.pressed = {}          # pad (i, j) -> (layer, column) we sent a "down" for
+        self.held = set()          # every button physically down (push2-python names)
         self.overrides = {}        # param id -> (value, time sent)
         self.choice_acc = {}
         self.midi_reset = False
@@ -292,7 +299,6 @@ class Bridge:
 
     @mode.setter
     def mode(self, m):
-        m = LEGACY_MODES.get(m, m)
         if m in MIX_MODES:
             self.overlay, self.ov_latched = m, True
             return
@@ -347,10 +353,17 @@ class Bridge:
         self._clear_overlay()
         self.view = view
         self.move_src = None
-        self.held_steps.clear()
-        self.held_bars.clear()
+        self._release_seq_holds()
         self.select_held = False
         self.map_armed = self.preset_pick = self.confirm = None
+
+    def _release_seq_holds(self):
+        """Held steps are forgotten, held pads let go of their voice (or the bar would stay lit)."""
+        bt = self.beat_time() or 0.0
+        for key, track in list(self.held_bars.items()):
+            self.seq.release(track, key, bt)
+        self.held_bars.clear()
+        self.held_steps.clear()
 
     # ---- composition access --------------------------------------------- #
     def layers(self):
@@ -396,6 +409,7 @@ class Bridge:
             print(f"[resolume] connected — {len(comp.get('layers') or [])} layers")
         with self.lock:
             self.comp, self.index, self.online = comp, index, True
+            self._revalidate()
             self._check_blackout()
             try:
                 loaded = self.engine.sync_pads(comp)    # one pad mapping on every Bar Chaser
@@ -527,6 +541,11 @@ class Bridge:
                         changed = self.seq.tick(bt)
                 for (track, bar), v in changed.items():
                     self.engine.set_level(track, bar, v)
+                self.engine.flush()                        # levels held back by the rate limit
+                with self.lock:
+                    data = self.seq.take_dirty()           # a deferred chases.yaml save that is due
+                if data is not None:
+                    self.seq.write(data)                   # the file write stays outside the lock
             except Exception:                              # never let a bug stop the clock
                 if time.time() - last_err > 5:
                     traceback.print_exc()
@@ -795,34 +814,27 @@ class Bridge:
         with self.lock:
             bt = self.beat_time() or 0.0
             seq = self.seq
-            if self.mapping() and self._map_pad(ij, down):
+            if not down:                                           # a release ends what the press began, in any menu
+                if i < 4:
+                    self.held_steps.discard(i * 8 + j)
+                elif i > 4:
+                    key = pad_key(self.bar_index(i, j))
+                    if key in self.held_bars:
+                        seq.release(self.held_bars.pop(key), key, bt)
+                return
+            if self.mapping() and self._map_pad(ij, True):
                 return
             if i < 4:                                              # steps, for every selected pad
                 step = i * 8 + j
-                if not down:
-                    self.held_steps.discard(step)
-                    return
                 if step >= seq.pattern.length:
                     return
                 keys = self.sel_keys()
                 if self.delete_held:
-                    for key in keys:
-                        seq._steps(key).pop(step, None)
-                    seq.save()
+                    seq.remove_steps(keys, step)
                     return
                 self.held_steps.add(step)
-                all_on = all(step in seq._steps(key) for key in keys)
-                level = 1.0 if self.accent else max(0.05, velocity / 127.0)
-                for key in keys:
-                    st = seq._steps(key)
-                    if all_on:
-                        st.pop(step, None)
-                    elif step not in st:
-                        st[step] = [level, None]
-                seq.save()
+                seq.toggle_steps(keys, step, 1.0 if self.accent else max(0.05, velocity / 127.0))
             elif i == 4:                                           # patterns
-                if not down:
-                    return
                 p = self.pattern_index(j)
                 if self.presets_menu() and self.preset_pick:
                     self._preset_pattern_pad(p)
@@ -842,10 +854,6 @@ class Bridge:
                 k = self.bar_index(i, j)
                 key = pad_key(k)
                 track = seq.track
-                if not down:
-                    if key in self.held_bars:
-                        seq.release(self.held_bars.pop(key), key, bt)
-                    return
                 if self.delete_held:
                     seq.clear_steps(key)
                     return
@@ -988,13 +996,13 @@ class Bridge:
             seq.set_length(seq.pattern.length + inc)
         elif name == "Level":
             tr.level = max(0.0, min(1.0, tr.level + inc * 0.01 * fine))
-        seq.save()
+        seq.save_later()
 
     def turn_swing(self, inc):
         with self.lock:
             p = self.seq.pattern
             p.swing = max(0.0, min(1.0, p.swing + inc * 0.02))
-            self.seq.save()
+            self.seq.save_later()
 
     def _map_pad_colors(self):
         """MAPPING lights: fixtures dim white, mapped ones in the track colour, the picked one blinking;
@@ -1592,17 +1600,76 @@ class Bridge:
             self.bo_sent, self.bo_tries = now, 0
 
     def flash_layer(self, row, down):
+        """Button right of pad row `row` held = that layer's master at 100 %. The button owns the
+        flash: the layer and its master are captured at the press, so a scroll, a view switch or a
+        new composition in between cannot leave the layer at 100 %."""
         with self.lock:
+            if not down:
+                self._end_flash(row)
+                return
+            if row in self.flash:
+                return
             L = self.pad_to_cell(row, 0)[0]
             p = master_param(self.layer_json(L))
             if p is None:
                 return
-            if down and L not in self.flash:
-                self.flash[L] = float(self.value_of(p) or 0)
-                self._set(p["id"], 1.0, {"value": 1.0})
-            elif not down and L in self.flash:
-                v = self.flash.pop(L)
-                self._set(p["id"], v, {"value": v})
+            self.flash[row] = (p["id"], float(self.value_of(p) or 0), L)
+            self._set(p["id"], 1.0, {"value": 1.0})
+
+    # ---- momentary actions end with the control that started them ------------------------- #
+    def _end_flash(self, row):
+        f = self.flash.pop(row, None)
+        if f:
+            self._set(f[0], f[1], {"value": f[1]})
+
+    def _end_clip(self, ij):
+        cell = self.pressed.pop(ij, None)
+        if cell:
+            self.sender.trigger(*cell, False)
+
+    def _end_column(self, k):
+        n = self.col_pressed.pop(k, None)
+        if n is not None:
+            self.sender.column(n, False)
+
+    def _button_up(self, name):
+        """A button came up: end what its press began, whatever the screen shows now."""
+        with self.lock:
+            if name in SCENE_BUTTONS:
+                self._end_flash(SCENE_BUTTONS.index(name))
+            elif name in LOWER_ROW:
+                self._end_column(LOWER_ROW.index(name))
+
+    def release_all(self):
+        """Everything held is let go: flashes restored, pressed clips and columns released,
+        modifiers cleared, held steps and pads dropped. For a MIDI reconnect (push2-python drops the
+        first second of MIDI after a connect, so releases can be lost) and for shutdown."""
+        with self.lock:
+            for row in list(self.flash):
+                self._end_flash(row)
+            for ij in list(self.pressed):
+                self._end_clip(ij)
+            for k in list(self.col_pressed):
+                self._end_column(k)
+            for flag in set(HELD_FLAGS.values()):
+                setattr(self, flag, False)
+            self.held.clear()
+            self.ov_press.clear()
+            self.touched = None
+            self._release_seq_holds()
+
+    def _revalidate(self):
+        """A composition arrived: keep the grid and the selection inside it. A smaller deck loading
+        while scrolled up used to leave every pad black and the knobs on a clip that no longer existed."""
+        n_l, n_c = len(self.layers()), self.max_cols()
+        self.layer_offset = max(0, min(self.layer_offset, n_l - 8))
+        self.col_offset = max(0, min(self.col_offset, n_c - 8))
+        L, C = self.sel
+        L2 = max(1, min(L, n_l))
+        C2 = max(1, min(C, len((self.layer_json(L2) or {}).get("clips") or [])))
+        if (L2, C2) != self.sel:
+            self.sel = (L2, C2)
+            self.move_src, self.color_idx, self.fx_page = None, 0, 0
 
     def layer_flag(self, L, key):
         """layer.bypassed / layer.solo param (or None)."""
@@ -1665,28 +1732,34 @@ class Bridge:
             self.sender.select(L, C)               # show it in Resolume's clip panel too
             if not self.play_held or clip_state(clip) == "Empty":
                 return
-            self.pressed.add((L, C))
+            self.pressed[ij] = (L, C)
         self.sender.trigger(L, C, True)
 
     def pad_released(self, ij):
-        if self.view == "seq":
-            return self._seq_pad(ij, 0, False)
-        cell = self.pad_to_cell(*ij)
         with self.lock:
-            if cell not in self.pressed:
-                return
-            self.pressed.discard(cell)
-        self.sender.trigger(*cell, False)
+            self._end_clip(ij)                 # the pad owns its clip press, whatever the grid shows now
+        if self.view == "seq":
+            self._seq_pad(ij, 0, False)
 
     def button(self, name, down):
+        # Physical layer first: what is held is a fact about the hardware, not about the screen.
+        # A screen may react to a release but never swallow it (that is how Play, Delete and
+        # Browse stayed "held" after a view switch).
+        if down:
+            self.held.add(name)
+        else:
+            self.held.discard(name)
+            self._button_up(name)
+        flag = HELD_FLAGS.get(name)
+        if flag is not None:
+            setattr(self, flag, down)
+        if down and name == BROWSE_BUTTON:
+            self.browse_used = self.view != "seq"          # pressed outside SEQ: the release does nothing
+        if down and name == SELECT_BUTTON:
+            self.select_used = self.view != "seq"
         if name == "Shift":
-            self.shift = down
             return
         if name in OVERLAY_BUTTONS:                        # Mix / Mute / Solo: click = open, hold = peek
-            if name == MUTE_BUTTON:
-                self.mute_held = down                      # hold + pad = mute that layer
-            elif name == SOLO_BUTTON:
-                self.solo_held = down
             self.overlay_button(OVERLAY_BUTTONS[name], down)
             return
         if down:
@@ -1716,15 +1789,11 @@ class Bridge:
         if name in SCENE_BUTTONS:
             self.flash_layer(SCENE_BUTTONS.index(name), down)
             return
-        if name in LOWER_ROW and (self.play_held or not down):
-            n = self.col_offset + LOWER_ROW.index(name) + 1
-            if down:
-                self.col_pressed.add(n)
-                self.sender.column(n, True)
-                return
-            if n in self.col_pressed:
-                self.col_pressed.discard(n)
-                self.sender.column(n, False)
+        if name in LOWER_ROW and self.play_held and down:  # Play + button below = launch that column
+            k = LOWER_ROW.index(name)
+            n = self.col_offset + k + 1
+            self.col_pressed[k] = n                        # released by _button_up, whatever the offset is then
+            self.sender.column(n, True)
             return
         if name == MOVE_BUTTON:
             self.convert_held = down
@@ -1899,6 +1968,7 @@ class Bridge:
                 else:
                     out[b] = "black" if k >= pages else ("white" if k == self.page else "dark_gray")
             cur_g, tc = self.current_group(), self.seq.track % 8
+            flashed = {f[2] for f in self.flash.values()}
             for i, b in enumerate(SCENE_BUTTONS):
                 if seq and self.side == "grid":             # Scale: grid selection
                     out[b] = "white" if b == self.seq.grid else "dark_gray"
@@ -1915,7 +1985,7 @@ class Bridge:
                     continue
                 L = self.pad_to_cell(i, 0)[0]
                 out[b] = ("black" if self.layer_json(L) is None
-                          else f"L{(L - 1) % 8}" if L in self.flash else f"L{(L - 1) % 8}_dim")
+                          else f"L{(L - 1) % 8}" if L in flashed else f"L{(L - 1) % 8}_dim")
             all_l = range(1, len(self.layers()) + 1)
             any_mute = any(self.layer_flag(l, "bypassed") and self.value_of(self.layer_flag(l, "bypassed"))
                            for l in all_l)
@@ -2122,15 +2192,29 @@ def run(cfg, rest, sim=False):
     def _display_connected(push):
         print("[push] display connected")
 
+    def safe(fn):
+        """Handlers run on push2-python's MIDI thread, where python-rtmidi swallows exceptions:
+        log them, or a bug would leave the Push half-updated in silence."""
+        @functools.wraps(fn)
+        def call(*args):
+            try:
+                fn(*args)
+            except Exception:
+                traceback.print_exc()
+        return call
+
     @push2_python.on_pad_pressed()
+    @safe
     def _pad_down(push, pad_n, pad_ij, velocity):
         bridge.pad_pressed(pad_ij, velocity)
 
     @push2_python.on_pad_released()
+    @safe
     def _pad_up(push, pad_n, pad_ij, velocity):
         bridge.pad_released(pad_ij)
 
     @push2_python.on_encoder_rotated()
+    @safe
     def _enc_turn(push, name, inc):
         if name in TRACK_ENCODERS:
             bridge.turn(TRACK_ENCODERS.index(name), inc)
@@ -2142,20 +2226,24 @@ def run(cfg, rest, sim=False):
             bridge.turn_swing(inc)
 
     @push2_python.on_encoder_touched()
+    @safe
     def _enc_touch(push, name):
         if name in TRACK_ENCODERS:
             bridge.touch(TRACK_ENCODERS.index(name))
 
     @push2_python.on_encoder_released()
+    @safe
     def _enc_release(push, name):
         if name in TRACK_ENCODERS:
             bridge.untouch(TRACK_ENCODERS.index(name))
 
     @push2_python.on_button_pressed()
+    @safe
     def _btn_down(push, name):
         bridge.button(name, True)
 
     @push2_python.on_button_released()
+    @safe
     def _btn_up(push, name):
         bridge.button(name, False)
 
@@ -2193,6 +2281,7 @@ def run(cfg, rest, sim=False):
             if bridge.midi_reset:
                 palette_ok, pad_cache, btn_cache, bridge.midi_reset = False, {}, {}, False
                 swatch_cache = None
+                bridge.release_all()                       # a release may have been lost around the reconnect
             if push.midi_is_configured():
                 if not palette_ok:
                     apply_palette(push)
@@ -2229,6 +2318,9 @@ def run(cfg, rest, sim=False):
     except KeyboardInterrupt:
         print("\nBye.")
         try:
+            bridge.release_all()                           # flashes back, held clips and columns released
+            time.sleep(0.3)                                # let the sender deliver that
+            bridge.seq.flush(force=True)                   # a deferred chases.yaml save
             push.pads.set_all_pads_to_color("black")
         finally:
             push.stop_active_sensing_thread()

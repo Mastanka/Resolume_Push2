@@ -11,7 +11,7 @@ import time
 
 import requests
 
-from resolume_api import clip_state, master_param, resolve_node, text, walk
+from resolume_api import Resolume, clip_state, master_param, resolve_node, text, walk
 
 WAIT = 0.35   # s for Resolume to apply a change before reading it back
 
@@ -22,6 +22,7 @@ class Checker:
         self.ws_url = f"ws://{host}:{port}/api/v1"
         self.L = layer
         self.s = requests.Session()
+        self.rest = Resolume(host, port)      # the bridge's own client, for the calls it has
         self.results = []
 
     # ---- http helpers ------------------------------------------------------ #
@@ -229,8 +230,7 @@ class Checker:
         self.add(name, got == new, f"sent {new}, read {got}")
 
     def _post_text(self, path, body):
-        return self.s.post(self.base + path, data=body.encode(), headers={"Content-Type": "text/plain"},
-                           timeout=3).status_code
+        return self.rest._post_text(path, body)
 
     def s_open_clip(self, name):
         layer = self.layer()

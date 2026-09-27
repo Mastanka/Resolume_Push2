@@ -57,8 +57,8 @@ Before you run it: in Resolume, **Preferences → Webserver → Enable Webserver
 
 ## Detailed installation (macOS)
 
-Tested on macOS (Apple Silicon) with Resolume Arena 7.23. Windows and Linux may work, but
-haven't been tried.
+Tested on macOS (Apple Silicon) with Resolume Arena 7.23. macOS only for now: the Push display
+library path, the Bar Chaser build and the Advanced Output preset folder are macOS-specific.
 
 **1. Turn on Resolume's web API**
 Resolume Arena → **Preferences → Webserver** → tick **Enable Webserver & REST API**. Leave the

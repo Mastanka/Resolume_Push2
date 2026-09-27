@@ -32,6 +32,9 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 | `tests/test_sequencer.py` | Pure tests for `sequencer.py` (no mock) |
 | `tests/test_engine.py` | `PluginEngine`, shared mapping, PRESETS and screens through a `Bridge`, REST calls, against the mock |
 | `tests/test_banks.py` | Rig detection and every recipe on 110 rigs; Python preset reader = plugin names |
+| `tests/test_states.py` | Stuck-state regressions (flash / Play / Delete across views, held clip across a scroll, deck switch, held step), engine flush, deferred save, preset `source`, plus a short random walk. Pure |
+| `tests/test_helpers.py` | `resolve_node` / `walk` / `fmt_value` / colour helpers, one render per screen, REST retry scope, WebSocket outbox bound. Pure |
+| `tests/fuzz_states.py` | State fuzzer: random physically consistent events against a `Bridge` with a synthetic composition, invariants after each; reports (exit 0). `python tests/fuzz_states.py 16 2500` ≈ 15 s |
 | `tests/fixtures/rig/mock_rig.xml` | Advanced Output preset matching the mock's Bar Chaser fixtures (tests set `sequencer.preset_folder` here) |
 | `tests/fixtures/preset_small.xml` | 4-screen Advanced Output preset for the plugin tests |
 | `config.yaml` | Resolume host/port, grid offsets, encoder steps, per-layer parameter slots |
@@ -129,7 +132,7 @@ overlays. Parameter page is per menu (`Bridge.page` property over `_pages`).
   instead of tracks; `preset_pick` blinks with the pattern row; a pattern pad stores it
   (`_store_preset`: `banks.realize` on `current_rig()`, new seed, `Sequencer.store_pattern`, grid 1/16)
   or asks (`confirm`, BD7 NO / BD8 YES). `Pattern.source` = {bank, recipe, seed, rig}; step edits
-  clear it (`mark_edited`, also in `_seq_pad`). `check_rig()` after every composition / MAPPING change:
+  clear it (`mark_edited`, via `Sequencer.toggle_steps` / `remove_steps`, which `_seq_pad` uses). `check_rig()` after every composition / MAPPING change:
   loaded composition → `Sequencer.refit` at once; otherwise `refit_offer` → PRESETS asks. Misfit
   pattern pads orange in PRESETS. **MAPPING** (`Bridge.mapping()`,
   `_map_pad`, `_map_pad_colors`): rows 1–4 = the track's fixtures from the effect's Pad options
@@ -179,6 +182,17 @@ main thread (run loop)   ──► LEDs at 50 Hz (diffed vs cache, beat edges) +
   requirement. Callbacks only change state.
 - `Bridge.overrides` holds values we just sent for 0.8 s so the display doesn't jump back to stale
   polled values while an encoder is turning.
+- **Physical layer** (top of `Bridge.button()`): `Bridge.held` + the `HELD_FLAGS` flags are set for every press and
+  release before any screen sees the event, so a screen can react to a release but never swallow it. **Momentary
+  actions** are keyed by the control that started them, target captured at the press: `flash[row] = (master id,
+  value, layer)`, `pressed[pad] = (layer, column)`, `col_pressed[button] = column`; `_button_up` / `_end_clip` end them
+  whatever the grid shows now. `release_all()` on MIDI (re)connect and at quit (push2-python drops the first second of
+  MIDI after a connect). `_revalidate()` in `set_comp` clamps the grid offsets and the selection to the composition.
+  `tests/fuzz_states.py` checks these invariants on random event walks; `tests/test_states.py` holds the reproductions.
+- **Deferred saves**: knob ticks and step presses call `Sequencer.save_later()`; `seq_loop` writes `chases.yaml`
+  `SAVE_DELAY` (0.2 s) after the last change, outside the lock (`take_dirty()` + `write()`); single actions (`store_pattern`,
+  groups, pad mapping) still `save()` at once; quit flushes. `PluginEngine.flush()` (each `seq_loop` tick) sends the
+  levels the rate limiter held back, so no flash is ever dropped.
 - Parameter slots are recomputed from the polled JSON every frame (`Bridge.slots()`), so
   renames/reorders in Resolume are picked up automatically.
 
@@ -273,8 +287,10 @@ twice for one index (set `FindParamInfo(i)->defaultFloatVal` instead).
 
 Always run before handing changes back:
 ```
-python tests/mock_resolume.py &
+python tests/mock_resolume.py &     # listens on 127.0.0.1:18080 (MOCK_PORT), never 8080: see below
 python tests/test_sequencer.py      # pure logic, no mock needed
+python tests/test_states.py         # stuck-state regressions + random walk, no mock needed
+python tests/test_helpers.py        # JSON helpers, render per screen, retry / outbox, no mock needed
 python tests/test_banks.py          # presets: rigs × recipes, no mock needed
 plugin/build.sh                     # C++: builds the bundle and runs ctest (preset parser + GL host test)
 python tests/test_engine.py         # restart the mock before each script: they change its composition
@@ -284,7 +300,8 @@ python tests/render_preview.py      # then look at tests/preview_*.png for displ
 python -c "import ast; ast.parse(open('push_resolume_bridge.py').read(), feature_version=(3,9))"
 ```
 Extend `tests/mock_resolume.py` when touching new parts of the JSON. The test scripts refuse to run
-unless `GET /product` says "Mock Resolume" (the mock binds 127.0.0.1:8080 even while Arena runs on *:8080). Final check is always on the
+unless `GET /product` says "Mock Resolume". **The mock and the tests use port 18080** (`MOCK_PORT` overrides): a mock
+on 127.0.0.1:8080 would answer every loopback client of a running Arena, including a live bridge. Final check is always on the
 real Push + Arena, done by Štefan.
 
 ## Backlog (ideas, not commitments)

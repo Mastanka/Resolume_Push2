@@ -22,7 +22,10 @@ class RestStub:
     url = "stub://"
     def composition(self, *a, **k): raise OSError("stub: no Resolume")
     def __getattr__(self, name):                       # every REST call succeeds and does nothing
-        return lambda *a, **k: 204
+        def call(*a, **k):
+            return 204
+        call.__name__ = name                            # so tests can see which call was queued
+        return call
 
 # ---- synthetic composition -------------------------------------------------------------- #
 SLICES = ["—", "Bar A / 1 - 423 141 RGB", "Bar A / 424 - 846 141 RGB 2", "Bar B / 1 - 855 h3 2m grb",
