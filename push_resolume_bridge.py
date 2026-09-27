@@ -599,10 +599,8 @@ class Bridge:
         keys = self.sel_keys()
         tc = seq.track % 8
         track_steps = [seq.pattern.tracks[seq.track].steps.get(key, {}) for key in keys]
-        lit = {}                                                   # pad key -> tracks with level > 0
-        for (t, key), v in seq.levels.items():
-            if v > 0.02:
-                lit.setdefault(key, set()).add(t)
+        lit = {key for (t, key), v in seq.levels.items()          # pads sounding on this track only
+               if t == seq.track and v > 0.02}
         blink = int(time.time() / BLINK) % 2 == 0
         for i in range(8):
             for j in range(8):
@@ -630,13 +628,10 @@ class Bridge:
                 else:
                     k = self.bar_index(i, j)
                     key = pad_key(k)
-                    tracks = lit.get(key, set())
-                    if not self.engine.pad_assigned(seq.track, k) and not tracks:
+                    if key in lit:
+                        color = f"L{tc}"
+                    elif not self.engine.pad_assigned(seq.track, k):
                         color = "black"
-                    elif len(tracks) > 1:
-                        color = "white"
-                    elif tracks:
-                        color = f"L{next(iter(tracks)) % 8}"
                     elif k in self.sel_pads:
                         color = "light_gray"
                     else:

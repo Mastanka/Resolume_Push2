@@ -89,6 +89,25 @@ def test_plugin_engine():
     assert len(sent) == 3 + 48 and all(v == 0.0 for _, v in sent[3:])
 
 
+def test_seq_pads_current_track_only():
+    """SEQ pads flash only for the selected track, never for other tracks that are playing."""
+    import tempfile
+    import push_resolume_bridge as B
+    cfg = B.load_config(Path(__file__).resolve().parent.parent / "config.yaml")
+    for k in ("pins_file", "colors_file", "chases_file"):
+        cfg[k] = str(Path(tempfile.mkdtemp()) / (k + ".yaml"))
+    br = B.Bridge(cfg, Resolume("127.0.0.1", 8080))
+    br.set_comp(rest.composition())
+    br.seq.track = 0
+    br.seq.levels = {(1, "pad 1"): 1.0, (0, "pad 2"): 1.0, (2, "pad 2"): 1.0}
+    grid = br._seq_pad_colors()
+    assert grid[(7, 0)] not in ("L1", "white"), grid[(7, 0)]              # pad 1 plays on track 2 only
+    assert grid[(7, 1)] == "L0", grid[(7, 1)]                              # pad 2 plays on track 1
+    br.seq.track = 1
+    grid = br._seq_pad_colors()
+    assert grid[(7, 0)] == "L1" and grid[(7, 1)] != "L1", (grid[(7, 0)], grid[(7, 1)])
+
+
 if __name__ == "__main__":
     require_mock()
     for name, fn in sorted(globals().items()):

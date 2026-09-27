@@ -81,7 +81,8 @@ rows 6–8   pads 1–24: bottom row = 1–8 left → right, then 9–16, top of
   on for some, dark grey = off. Hold step + knob 8 / 5 edits that step on all selected pads.
   Delete + step removes it from all selected.
 - **Pad LEDs:** unassigned (`—`) = off · assigned idle = dark grey · selected = light grey · lit =
-  colour of the track flashing it · two tracks = white.
+  the selected track's colour while that track flashes it. Other tracks playing never light the
+  pads (the pads show only the track you are editing).
 - **Patterns** on row 5: white = current, grey = has steps, off = empty, blinking = queued.
   Shift + pattern pad = pattern 9–16 (Shift + pad no longer means "switch now"; switching is
   always at the next bar boundary — press the same pad twice to switch now).
