@@ -99,6 +99,11 @@ def last(name):
     return next((a[1] for n, a in reversed(calls) if n == "btn" and a[0] == name), None)
 
 
+def last_pad(ij):
+    """Last colour sent to a pad."""
+    return next((a[1] for n, a in reversed(calls) if n == "pad" and a[0] == ij), None)
+
+
 fire("on_pad_pressed", 60, (7, 1), 100)          # plain press = select only
 fire("on_pad_released", 60, (7, 1), 0)
 time.sleep(0.5)
@@ -485,6 +490,32 @@ fire("on_button_pressed", "Delete"); tap("1/32"); fire("on_button_released", "De
 time.sleep(0.2)
 assert since(n0, ("1/32t", "L0")), "recalled group lit fully"
 assert ("pad", ((7, 0), "light_gray")) in calls[n0:], "recall must select pad 1 again (group 1 = pads 1 + 2)"
+# --- MAPPING (SEQ menu 4): fixtures on the top rows, row 5 red, Select + fixture then a pad = store
+n0 = len(calls)
+tap("Upper Row 4")
+time.sleep(0.3)
+assert since(n0, ("Upper Row 4", "L6")), "MAPPING lit red"
+assert ("pad", ((4, 0), "red")) in calls[n0:] and ("pad", ((4, 7), "red")) in calls[n0:], "divider row red"
+assert ("pad", ((0, 1), "L0_dim")) in calls[n0:] and ("pad", ((0, 4), "black")) in calls[n0:], "4 fixtures, all used"
+assert last_pad((7, 3)) == "black" and last_pad((7, 0)) == "L0_dim", "pad 4 has no fixture, pad 1 has one"
+fire("on_button_pressed", "Select")
+fire("on_pad_pressed", 60, (0, 1), 100); fire("on_pad_released", 60, (0, 1), 0)     # pick L1F2
+time.sleep(0.6)
+n1 = len(calls)
+fire("on_pad_pressed", 60, (7, 3), 100); fire("on_pad_released", 60, (7, 3), 0)     # store it on pad 4
+fire("on_button_released", "Select")
+time.sleep(0.5)
+fxp = lambda: [e for e in rest.composition()["layers"][0]["video"]["effects"] if e["name"] == "Bar Chaser"][0]["params"]
+assert fxp()["Pad 4"]["value"] == "Bar A / 424 - 846 141 RGB 2", fxp()["Pad 4"]["value"]
+assert ("pad", ((7, 3), "white")) in calls[n1:] and ("pad", ((0, 1), "white")) in calls[n1:], "double blink on both"
+assert last("Select") == "dark_gray", "Select + fixture must not latch multi-select"
+assert yaml.safe_load(open(cfg["chases_file"]).read())["pads"][1][3] == "Bar A / 424 - 846 141 RGB 2"
+fire("on_button_pressed", "Delete"); fire("on_pad_pressed", 60, (7, 3), 100)        # Delete + pad = no fixture
+fire("on_pad_released", 60, (7, 3), 0); fire("on_button_released", "Delete")
+time.sleep(0.5)
+assert fxp()["Pad 4"]["value"] == "\u2014"
+tap("Upper Row 1")
+
 n1 = len(calls)
 fire("on_button_pressed", "Session"); time.sleep(0.3)
 assert ("btn", ("Note", "dark_gray")) in calls[n1:], "Session leaves SEQ"

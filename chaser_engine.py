@@ -36,6 +36,27 @@ def pad_from_key(name):
 
 
 PENDING = 2.0          # s our own pad writes may take to show up before a difference counts as an edit
+SEP = " / "            # the effect names a fixture "Lumiverse 3 / 1 - 423 141 RGB"
+
+
+def fixture_list(options):
+    """Fixtures offered by the effect's Pad dropdown, in Arena's list order:
+    [{'label': 'L1F2', 'name': option to store, 'screen': 'Lumiverse 1'}].
+    A screen (lumiverse) without fixture entries counts as one fixture (older Bar Chaser builds)."""
+    opts = [o for o in (options or []) if isinstance(o, str) and o and o != UNASSIGNED]
+    order, fixtures_of = [], {}
+    for o in opts:
+        screen = o.split(SEP, 1)[0] if SEP in o else o
+        if screen not in fixtures_of:
+            order.append(screen)
+            fixtures_of[screen] = []
+        if SEP in o:
+            fixtures_of[screen].append(o)
+    out = []
+    for li, screen in enumerate(order, 1):
+        for fi, name in enumerate(fixtures_of[screen] or [screen], 1):
+            out.append({"label": f"L{li}F{fi}", "name": name, "screen": screen})
+    return out
 
 
 class PluginEngine:
@@ -54,6 +75,7 @@ class PluginEngine:
         self._cache = []
         self._known = {}           # effect id -> (track, pads we expect, pending until)
         self._comp_id = object()   # composition identity (its master param id): new id = loaded composition
+        self._fx_cache = (None, None, [])   # (composition, track, fixture list)
 
     # ---- finding instances ------------------------------------------------ #
     @staticmethod
@@ -101,6 +123,63 @@ class PluginEngine:
 
     def pad_assigned(self, track, k):
         return bool(self.pad_name(track, k))
+
+    # ---- fixtures (MAPPING menu) -------------------------------------------- #
+    def fixtures(self, track):
+        """Fixtures the track's effect offers (see fixture_list), cached per composition."""
+        comp = self.get_comp()
+        if self._fx_cache[0] is comp and self._fx_cache[1] == track:
+            return self._fx_cache[2]
+        inst = self._first(track)
+        opts = ((inst["fx"].get("params") or {}).get("Pad 1") or {}).get("options") if inst else None
+        fx = fixture_list(opts)
+        self._fx_cache = (comp, track, fx)
+        return fx
+
+    def fixtures_of_value(self, track, value):
+        """Indices of the fixtures a pad value lights: one fixture, or all of a whole screen."""
+        if not value or value == UNASSIGNED:
+            return []
+        fx = self.fixtures(track)
+        hit = [i for i, f in enumerate(fx) if f["name"] == value]
+        return hit or [i for i, f in enumerate(fx) if f["screen"] == value]
+
+    def short(self, track, value):
+        """'L3F2' for a fixture, the screen name for a whole screen, '' when unassigned."""
+        if not value or value == UNASSIGNED:
+            return ""
+        idx = self.fixtures_of_value(track, value)
+        if len(idx) == 1:
+            return self.fixtures(track)[idx[0]]["label"]
+        return value
+
+    def set_pad(self, track, k, name, now=None):
+        """Map pad k (0-based) of the track to a fixture or screen name ('—' = none) on every
+        instance of the track, and remember it as the track's pad assignment."""
+        now = now or time.time()
+        done = False
+        for inst in self.instances():
+            if inst["track"] != track:
+                continue
+            p = (inst["fx"].get("params") or {}).get(f"Pad {k + 1}")
+            opts = (p or {}).get("options")
+            if not is_param(p) or (opts and name not in opts):
+                continue
+            if self.send_param:
+                self.send_param(p["id"], {"value": name})
+            p["value"] = name                                   # shown at once; Resolume confirms later
+            fid = inst["fx"].get("id")
+            if fid in self._known:
+                t, pads, _ = self._known[fid]
+                pads = list(pads)
+                pads[k] = name
+                self._known[fid] = (t, pads, now + PENDING)
+            done = True
+        if done and self.store is not None:
+            first = self._first(track)
+            self.store.pad_configs[track] = self.pads_of(first) if first else [UNASSIGNED] * NPADS
+            self.store.save()
+        return done
 
     def layer_name(self, track):
         inst = self._first(track)

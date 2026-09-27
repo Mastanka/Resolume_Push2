@@ -96,6 +96,10 @@ br.button("Upper Row 2", True)                  # SETTINGS
 shot("seq_settings")
 br.button("Upper Row 3", True)                  # PRESETS (placeholder)
 shot("seq_presets")
+br.button("Upper Row 4", True)                  # MAPPING, a fixture picked
+br.map_armed = 1
+shot("seq_mapping")
+br.map_armed = None
 br.seq.stop(); br.mode = "params"
 
 br.online = False

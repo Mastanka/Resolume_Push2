@@ -7,7 +7,7 @@ Requested by Štefan, 2026-09-27. Replaces the flat menu row (BU1 PARAMS, BU2 CO
 | View | Button | Pads | Menus above the display (LED colour) |
 |---|---|---|---|
 | CLIP | Session | Clip grid | 1 CLIP PARAMS · 2 CLIP COLOR · 3 CLIP EFFECTS · 4, 5 empty · 6 LAYER PARAMS · 7 LAYER EFFECTS · 8 empty (white / dim grey) |
-| SEQUENCER | Note | Step sequencer | 1 ENVELOPE · 2 SETTINGS · 3 PRESETS (red / dim red; red = palette `L6`, the 7th layer colour) |
+| SEQUENCER | Note | Step sequencer | 1 ENVELOPE · 2 SETTINGS · 3 PRESETS · 4 MAPPING (red / dim red; red = palette `L6`, the 7th layer colour) |
 
 Each view remembers its last menu (Session → back to the CLIP menu you left, Note → the SEQ menu).
 
@@ -19,6 +19,15 @@ Each view remembers its last menu (Session → back to the CLIP menu you left, N
   Composition effects are no longer listed (the Master button still edits the composition colour).
 - **ENVELOPE** knobs: Attack, Decay, Sustain, Release, Gate. **SETTINGS**: Direction, Length, Level.
   Hold a step + Gate / Level knob = that step's gate / level. **PRESETS**: placeholder, to be designed.
+- **MAPPING** (added 2026-09-27): which DMX fixture each of the 24 pads lights, for the selected track.
+  Pads: rows 1–4 = the fixtures the Bar Chaser offers, left → right, top → bottom, labelled L#F#
+  (lumiverse # in Arena's order, fixture # inside it): dim white = free, dim track colour = used by a
+  pad, bright = used by the pad last pressed, blinking white = picked. Row 5 = red (marks the menu).
+  Rows 6–8 = pads 1–24: dim track colour = has a fixture, off = none. **Select + fixture** = pick it;
+  then **a pad** = store (the fixture pad and the pad blink twice, fast). Pressing the picked fixture
+  again cancels. **Delete + pad** = no fixture. A plain pad press selects and flashes the pad and shows
+  its fixture. **Octave ▲ ▼** = next / previous 32 fixtures. Writes go to every Bar Chaser of the track
+  and into pad memory.
 
 ## MIX / MUTE / SOLO screens
 

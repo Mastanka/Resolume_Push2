@@ -5,7 +5,8 @@ from __future__ import annotations
 import colorsys
 
 SEQ_RED = (255, 60, 60)          # the SEQUENCER view's menu colour (its buttons above the display are red)
-SEQ_MENU_NAMES = {"seq_env": "ENVELOPE", "seq_settings": "SETTINGS", "seq_presets": "PRESETS"}
+SEQ_MENU_NAMES = {"seq_env": "ENVELOPE", "seq_settings": "SETTINGS", "seq_presets": "PRESETS",
+                  "seq_mapping": "MAPPING"}
 
 # One colour per layer (repeats every 8 layers). Used for pads and the display.
 LAYER_RGB = [
@@ -129,14 +130,12 @@ def render(snap, bgr=True):
     elif snap["mode"].startswith("seq"):
         sq = snap["seq"]
         tcol = LAYER_RGB[sq["track"] % 8]
-        for k in range(8):
+        for k in range(len(sq["knobs"])):                        # menus without knobs draw no columns
             x = k * 120
             if snap["touched"] == k:
                 col((45, 45, 45)); ctx.rectangle(x, 0, 120, 98); ctx.fill()
             if k:
                 col((35, 35, 35)); ctx.rectangle(x, 6, 1, 86); ctx.fill()
-            if k >= len(sq["knobs"]):
-                continue
             label, value, frac = sq["knobs"][k]
             col((150, 150, 150)); font(15)
             say(x + 8, 24, label, 104)
@@ -148,6 +147,17 @@ def render(snap, bgr=True):
         if sq.get("menu") == "seq_presets":
             col((200, 200, 200)); font(18, True)
             say(24, 56, "PRESETS — to be designed")
+        mp = sq.get("mapping")
+        if mp:                                                    # MAPPING: what is picked / stored
+            col((255, 255, 255)); font(24, True)
+            say(24, 44, mp["title"], 912)
+            col((170, 170, 170)); font(16)
+            say(24, 74, mp["sub"], 600)
+            info = f"{mp['assigned']}/24 pads mapped  ·  {mp['fixtures']} fixtures"
+            if mp["pages"] > 1:
+                info += f"  ·  page {mp['page'] + 1}/{mp['pages']} (Octave)"
+            col((130, 130, 130)); font(13)
+            say(944, 74, info, 330, right=True)
         col((60, 60, 60)); ctx.rectangle(0, 100, W, 1); ctx.fill()
         e = sq["env"]                                             # envelope sketch, bottom left
         total = max(0.25, e["attack"] + e["decay"] + 0.5 + e["release"])
@@ -176,6 +186,8 @@ def render(snap, bgr=True):
         say(950, 127, snap["bpm"], right=True)
         if sq["warning"]:
             bottom = sq["warning"]
+        elif sq.get("mapping"):
+            bottom = "Select + fixture, then a pad  ·  Delete + pad = clear"
         elif sq.get("select_held"):
             bottom = "pad = add / remove  ·  group button = store (Shift = all tracks)"
         elif sq.get("multi"):

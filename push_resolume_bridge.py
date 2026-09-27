@@ -69,7 +69,7 @@ from pathlib import Path
 import requests
 import yaml
 
-from chaser_engine import PluginEngine, pad_key
+from chaser_engine import UNASSIGNED, PluginEngine, pad_key
 from sequencer import DIRECTIONS, Sequencer
 from display import LAYER_RGB, render  # noqa: F401  (render re-exported for tests/tools)
 from resolume_api import (  # noqa: F401
@@ -115,9 +115,12 @@ SEQ_HZ = 100          # sequencer clock ticks per second
 # Menus on the buttons above the display, per view. CLIP view (Session): white; SEQUENCER view (Note): red.
 CLIP_MENUS = {"Upper Row 1": "clip_params", "Upper Row 2": "color", "Upper Row 3": "clip_fx",
               "Upper Row 6": "layer_params", "Upper Row 7": "layer_fx"}
-SEQ_MENUS = {"Upper Row 1": "seq_env", "Upper Row 2": "seq_settings", "Upper Row 3": "seq_presets"}
+SEQ_MENUS = {"Upper Row 1": "seq_env", "Upper Row 2": "seq_settings", "Upper Row 3": "seq_presets",
+             "Upper Row 4": "seq_mapping"}
 SEQ_PAGES = {"seq_env": ["Attack", "Decay", "Sustain", "Release", "Gate"],     # knobs per SEQ menu
-             "seq_settings": ["Direction", "Length", "Level"], "seq_presets": []}
+             "seq_settings": ["Direction", "Length", "Level"], "seq_presets": [], "seq_mapping": []}
+MAP_FIXTURES = 32     # MAPPING: fixtures on the top four pad rows (Octave ▲ ▼ = next 32)
+MAP_BLINK = 0.08      # s per phase of the double blink that confirms a stored mapping
 PARAM_MODES = ("clip_params", "layer_params")
 FX_MODES = ("clip_fx", "layer_fx")
 MIX_MODES = ("mix", "mute", "solo")       # screens on top of either view (Mix / Mute / Solo button)
@@ -254,6 +257,10 @@ class Bridge:
         self.select_held = self.select_used = False
         self.side = "groups"       # buttons right of the pads in SEQ: "groups" (Layout) or "grid" (Scale)
         self.cur_group = None      # ("track" | "global", button) last stored / recalled (lit while it matches)
+        self.map_armed = None      # MAPPING: fixture index picked with Select, waiting for a pad
+        self.map_focus = None      # MAPPING: pad last pressed (its fixture is shown)
+        self.map_blink = {}        # MAPPING: ("fx", index) / ("pad", k) -> time of the confirming double blink
+        self.map_page = 0          # MAPPING: which 32 fixtures are on the pads
         self.repeat = False
         self.accent = False
         self.delete_held = self.browse_held = self.fixed_len_held = False
@@ -330,6 +337,7 @@ class Bridge:
         self.held_steps.clear()
         self.held_bars.clear()
         self.select_held = False
+        self.map_armed = None
 
     # ---- composition access --------------------------------------------- #
     def layers(self):
@@ -557,11 +565,58 @@ class Bridge:
             else:
                 self.note_msg(f"G{g + 1} empty · Select + button = store (+ Shift = all tracks)")
 
+    def mapping(self):
+        return self.view == "seq" and self.menus["seq"] == "seq_mapping"
+
+    def _map_pad(self, ij, down):
+        """MAPPING: top four rows = fixtures, row 5 = red divider, rows 6-8 = pads 1-24.
+        Select + fixture = pick it (blinks), then a pad = store it there (both blink twice).
+        Delete + pad = no fixture. True = handled, False = let the normal pad code run."""
+        i, j = ij
+        seq, eng = self.seq, self.engine
+        fx = eng.fixtures(seq.track)
+        if i < 4:
+            f = self.map_page * MAP_FIXTURES + i * 8 + j
+            if down and f < len(fx):
+                if self.select_held:
+                    self.select_used = True
+                    self.map_armed = None if self.map_armed == f else f
+                elif self.map_armed == f:
+                    self.map_armed = None                          # pressed again = cancel
+                self.note_msg(f"{fx[f]['label']} = {fx[f]['name']}")
+            return True
+        if i == 4:
+            return True
+        k = self.bar_index(i, j)
+        if not down:
+            return False
+        if self.delete_held:
+            if eng.set_pad(seq.track, k, UNASSIGNED):
+                self.map_blink = {("pad", k): time.time()}
+                self.note_msg(f"Pad {k + 1}: no fixture")
+            return True
+        if self.map_armed is not None and self.map_armed < len(fx):
+            f = self.map_armed
+            if eng.set_pad(seq.track, k, fx[f]["name"]):
+                now = time.time()
+                self.map_blink = {("fx", f): now, ("pad", k): now}
+                self.note_msg(f"Pad {k + 1} = {fx[f]['label']}")
+            else:
+                self.note_msg(f"T{seq.track + 1}: no Bar Chaser to map")
+            self.map_armed, self.map_focus = None, k
+            if self.select_held:
+                self.select_used = True
+            return True
+        self.map_focus = k
+        return False                                               # select + flash as usual
+
     def _seq_pad(self, ij, velocity, down):
         i, j = ij
         with self.lock:
             bt = self.beat_time() or 0.0
             seq = self.seq
+            if self.mapping() and self._map_pad(ij, down):
+                return
             if i < 4:                                              # steps, for every selected pad
                 step = i * 8 + j
                 if not down:
@@ -678,8 +733,12 @@ class Bridge:
             if name == DOUBLE_LOOP_BUTTON:
                 self.seq.double_loop()
                 return True
-            if name in (OCTAVE_UP, OCTAVE_DOWN):
-                return True                                    # unused with 24 fixed pads
+            if name in (OCTAVE_UP, OCTAVE_DOWN):                   # MAPPING: fixture pages
+                if self.mapping():
+                    pages = max(1, math.ceil(len(self.engine.fixtures(self.seq.track)) / MAP_FIXTURES))
+                    step = 1 if name == OCTAVE_DOWN else -1
+                    self.map_page = max(0, min(pages - 1, self.map_page + step))
+                return True
             if name in SCENE_BUTTONS:                              # top button = 1/32t / group 1
                 if self.side == "grid":
                     self.seq.grid = name
@@ -749,7 +808,60 @@ class Bridge:
             p.swing = max(0.0, min(1.0, p.swing + inc * 0.02))
             self.seq.save()
 
+    def _map_pad_colors(self):
+        """MAPPING lights: fixtures dim white, mapped ones in the track colour, the picked one blinking;
+        row 5 red; pads with a fixture in the track colour; a stored mapping blinks twice."""
+        seq, eng, now = self.seq, self.engine, time.time()
+        tc = seq.track % 8
+        fx = eng.fixtures(seq.track)
+        values = [eng.pad_name(seq.track, k) for k in range(24)]
+        used = set()
+        for v in values:
+            used.update(eng.fixtures_of_value(seq.track, v))
+        focus = set(eng.fixtures_of_value(seq.track, values[self.map_focus])) if self.map_focus is not None else set()
+        armed_pads = {k for k, v in enumerate(values)
+                      if self.map_armed is not None and self.map_armed in eng.fixtures_of_value(seq.track, v)}
+        lit = {key for (t, key), v in seq.levels.items() if t == seq.track and v > 0.02}
+        blink = int(now / BLINK) % 2 == 0
+
+        def double(key):
+            t0 = self.map_blink.get(key)
+            if t0 is None or now - t0 >= 4 * MAP_BLINK:
+                return None
+            return "white" if int((now - t0) / MAP_BLINK) in (0, 2) else "black"
+
+        grid = {}
+        for i in range(8):
+            for j in range(8):
+                if i < 4:
+                    f = self.map_page * MAP_FIXTURES + i * 8 + j
+                    if f >= len(fx):
+                        color = "black"
+                    else:
+                        color = double(("fx", f))
+                        if color is None:
+                            if self.map_armed == f:
+                                color = "white" if blink else "black"
+                            elif f in focus:
+                                color = f"L{tc}"
+                            else:
+                                color = f"L{tc}_dim" if f in used else "dark_gray"
+                elif i == 4:
+                    color = "red"
+                else:
+                    k = self.bar_index(i, j)
+                    color = double(("pad", k))
+                    if color is None:
+                        if pad_key(k) in lit or k == self.map_focus or k in armed_pads:
+                            color = f"L{tc}" if values[k] else "white"
+                        else:
+                            color = f"L{tc}_dim" if values[k] else "black"
+                grid[(i, j)] = color
+        return grid
+
     def _seq_pad_colors(self):
+        if self.mapping():
+            return self._map_pad_colors()
         grid = {}
         seq = self.seq
         pos = seq.position(self.beat_time() or 0.0)
@@ -1454,6 +1566,7 @@ class Bridge:
                 self.menus[self.view] = (SEQ_MENUS if self.view == "seq" else CLIP_MENUS)[name]
                 self._clear_overlay()
                 self.move_src = None
+                self.map_armed = None
                 self.color_target = "clip"
             elif name == NOTE_BUTTON:
                 if self.shift:
@@ -1521,6 +1634,10 @@ class Bridge:
                            (FIXED_LENGTH_BUTTON, self.fixed_len_held),
                            (OCTAVE_UP, False), (OCTAVE_DOWN, False)):
                 out[b_] = ("white" if on else "dark_gray") if seq else "black"
+            if seq and self.mapping():
+                pages = max(1, math.ceil(len(self.engine.fixtures(self.seq.track)) / MAP_FIXTURES))
+                out[OCTAVE_UP] = "white" if self.map_page > 0 else "black"
+                out[OCTAVE_DOWN] = "white" if self.map_page < pages - 1 else "black"
             out[SELECT_BUTTON] = ("white" if self.multi or self.select_held else "dark_gray") if seq else "black"
             out[LAYOUT_BUTTON] = ("white" if self.side == "groups" else "dark_gray") if seq else "black"
             out[SCALE_BUTTON] = ("white" if self.side == "grid" else "dark_gray") if seq else "black"
@@ -1694,9 +1811,27 @@ class Bridge:
                          "Length": (f"{sq.pattern.length} steps", sq.pattern.length / 32),
                          "Level": pct(tr.level)}
                 knobs = [(n,) + every[n] for n in SEQ_PAGES.get(self.menus["seq"], [])]
-                pads = [(k + 1, self.engine.pad_name(sq.track, k) or "—") for k in sorted(self.sel_pads)]
+                pads = [(k + 1, self.engine.short(sq.track, self.engine.pad_name(sq.track, k)) or "—")
+                        for k in sorted(self.sel_pads)]
+                mapping = None
+                if self.mapping():
+                    fxl = self.engine.fixtures(sq.track)
+                    names = [self.engine.pad_name(sq.track, k) for k in range(24)]
+                    pages = max(1, math.ceil(len(fxl) / MAP_FIXTURES))
+                    if self.map_armed is not None and self.map_armed < len(fxl):
+                        f = fxl[self.map_armed]
+                        title, sub = f"{f['label']} picked  ·  press a pad to store it", f["name"]
+                    elif self.map_focus is not None:
+                        v = names[self.map_focus]
+                        title = f"Pad {self.map_focus + 1} = {self.engine.short(sq.track, v) or '—'}"
+                        sub = v or "no fixture"
+                    else:
+                        title, sub = "Hold Select + a fixture, then press a pad", \
+                            f"{len(fxl)} fixtures on the top rows" if fxl else "no fixtures: save the Advanced Output preset"
+                    mapping = {"title": title, "sub": sub, "assigned": sum(1 for v in names if v),
+                               "fixtures": len(fxl), "page": self.map_page, "pages": pages}
                 ready = self.engine.ready(sq.track)
-                seq = {"knobs": knobs, "menu": self.menus["seq"], "track": sq.track, "pattern": sq.pattern.name, "running": sq.running,
+                seq = {"knobs": knobs, "menu": self.menus["seq"], "mapping": mapping, "track": sq.track, "pattern": sq.pattern.name, "running": sq.running,
                        "pos": sq.position(self.beat_time() or 0.0), "length": sq.pattern.length, "grid": sq.grid,
                        "pads": pads, "layer": self.engine.layer_name(sq.track), "ready": ready,
                        "env": {"attack": e.attack, "decay": e.decay, "sustain": e.sustain, "release": e.release,

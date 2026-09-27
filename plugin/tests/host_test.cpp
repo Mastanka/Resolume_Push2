@@ -117,7 +117,7 @@ int main( int argc, char** argv )
 		a.PointerValue = &s;
 		return plugMain( FF_SET_PARAMETER, a, inst ).UIntValue;
 	};
-	CHECK( setText( 0, argv[ 2 ] ) == FF_SUCCESS, "set preset" );  // Pad 1 = Bar A (x 145-175 of 1920, y 72-530 of 1080)
+	CHECK( setText( 0, argv[ 2 ] ) == FF_SUCCESS, "set preset" );  // Pad 1 = first fixture, Bar B (x 345-375 of 1920, y 70-532)
 
 	FFGLTextureStruct texInfo  = { (FFUInt32)W, (FFUInt32)H, (FFUInt32)W, (FFUInt32)H, tex };
 	FFGLTextureStruct* texPtrs[ 1 ] = { &texInfo };
@@ -148,14 +148,14 @@ int main( int argc, char** argv )
 	CHECK( L.r > 200 && L.g < 50 && L.a > 200, "pass through: left half must be red" );
 	CHECK( R.g > 200 && R.r < 50 && R.a > 200, "pass through: right half must be green" );
 
-	// 2. Texture mode, Outside = Transparent, Level 1 = 1: only Bar A's rectangle shows the input
+	// 2. Texture mode, Outside = Transparent, Level 1 = 1: only Bar B's rectangle shows the input
 	CHECK( setFloat( 5, 0.0f ) == FF_SUCCESS, "set outside 0" );
 	CHECK( setFloat( 31, 1.0f ) == FF_SUCCESS, "set level 1" );
 	CHECK( render() == FF_SUCCESS, "render 2" );
-	int bx = int( 160.0 / 1920.0 * W ), by = int( ( 1.0 - 300.0 / 1080.0 ) * H );// inside Bar A (y up)
+	int bx = int( 360.0 / 1920.0 * W ), by = int( ( 1.0 - 300.0 / 1080.0 ) * H );// inside Bar B (y up)
 	Pixel inBar = px( out, bx, by ), outside = px( out, W - 8, H / 2 );
 	std::printf( "level 1: in bar=(%d,%d,%d,%d) outside=(%d,%d,%d,%d)\n", inBar.r, inBar.g, inBar.b, inBar.a, outside.r, outside.g, outside.b, outside.a );
-	CHECK( inBar.r > 200 && inBar.a > 200, "level 1: bar A must show the (red) input" );
+	CHECK( inBar.r > 200 && inBar.a > 200, "level 1: bar B must show the (red) input" );
 	CHECK( outside.a == 0, "level 1: outside must be transparent" );
 
 	// 3. Level 0.5 halves it; Solid mode gives white
@@ -169,7 +169,7 @@ int main( int argc, char** argv )
 	inBar = px( out, bx, by );
 	CHECK( inBar.r > 200 && inBar.g > 200 && inBar.b > 200 && inBar.a > 200, "solid mode must be white" );
 
-	// 4. Show pads paints bar A with an opaque colour
+	// 4. Show pads paints bar B with an opaque colour
 	CHECK( setFloat( 6, 2.0f ) == FF_SUCCESS, "set mode show pads" );
 	CHECK( render() == FF_SUCCESS, "render 5" );
 	inBar = px( out, bx, by );

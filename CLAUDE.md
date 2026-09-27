@@ -71,7 +71,7 @@ python push_resolume_bridge.py --dump 3   # list parameter paths for layer 3 (fo
 | K9 | `Swing Encoder` | – |
 | K10 | `Tempo Encoder` | BPM ±1 (Shift ±0.1) |
 | K11 | `Master Encoder` | Selected layer opacity / composition master in MIX (ends blackout) |
-| BU1–BU8 | `Upper Row 1..8` (above display) | Menus of the current view. CLIP: BU1 CLIP PARAMS, BU2 CLIP COLOR, BU3 CLIP EFFECTS, BU6 LAYER PARAMS, BU7 LAYER EFFECTS (white). SEQ: BU1 ENVELOPE, BU2 SETTINGS, BU3 PRESETS (red = `L6`) |
+| BU1–BU8 | `Upper Row 1..8` (above display) | Menus of the current view. CLIP: BU1 CLIP PARAMS, BU2 CLIP COLOR, BU3 CLIP EFFECTS, BU6 LAYER PARAMS, BU7 LAYER EFFECTS (white). SEQ: BU1 ENVELOPE, BU2 SETTINGS, BU3 PRESETS, BU4 MAPPING (red = `L6`) |
 | BD1–BD8 | `Lower Row 1..8` (below display) | Context row: PARAMS pages, COLOR palette (Shift = save), MIX mute (Solo held = solo), FX on/off. Play held: launch column above |
 | B_1 | `Play` (bottom-left) | Hold + pad = launch clip; hold + BD = launch column (lit green) |
 | B_2 | `Record` (above B_1) | Hold + pad = stop layer (lit red) |
@@ -119,8 +119,13 @@ overlays. Parameter page is per menu (`Bridge.page` property over `_pages`).
 - **clip_fx / layer_fx** (BU3 / BU7): `fx_list()` = the clip's / the layer's effects; K = effect
   `Opacity` param, BD = `bypassed`. Page ◀▶ = `fx_page`. Composition effects are in no menu (Master
   button reaches the composition colour).
-- **seq_env / seq_settings / seq_presets** (Note view, BU1–3): knobs from `SEQ_PAGES` (hold step +
-  Gate / Level knob = that step). PRESETS is a placeholder. Rows 1–4 steps, row 5 patterns 1–8 (Shift 9–16), rows 6–8 pads 1–24
+- **seq_env / seq_settings / seq_presets / seq_mapping** (Note view, BU1–4): knobs from `SEQ_PAGES` (hold
+  step + Gate / Level knob = that step). PRESETS is a placeholder. **MAPPING** (`Bridge.mapping()`,
+  `_map_pad`, `_map_pad_colors`): rows 1–4 = the track's fixtures from the effect's Pad options
+  (`chaser_engine.fixture_list`: "Screen / slice" entries grouped by screen → L#F#, a screen without
+  fixture entries = one fixture), row 5 red, rows 6–8 = pads. Select + fixture = `map_armed` (blinks),
+  then pad = `PluginEngine.set_pad` on every instance of the track (+ pad memory), double blink
+  (`map_blink`); Delete + pad = "—"; Octave = `map_page` (32 fixtures per page). Otherwise rows 1–4 steps, row 5 patterns 1–8 (Shift 9–16), rows 6–8 pads 1–24
   (bottom-left = 1). `Bridge.sel_pads` = multi-selection (`Bridge.multi`: Select latch, or Select held →
   pad toggles); steps act on all selected pads. Buttons right of the pads: `Bridge.side` = "groups"
   (Layout, default) → pad groups: `Sequencer.track_groups[track]` (G, Select + button, track colour)

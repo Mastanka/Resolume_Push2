@@ -42,14 +42,16 @@ def file_clip(path):
 def choice(v, options):
     return {"id": next(ids), "valuetype": "ParamChoice", "value": v, "index": options.index(v), "options": list(options)}
 def bar_chaser_effect():
-    """The Bar Chaser FFGL effect as Arena shows it: 55 params, pads 1-3 assigned by default."""
-    slices = ["\u2014", "Bar A", "Bar B", "Bar C"]
+    """The Bar Chaser FFGL effect as Arena shows it: 55 params. The dropdowns list the fixtures
+    (Bar A has two), then the whole screens; pads 1-3 hold whole screens, as in an older show."""
+    slices = ["\u2014", "Bar A / 1 - 423 141 RGB", "Bar A / 424 - 846 141 RGB 2", "Bar B / 1 - 855 h3 2m grb",
+              "Bar C / 1 - 423 141 RGB", "Bar A", "Bar B", "Bar C"]
     params = {"Preset": s(""), "Reload": ev(), "Track": choice("1", ["1", "2", "3", "4"]),
               "Master": rng(1.0), "Edge": rng(0.0, 0, 20),
               "Outside": choice("Transparent", ["Transparent", "Black", "Pass through"]),
               "Mode": choice("Texture", ["Texture", "Solid", "Show pads"])}
     for k in range(24):
-        params[f"Pad {k + 1}"] = choice(slices[k + 1] if k < 3 else slices[0], slices)
+        params[f"Pad {k + 1}"] = choice(["Bar A", "Bar B", "Bar C"][k] if k < 3 else slices[0], slices)
     for k in range(24):
         params[f"Level {k + 1}"] = rng(0.0)
     return {"name": "Bar Chaser", "display_name": "Bar Chaser", "id": next(ids), "bypassed": b_(False), "params": params}

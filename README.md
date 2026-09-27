@@ -162,12 +162,16 @@ hold the button and goes back when you let go.
 
 **Step sequencer (SEQUENCER view)** — press **Note**; **Session** goes back to the clips.
 Menus (red): **1 ENVELOPE** = knobs Attack, Decay, Sustain, Release, Gate. **2 SETTINGS** = knobs
-Direction, Length, Level. **3 PRESETS** = not designed yet.
+Direction, Length, Level. **3 PRESETS** = not designed yet. **4 MAPPING** = which DMX fixture each pad
+lights: the top four pad rows show the fixtures (L1F1, L1F2, L2F1 … = lumiverse / fixture, in Arena's
+order), row 5 is red, rows 6–8 are pads 1–24. Hold **Select** and press a fixture (it blinks), then press
+a pad to store it there (both blink twice). **Delete** + pad = no fixture. **Octave** ▲ ▼ = more fixtures.
 
 It needs the **Bar Chaser** effect (in `plugin/`, built with `plugin/build.sh`, installed with
 `python push_resolume_bridge.py --install-plugin`, then restart Arena). Save your Advanced Output as a
-preset once (Arena → Output → Advanced → Presets → Save): the effect reads it and lists your screens
-in its **Pad 1 … Pad 24** dropdowns. Put one Bar Chaser on each layer whose clip you want to flash,
+preset once (Arena → Output → Advanced → Presets → Save): the effect reads it and lists every DMX
+fixture ("Lumiverse 1 / 1 - 423 141 RGB"), then every whole lumiverse, in its **Pad 1 … Pad 24**
+dropdowns. New pads start on fixture 1, 2, 3 … Put one Bar Chaser on each layer whose clip you want to flash,
 as the **last** effect on the layer (or press **Shift + Note** with a clip of that layer selected),
 and set its **Track** (1–4) — or hold **Browse** and press track button 1–4 on the Push.
 

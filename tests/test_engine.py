@@ -154,6 +154,37 @@ def test_pad_memory():
     assert rest.delete_effect(A, 0) in (200, 204) and rest.delete_effect(B, 0) in (200, 204)   # leave no instance
 
 
+def test_fixtures():
+    """MAPPING's fixture list: L<lumiverse>F<fixture> in Arena's order; pads mapped on every instance."""
+    import tempfile
+    from sequencer import Sequencer
+    from chaser_engine import PluginEngine, fixture_list
+    new = ["\u2014", "Lumiverse 1 / 1 - 423 141 RGB", "Lumiverse 1 / 424 - 846 141 RGB 2",
+           "Lumiverse 2 / 1 - 855 h3 2m grb", "Lumiverse 3 / 1 - 423 141 RGB", "Lumiverse 1", "Lumiverse 2", "Lumiverse 3"]
+    fx = fixture_list(new)
+    assert [f["label"] for f in fx] == ["L1F1", "L1F2", "L2F1", "L3F1"], fx
+    assert fx[1]["name"] == "Lumiverse 1 / 424 - 846 141 RGB 2" and fx[1]["screen"] == "Lumiverse 1"
+    old = ["\u2014", "Lumiverse 2", "Lumiverse 1", "Lumiverse 3", "Lumiverse 1 / a", "Lumiverse 1 / b"]  # older build
+    assert [(f["label"], f["name"]) for f in fixture_list(old)] == \
+        [("L1F1", "Lumiverse 2"), ("L2F1", "Lumiverse 1 / a"), ("L2F2", "Lumiverse 1 / b"), ("L3F1", "Lumiverse 3")]
+    store = Sequencer(Path(tempfile.mkdtemp()) / "chases.yaml")
+    eng = PluginEngine(rest, comp, None, lambda pid, v: None, store=store, send_param=rest.set_param)
+    n0 = len(comp()["layers"])
+    rest.add_layer(); rest.add_layer()
+    A, B = n0 + 1, n0 + 2
+    assert rest.add_effect(A, "Bar Chaser") == 204 and rest.add_effect(B, "Bar Chaser") == 204   # both track 1
+    assert [f["label"] for f in eng.fixtures(0)] == ["L1F1", "L1F2", "L2F1", "L3F1"]
+    assert eng.short(0, "Bar B") == "L2F1" and eng.short(0, "Bar A") == "Bar A" and eng.short(0, "\u2014") == ""
+    assert eng.fixtures_of_value(0, "Bar A") == [0, 1] and eng.fixtures_of_value(0, "Bar C / 1 - 423 141 RGB") == [3]
+    target = "Bar A / 424 - 846 141 RGB 2"
+    assert eng.set_pad(0, 3, target)
+    pads = lambda L: [e for e in comp()["layers"][L - 1]["video"]["effects"] if e["name"] == "Bar Chaser"][0]["params"]
+    assert pads(A)["Pad 4"]["value"] == target and pads(B)["Pad 4"]["value"] == target, "every instance of the track"
+    assert store.pad_configs[0][3] == target and Sequencer(store.path).pad_configs[0][3] == target
+    assert not eng.set_pad(0, 4, "No such fixture") and not eng.set_pad(2, 0, target)        # unknown / no instance
+    assert rest.delete_effect(A, 0) in (200, 204) and rest.delete_effect(B, 0) in (200, 204)   # leave no instance
+
+
 def test_global_group_isolation():
     """A global group used on track 2 only puts steps on track 2: it never plays track 1's layers."""
     br = _bridge()
@@ -211,7 +242,8 @@ def test_screens():
     br.button("Session", True); assert br.mode == "color" and br.overlay is None      # each view keeps its menu
     br.button("Note", True); assert br.mode == "seq_settings"
     leds = br.button_colors()
-    assert leds["Upper Row 2"] == "L6" and leds["Upper Row 1"] == "L6_dim" and leds["Upper Row 4"] == "black"
+    assert leds["Upper Row 2"] == "L6" and leds["Upper Row 1"] == "L6_dim" and leds["Upper Row 4"] == "L6_dim"
+    assert leds["Upper Row 5"] == "black"
     br.button("Session", True)
     leds = br.button_colors()
     assert leds["Upper Row 2"] == "white" and leds["Upper Row 6"] == "dark_gray" and leds["Upper Row 8"] == "black"
