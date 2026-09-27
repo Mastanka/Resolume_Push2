@@ -214,8 +214,14 @@ FFGL 2.1 effect, universal bundle. 55 params: `Preset` (text), `Reload` (event),
 Advanced Output preset via `SetParamElements`), `Level 1..24`. Hosts reset every param to its declared
 default after creation, so defaults must carry the initial pad assignment. `plugin/tests/host_test.cpp`
 is a tiny CGL host: loads the bundle, feeds a red/green picture, checks pass-through, masking, solid,
-show pads. Build needs Xcode CLT + `brew install cmake`. Verified on Arena 7.23.2: loads from
-`~/Documents/Resolume Arena/Extra Effects`, preset dropdowns fill, Solid and Show pads render.
+show pads. Build needs Xcode CLT + `brew install cmake`. Verified on Arena 7.23.2 (2026-09-27): loads
+from `~/Documents/Resolume Arena/Extra Effects`, preset dropdowns fill (pads pre-assigned), Texture /
+Solid / Show pads all render on a layer. Arena's log (`~/Library/Logs/Resolume Arena/Resolume Arena
+log.txt`) shows the plugin's `LogToHost` lines; a layer input texture there is 1920×1080 in a
+1920×1088 RGBA8 texture, linear filters, no sampler object, host FBO 1. Pitfalls met: a `Transform`
+effect *after* Bar Chaser (or on the layer when the effect is on the clip) moves the bars off the
+slices — keep Bar Chaser last on the layer; `SetOptionParamInfo` appends a parameter, never call it
+twice for one index (set `FindParamInfo(i)->defaultFloatVal` instead).
 
 ## Testing workflow
 
