@@ -328,13 +328,43 @@ time.sleep(1.0)
 fx2 = [e for e in rest.composition()["layers"][1]["video"]["effects"] if e["name"] == "Bar Chaser"]
 assert len(fx2) == 1 and fx2[0]["params"]["Track"]["value"] == "2", "Browse + BD2 must make layer 2 track 2"
 assert ("pad", ((7, 3), "black")) in calls, "unassigned pad 4 must be dark"
-fire("on_button_pressed", "1/16"); fire("on_button_released", "1/16")               # grid 1/16
+assert ("btn", ("Lower Row 2", "L1_dim")) in calls, "BD2 dim: track 2 has a Bar Chaser"
+
+
+def tap(name):
+    fire("on_button_pressed", name); fire("on_button_released", name)
+
+
+def since(n0, *items):
+    return all(("btn", it) in calls[n0:] for it in items)
+
+
+assert ("btn", ("Select", "dark_gray")) in calls and ("btn", ("Layout", "white")) in calls, "SEQ: Select dim, Layout lit"
+n0 = len(calls)
+tap("Scale"); tap("1/16")                                                           # Scale: side buttons = grid
+time.sleep(0.2)
+assert since(n0, ("Scale", "white"), ("Layout", "dark_gray"), ("1/16", "white"), ("1/32t", "dark_gray")), "grid LEDs"
+n0 = len(calls)
+tap("Layout")                                                                       # Layout: side buttons = groups
+time.sleep(0.2)
+assert since(n0, ("1/32t", "black"), ("1/16", "black")), "empty groups must be unlit"
 fire("on_pad_pressed", 60, (7, 0), 100); fire("on_pad_released", 60, (7, 0), 0)     # pad 1 (select + audition)
-fire("on_button_pressed", "Shift")
-fire("on_pad_pressed", 60, (7, 1), 100); fire("on_pad_released", 60, (7, 1), 0)     # Shift + pad 2 = add to selection
-fire("on_button_released", "Shift")
+n0 = len(calls)
+tap("Select")                                                                       # multi-select on (latched)
+time.sleep(0.2)
+assert since(n0, ("Select", "white")), "Select lit while multi-select is on"
+fire("on_pad_pressed", 60, (7, 1), 100); fire("on_pad_released", 60, (7, 1), 0)     # pad 2 added to the selection
 fire("on_pad_pressed", 60, (0, 0), 127); fire("on_pad_released", 60, (0, 0), 0)     # step 1 on both pads
+n0 = len(calls)
+fire("on_button_pressed", "Select"); tap("1/32t"); fire("on_button_released", "Select")   # store group 1
+time.sleep(0.2)
+assert since(n0, ("1/32t", "L0")), "stored + current group lit fully in the track colour"
+assert ("btn", ("Select", "dark_gray")) not in calls[n0:], "Select + group must not toggle multi-select"
+n0 = len(calls)
+tap("Select")                                                                       # multi-select off
 fire("on_pad_pressed", 60, (7, 1), 100); fire("on_pad_released", 60, (7, 1), 0)     # pad 2 only
+time.sleep(0.2)
+assert since(n0, ("Select", "dark_gray"), ("1/32t", "L0_dim")), "selection changed: group 1 dim"
 fire("on_pad_pressed", 60, (0, 2), 127); fire("on_pad_released", 60, (0, 2), 0)     # step 3 on pad 2
 fire("on_pad_pressed", 60, (0, 2), 64); fire("on_pad_released", 60, (0, 2), 0)      # step 3 off again
 fire("on_pad_pressed", 60, (0, 2), 64); fire("on_pad_released", 60, (0, 2), 0)      # step 3 on, half level
@@ -343,6 +373,7 @@ chases = yaml.safe_load(open(cfg["chases_file"]).read())
 steps = chases["patterns"][0]["tracks"][0]["steps"]
 assert steps["pad 1"] == [[0, 1.0, None]] and steps["pad 2"][0] == [0, 1.0, None] and steps["pad 2"][1][1] < 0.6, steps
 assert ("pad", ((0, 2), "L0_mid")) in calls or ("pad", ((0, 2), "L0_dim")) in calls, "half-level step pad"
+assert chases["groups"] == [[1, 2]] + [None] * 7, chases["groups"]
 log0 = len(requests.get("http://127.0.0.1:8080/api/v1/_opacity_log").json())
 fire("on_button_pressed", "Play")                                                    # run
 time.sleep(2.6)
@@ -363,6 +394,12 @@ assert ("btn", ("Play", "green")) in calls
 fire("on_pad_pressed", 60, (4, 1), 100); fire("on_pad_released", 60, (4, 1), 0)     # row 5 = pattern 2 (queued)
 time.sleep(0.2)
 assert ("pad", ((4, 1), "white")) in calls, "queued pattern blinks white"
+n0 = len(calls)
+tap("1/32t")                                                                        # recall group 1
+fire("on_button_pressed", "Delete"); tap("1/32"); fire("on_button_released", "Delete")   # clear empty group 2: no-op
+time.sleep(0.2)
+assert since(n0, ("1/32t", "L0")), "recalled group lit fully"
+assert ("pad", ((7, 0), "light_gray")) in calls[n0:], "recall must select pad 1 again (group 1 = pads 1 + 2)"
 n1 = len(calls)
 fire("on_button_pressed", "Session"); time.sleep(0.3)
 assert ("btn", ("Note", "dark_gray")) in calls[n1:], "Session leaves SEQ"

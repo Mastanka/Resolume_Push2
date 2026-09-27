@@ -73,9 +73,16 @@ row 5      patterns 1–8, left → right; Shift + pad = patterns 9–16
 rows 6–8   pads 1–24: bottom row = 1–8 left → right, then 9–16, top of the block = 17–24
 ```
 
-- **Pad press** = select only that pad and flash it (release = release). **Shift + pad press** =
-  add to / remove from the selection (also flashes). The selection is a set (`Bridge.sel_pads`),
-  never empty after a plain press.
+- **Pad press** = select only that pad and flash it (release = release). **Select** (lit dim in SEQ)
+  tapped = multi-select latch (lit fully): each pad press then adds to / removes from the selection
+  (also flashes). Holding Select does the same while held. The selection is a set
+  (`Bridge.sel_pads`), never empty. *(Changed 2026-09-27: was Shift + pad.)*
+- **Pad groups** on the 8 buttons right of the pads (**Layout**, the default side mode): hold
+  **Select** + button = store the selection as group 1–8 (top = 1); tap = select that group's pads;
+  **Delete** + button = clear. LEDs: empty = off, stored = dim track colour, the group the selection
+  came from = full track colour (until the selection changes). Groups are saved selections, shared by
+  all tracks, stored in `chases.yaml` (`groups:`, 1-based pads). **Scale** switches the buttons to
+  the grid 1/4 … 1/32t (white = current), as before. Layout / Scale: active = white, other = dim.
 - **Steps** act on every selected pad: if the step is on for all of them → off for all, else → on
   for all (level = tap velocity, Accent = 1). Step pad colour: full = on for all selected, dim =
   on for some, dark grey = off. Hold step + knob 8 / 5 edits that step on all selected pads.

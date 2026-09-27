@@ -156,16 +156,21 @@ def render(snap, bgr=True):
         col((200, 200, 200)); font(15)
         names = ", ".join(n for _, n in sq["pads"])
         nums = ", ".join(str(k) for k, _ in sq["pads"])
-        say(144, 151, f"T{sq['track'] + 1} · {sq['layer'] or '—'}   ·   pad{'s' * (len(sq['pads']) != 1)} {nums} ({names})"
+        grp = "" if sq.get("group") is None else f"G{sq['group'] + 1}  "
+        say(144, 151, f"T{sq['track'] + 1} · {sq['layer'] or '—'}   ·   {grp}pad{'s' * (len(sq['pads']) != 1)} {nums} ({names})"
                       + (f"   ·   next: P{sq['pending'] + 1}" if sq["pending"] is not None else ""), 560)
         col((140, 140, 140)); font(13)
         say(950, 127, snap["bpm"], right=True)
         if sq["warning"]:
             bottom = sq["warning"]
+        elif sq.get("select_held"):
+            bottom = "pad = add / remove  ·  group button = store"
+        elif sq.get("multi"):
+            bottom = "MULTI-SELECT  ·  pad = add / remove"
         elif snap["shift"]:
-            bottom = "FINE  ·  Shift + pad = add to selection"
+            bottom = "FINE"
         else:
-            bottom = "24 pads  ·  Shift + pad = multi-select"
+            bottom = "24 pads  ·  Select = multi-select"
         say(950, 150, bottom, 400, right=True)
     elif snap["mode"] == "fx":
         fx = snap["fx"] or {"items": [], "page": 0, "pages": 1}

@@ -106,6 +106,8 @@ NOTE_BUTTON, SESSION_BUTTON = "Note", "Session"
 BROWSE_BUTTON, REPEAT_BUTTON, ACCENT_BUTTON = "Browse", "Repeat", "Accent"
 DELETE_BUTTON, DOUBLE_LOOP_BUTTON, FIXED_LENGTH_BUTTON = "Delete", "Double Loop", "Fixed Length"
 OCTAVE_UP, OCTAVE_DOWN = "Octave Up", "Octave Down"
+SELECT_BUTTON = "Select"                    # SEQ: tap = multi-select on / off; hold + group button = store
+LAYOUT_BUTTON, SCALE_BUTTON = "Layout", "Scale"   # SEQ: buttons right of the pads = pad groups / grid
 SWING_ENCODER = "Swing Encoder"
 SEQ_KNOBS = ["Attack", "Decay", "Sustain", "Release", "Gate", "Direction", "Length", "Level"]
 SEQ_HZ = 100          # sequencer clock ticks per second
@@ -226,6 +228,10 @@ class Bridge:
                              n_tracks=int(sc.get("tracks", 4)))
         self.engine = PluginEngine(rest, lambda: self.comp, self.refresh_comp, self._send_level)
         self.sel_pads = {0}        # selected pads (0-based); steps edit all of them
+        self.multi = False         # Select latched: pad press adds / removes instead of replacing
+        self.select_held = self.select_used = False
+        self.side = "groups"       # buttons right of the pads in SEQ: "groups" (Layout) or "grid" (Scale)
+        self.cur_group = None      # group last stored / recalled (lit fully while the selection matches)
         self.repeat = False
         self.accent = False
         self.delete_held = self.browse_held = self.fixed_len_held = False
@@ -423,6 +429,31 @@ class Bridge:
     def sel_keys(self):
         return [pad_key(k) for k in sorted(self.sel_pads)]
 
+    def current_group(self):
+        """Index of the group the selection came from, while the selection still equals it."""
+        g = self.cur_group
+        if g is not None and self.seq.groups[g] and set(self.seq.groups[g]) == self.sel_pads:
+            return g
+        return None
+
+    def _group_button(self, g):
+        """Button g right of the pads in Layout mode: Select held = store, Delete held = clear, else recall."""
+        seq = self.seq
+        if self.select_held:
+            self.select_used = True
+            seq.store_group(g, self.sel_pads)
+            self.cur_group = g
+            self.note_msg(f"G{g + 1} = pad{'s' * (len(self.sel_pads) != 1)} "
+                          + ", ".join(str(k + 1) for k in sorted(self.sel_pads)))
+        elif self.delete_held:
+            seq.clear_group(g)
+            self.note_msg(f"G{g + 1} cleared")
+        elif seq.groups[g]:
+            self.sel_pads = set(seq.groups[g])
+            self.cur_group = g
+        else:
+            self.note_msg(f"G{g + 1} empty · hold Select + this button to store")
+
     def _seq_pad(self, ij, velocity, down):
         i, j = ij
         with self.lock:
@@ -477,7 +508,9 @@ class Bridge:
                 if self.delete_held:
                     seq.clear_steps(key)
                     return
-                if self.shift:
+                if self.select_held:
+                    self.select_used = True                    # no latch toggle on release
+                if self.multi or self.select_held:
                     if k in self.sel_pads and len(self.sel_pads) > 1:
                         self.sel_pads.discard(k)
                     else:
@@ -503,6 +536,19 @@ class Bridge:
                 self.browse_held = False
                 if not self.browse_used:
                     self.join_track(self.seq.track)
+            return True
+        if name == SELECT_BUTTON:                                  # tap = latch, hold = momentary
+            with self.lock:
+                if down:
+                    self.select_held, self.select_used = True, False
+                else:
+                    self.select_held = False
+                    if not self.select_used:
+                        self.multi = not self.multi
+            return True
+        if name in (LAYOUT_BUTTON, SCALE_BUTTON):
+            if down:
+                self.side = "groups" if name == LAYOUT_BUTTON else "grid"
             return True
         if name == PASTE_BUTTON:                                   # Duplicate: copy pattern
             self.paste_held = down
@@ -530,8 +576,11 @@ class Bridge:
                 return True
             if name in (OCTAVE_UP, OCTAVE_DOWN):
                 return True                                    # unused with 24 fixed pads
-            if name in SCENE_BUTTONS:                              # grid, top button = 1/32t
-                self.seq.grid = name
+            if name in SCENE_BUTTONS:                              # top button = 1/32t / group 1
+                if self.side == "grid":
+                    self.seq.grid = name
+                else:
+                    self._group_button(SCENE_BUTTONS.index(name))
                 return True
             if name in LOWER_ROW:
                 k = LOWER_ROW.index(name)
@@ -1246,6 +1295,7 @@ class Bridge:
                 self.color_target = "clip"
                 self.held_steps.clear()
                 self.held_bars.clear()
+                self.select_held = False
             elif name == NOTE_BUTTON:
                 if self.shift:
                     self.add_chaser()
@@ -1256,6 +1306,7 @@ class Bridge:
                 self.mode = "params"
                 self.held_steps.clear()
                 self.held_bars.clear()
+                self.select_held = False
             elif name == MASTER_COLOR_BUTTON:
                 master = self.mode == "color" and self.color_target == "master"
                 self.mode, self.color_target, self.color_idx = "color", "clip" if master else "master", 0
@@ -1310,6 +1361,9 @@ class Bridge:
                            (FIXED_LENGTH_BUTTON, self.fixed_len_held),
                            (OCTAVE_UP, False), (OCTAVE_DOWN, False)):
                 out[b_] = ("white" if on else "dark_gray") if seq else "black"
+            out[SELECT_BUTTON] = ("white" if self.multi or self.select_held else "dark_gray") if seq else "black"
+            out[LAYOUT_BUTTON] = ("white" if self.side == "groups" else "dark_gray") if seq else "black"
+            out[SCALE_BUTTON] = ("white" if self.side == "grid" else "dark_gray") if seq else "black"
             if seq:
                 out[PLAY_BUTTON] = "green" if self.seq.running else "dark_gray"
                 out[PASTE_BUTTON] = "white" if self.paste_held else "dark_gray"
@@ -1325,7 +1379,7 @@ class Bridge:
             for k, b in enumerate(LOWER_ROW):
                 if seq:
                     if k < self.seq.n_tracks:
-                        has = self.seq.pattern.tracks[k].texture is not None
+                        has = self.engine.ready(k)
                         out[b] = f"L{k}" if k == self.seq.track else (f"L{k}_dim" if has else "dark_gray")
                     else:
                         out[b] = "black"
@@ -1351,9 +1405,13 @@ class Bridge:
                         out[b] = "yellow" if solo and self.value_of(solo) else f"L{(L - 1) % 8}"
                 else:
                     out[b] = "black" if k >= pages else ("white" if k == self.page else "dark_gray")
+            cur_g, tc = self.current_group(), self.seq.track % 8
             for i, b in enumerate(SCENE_BUTTONS):
-                if seq:                                     # grid selection
+                if seq and self.side == "grid":             # Scale: grid selection
                     out[b] = "white" if b == self.seq.grid else "dark_gray"
+                    continue
+                if seq:                                     # Layout: pad groups in the track colour
+                    out[b] = "black" if not self.seq.groups[i] else (f"L{tc}" if i == cur_g else f"L{tc}_dim")
                     continue
                 L = self.pad_to_cell(i, 0)[0]
                 out[b] = ("black" if self.layer_json(L) is None
@@ -1474,6 +1532,8 @@ class Bridge:
                        "env": {"attack": e.attack, "decay": e.decay, "sustain": e.sustain, "release": e.release,
                                "gate": tr.gate},
                        "pending": sq.pending, "swing": sq.pattern.swing,
+                       "group": self.current_group(), "multi": self.multi or self.select_held,
+                       "select_held": self.select_held, "side": self.side,
                        "warning": "" if ready else f"T{sq.track + 1}: no Bar Chaser — Shift + Note on a layer"}
             return {
                 "seq": seq,

@@ -83,8 +83,10 @@ python push_resolume_bridge.py --dump 3   # list parameter paths for layer 3 (fo
 | – | `Mute` / `Solo` | Hold + pad = mute (layer `bypassed`) / solo that layer |
 | – | `Master` (right of BD row) | COLOR on the composition's Colorize (master colour) |
 | – | `Duplicate` | COLOR: hold + pad / scene button / BD = paste colour to clip / layer / column |
-| – | `1/32t` … `1/4` (right of pads) | Flash: hold = that row's layer master 100 %. SEQ: grid |
-| – | `Note` / `Session` / BU4 | SEQ mode / back to the clip grid. Shift + Note = build bar layers |
+| – | `1/32t` … `1/4` (right of pads) | Flash: hold = that row's layer master 100 %. SEQ: pad groups 1–8 (Layout) or grid (Scale) |
+| – | `Select` | SEQ: tap = multi-select latch (dim / lit), hold + pads = momentary, hold + group button = store group |
+| – | `Layout` / `Scale` | SEQ: buttons right of the pads = pad groups / grid |
+| – | `Note` / `Session` / BU4 | SEQ mode / back to the clip grid. Shift + Note = add Bar Chaser to the layer |
 | – | `Browse`, `Repeat`, `Accent`, `Delete`, `Double Loop`, `Fixed Length`, `Octave Up/Down`, `Swing Encoder` | SEQ only, see `docs/specs/2026-09-24-step-sequencer-design.md` |
 
 ## Pads
@@ -108,8 +110,11 @@ Playing pads pulse between full and `L{k}_mid` on the beat; muted / non-solo lay
 - **fx** (BU3): `fx_list()` = clip, layer, composition effects; K = effect `Opacity` param, BD = `bypassed`.
   Page ◀▶ = `fx_page`.
 - **seq** (Note / BU4): rows 1–4 steps, row 5 patterns 1–8 (Shift 9–16), rows 6–8 pads 1–24
-  (bottom-left = 1). `Bridge.sel_pads` = multi-selection (Shift + pad toggles); steps act on all
-  selected pads. BD1–4 = texture tracks = layers carrying a **Bar Chaser** effect with that `Track`.
+  (bottom-left = 1). `Bridge.sel_pads` = multi-selection (`Bridge.multi`: Select latch, or Select held →
+  pad toggles); steps act on all selected pads. Buttons right of the pads: `Bridge.side` = "groups"
+  (Layout, default) → `Sequencer.groups` (8 saved selections, shared by all tracks, in `chases.yaml`;
+  Select + button stores, Delete + button clears, tap recalls; `current_group()` = lit fully) or "grid"
+  (Scale). Pads flash only for the selected track. BD1–4 = texture tracks = layers carrying a **Bar Chaser** effect with that `Track`.
   Knobs = the selected track's ADSR + Gate + Level and the pattern's Direction + Length. `Bridge.seq`
   (`Sequencer`, bars named `pad 1`…`pad 24`), `Bridge.engine` (`PluginEngine`), `seq_loop` thread at
   100 Hz → `engine.set_level` → WebSocket `set` of the instance's `Level n`. Shift + Note = add the

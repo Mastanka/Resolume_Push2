@@ -105,6 +105,22 @@ def test_playback():
     sq.switch_pattern(2, 13.0, now=True); assert sq.current == 2
 
 
+def test_groups():
+    import tempfile
+    path = Path(tempfile.mkdtemp()) / "chases.yaml"
+    sq = S.Sequencer(path)
+    assert sq.groups == [None] * 8
+    sq.store_group(0, {4, 0, 1}); sq.store_group(7, {23})
+    assert sq.groups[0] == [0, 1, 4]
+    sq2 = S.Sequencer(path)                                     # saved 1-based, loaded 0-based
+    assert sq2.groups[0] == [0, 1, 4] and sq2.groups[7] == [23] and sq2.groups[1] is None
+    assert "- - 1\n" in path.read_text() or "[1, 2, 5]" in path.read_text()
+    sq2.clear_group(0)
+    assert S.Sequencer(path).groups[0] is None
+    path.write_text("patterns: []\n")                            # old file without groups
+    assert S.Sequencer(path).groups == [None] * 8
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

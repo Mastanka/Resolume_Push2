@@ -20,6 +20,7 @@ MAX_STEPS = 32
 BAR_BEATS = 4          # pattern switches happen on this boundary
 N_PATTERNS = 16
 N_TRACKS = 4
+N_GROUPS = 8           # pad groups on the 8 buttons right of the pads
 
 
 # --------------------------------------------------------------------------- #
@@ -141,6 +142,7 @@ class Sequencer:
         self.last_step = None
         self.last_pattern_step = None
         self.last_random = None
+        self.groups = [None] * N_GROUPS   # pad groups: sorted pad indices (0-based) or None = empty
         self.voices = {}           # (track, bar name) -> Voice
         self.levels = {}           # (track, bar name) -> last level returned by tick()
         if self.path and self.path.exists():
@@ -306,11 +308,23 @@ class Sequencer:
                 out[key] = value
         return out
 
+    # ---- pad groups (a saved pad selection, shared by all tracks) ------------ #
+    def store_group(self, g, pads):
+        self.groups[g] = sorted(pads) or None
+        self.save()
+
+    def clear_group(self, g):
+        self.groups[g] = None
+        self.save()
+
     # ---- storage ------------------------------------------------------------ #
     def to_dict(self):
-        return {"patterns": [_pattern_to_dict(p) for p in self.patterns]}
+        return {"groups": [None if g is None else [k + 1 for k in g] for g in self.groups],   # 1-based pads
+                "patterns": [_pattern_to_dict(p) for p in self.patterns]}
 
     def from_dict(self, d):
+        groups = [sorted(int(k) - 1 for k in g) if g else None for g in (d.get("groups") or [])][:N_GROUPS]
+        self.groups = groups + [None] * (N_GROUPS - len(groups))
         pats = [_pattern_from_dict(x) for x in (d.get("patterns") or [])][:N_PATTERNS]
         while len(pats) < N_PATTERNS:
             pats.append(Pattern(name=f"P{len(pats) + 1}"))

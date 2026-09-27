@@ -161,15 +161,17 @@ rows 6–8   pads 1–24, bottom-left = pad 1, each = a slice chosen in the effe
 
 | Control | Does |
 |---|---|
-| Pad | Select only that pad and flash it; **Shift** + pad = add to / remove from the selection |
+| Pad | Select only that pad and flash it |
+| **Select** (dim in SEQ) | Tap = multi-select on (lit) / off; then each pad adds to / removes from the selection. Hold + pads works too |
 | Tap a step | On / off for every selected pad; tap harder for a brighter flash (**Accent** = always full) |
 | Hold a step + knob 8 / 5 | That step's level / gate on the selected pads |
 | **Repeat** on + hold a pad | Strobe at the grid rate |
 | Buttons below the display 1–4 | Select the texture track; **Browse** + button = the selected clip's layer joins that track |
 | Pattern pad (row 5) | Switch at the next bar; press it again to switch now |
 | **Play** | Run / stop |
-| Buttons right of the pads | Grid 1/4 … 1/32t |
-| **Delete** + step / pad / track / pattern | Clear |
+| **Layout** → buttons right of the pads | Pad groups 1–8: tap = select that group's pads. **Select** + button = store the selection there. **Delete** + button = clear. Stored = dim in the track colour, current = bright, empty = off |
+| **Scale** → buttons right of the pads | Grid 1/4 … 1/32t (white = current) |
+| **Delete** + step / pad / track / pattern / group | Clear |
 | **Duplicate** + pattern → pattern | Copy |
 | **Double Loop** / **Fixed Length** + button 1–8 | Double the pattern / length 4–32 |
 | Knobs | Attack, Decay, Sustain, Release, Gate, Direction, Length, Level; Swing encoder = swing |
