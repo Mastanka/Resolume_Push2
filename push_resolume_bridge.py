@@ -10,17 +10,21 @@ Pads      8x8 clip grid. Bottom pad row = lowest visible layer (same as Resolume
 Display   Selected layer + clip, and 8 parameter slots (one above each encoder).
 Encoders  Track 1-8 edit the 8 slots. Hold Shift for fine steps.
           Master encoder (far right) = selected layer opacity.
-Mix       Mix button toggles the mixer: Track 1-8 = layer masters (1 = top visible
-          layer), Master encoder = composition master.
-Menus     Upper Row 1 = PARAMS view. Lower Row 1-8 = jump to parameter page 1-8.
-Color     Upper Row 2 = COLOR view for the selected clip: Track 1-3 = R/G/B, 4-6 = Hue/Sat/
+Views     Session = CLIP view (pads = clips), Note = SEQUENCER view (pads = step sequencer).
+          Each view has its own menus on Upper Row (CLIP: white, SEQUENCER: red).
+Mix       Mix / Mute / Solo: click = MIX / MUTE / SOLO screen (click again = back), hold = only
+          while held. Track 1-8 = layer masters (1 = top visible layer), Master encoder =
+          composition master, Lower Row = mute (SOLO: solo).
+Menus     CLIP: Upper Row 1 CLIP PARAMS, 6 LAYER PARAMS (Lower Row 1-8 = parameter page 1-8),
+          3 CLIP EFFECTS, 7 LAYER EFFECTS. SEQUENCER: 1 ENVELOPE, 2 SETTINGS, 3 PRESETS.
+Color     Upper Row 2 = CLIP COLOR for the selected clip: Track 1-3 = R/G/B, 4-6 = Hue/Sat/
           Brightness, 8 = which colour param. Lower Row 1-8 = that param's palette colours.
 Order     Hold Convert + touch a knob, go to any page, touch the target knob -> the two
           params swap. The order is saved per param type in pins.yaml.
 Tempo     Tap Tempo = Resolume's own tap, Shift + Tap Tempo = resync (beat 1 now).
           Tempo encoder = BPM +-1 (Shift +-0.1). Tap Tempo, the display and playing pads
           blink on the beat; Metronome turns the pad pulse on / off.
-FX        Upper Row 3 = effects of the selected clip, its layer and the composition:
+FX        CLIP / LAYER EFFECTS = effects of the selected clip / its layer:
           Track 1-8 = effect amount (Opacity), Lower Row = effect on / off, Page < > = more.
 Master    Master button = COLOR on the composition's colour effect (Colorize): K7 = amount,
           K8 = on/off. Press again = back to the clip.
@@ -98,21 +102,28 @@ LED_HZ = 50           # LED updates per second (beat edges); the display runs at
 MASTER_COLOR_BUTTON = "Master"              # COLOR on the composition's colour effect
 PASTE_BUTTON = "Duplicate"                  # COLOR: hold + pad / row / column = paste colour
 NOTE_TIME = 1.8       # s a short message stays on the display
-PARAMS_BUTTON = "Upper Row 1"               # BU1
-COLOR_BUTTON = "Upper Row 2"                # BU2
-FX_BUTTON = "Upper Row 3"                   # BU3
-SEQ_BUTTON = "Upper Row 4"                  # BU4 (also Note)
-NOTE_BUTTON, SESSION_BUTTON = "Note", "Session"
+NOTE_BUTTON, SESSION_BUTTON = "Note", "Session"   # the two views: sequencer / clips
 BROWSE_BUTTON, REPEAT_BUTTON, ACCENT_BUTTON = "Browse", "Repeat", "Accent"
 DELETE_BUTTON, DOUBLE_LOOP_BUTTON, FIXED_LENGTH_BUTTON = "Delete", "Double Loop", "Fixed Length"
 OCTAVE_UP, OCTAVE_DOWN = "Octave Up", "Octave Down"
 SELECT_BUTTON = "Select"                    # SEQ: tap = multi-select on / off; hold + group button = store
 LAYOUT_BUTTON, SCALE_BUTTON = "Layout", "Scale"   # SEQ: buttons right of the pads = pad groups / grid
 SWING_ENCODER = "Swing Encoder"
-SEQ_KNOBS = ["Attack", "Decay", "Sustain", "Release", "Gate", "Direction", "Length", "Level"]
 SEQ_HZ = 100          # sequencer clock ticks per second
-MENU_BUTTONS = {PARAMS_BUTTON: "params", COLOR_BUTTON: "color", FX_BUTTON: "fx", SEQ_BUTTON: "seq"}
-FX_SOURCES = [("Clip", "clip"), ("Layer", "layer"), ("Comp", "comp")]   # FX menu order
+# Menus on the buttons above the display, per view. CLIP view (Session): white; SEQUENCER view (Note): red.
+CLIP_MENUS = {"Upper Row 1": "clip_params", "Upper Row 2": "color", "Upper Row 3": "clip_fx",
+              "Upper Row 6": "layer_params", "Upper Row 7": "layer_fx"}
+SEQ_MENUS = {"Upper Row 1": "seq_env", "Upper Row 2": "seq_settings", "Upper Row 3": "seq_presets"}
+SEQ_PAGES = {"seq_env": ["Attack", "Decay", "Sustain", "Release", "Gate"],     # knobs per SEQ menu
+             "seq_settings": ["Direction", "Length", "Level"], "seq_presets": []}
+PARAM_MODES = ("clip_params", "layer_params")
+FX_MODES = ("clip_fx", "layer_fx")
+MIX_MODES = ("mix", "mute", "solo")       # screens on top of either view (Mix / Mute / Solo button)
+OVERLAY_BUTTONS = {MIX_BUTTON: "mix", MUTE_BUTTON: "mute", SOLO_BUTTON: "solo"}
+HOLD_TIME = 0.4       # s: shorter press = click (the screen stays), longer = hold (back on release)
+LEGACY_MODES = {"params": "clip_params", "fx": "clip_fx", "seq": "seq_env"}
+SEQ_RED, SEQ_RED_DIM = "L6", "L6_dim"     # layer colour 7 is red: the SEQUENCER menu buttons
+FX_SOURCES = [("Clip", "clip"), ("Layer", "layer")]   # FX menus: CLIP EFFECTS / LAYER EFFECTS
 UPPER_ROW = [f"Upper Row {i}" for i in range(1, 9)]
 LOWER_ROW = [f"Lower Row {i}" for i in range(1, 9)]
 TEMPO_PATH = "tempocontroller/tempo"
@@ -188,7 +199,13 @@ class Bridge:
         self.coarse = float(cfg["encoders"]["coarse"])
         self.fine = float(cfg["encoders"]["fine"])
         self.sel = (1, 1)          # (layer, column), 1-based, as in Resolume
-        self.mode = "params"       # "params", "color" or "mix"
+        self.view = "clip"         # what the pads show: "clip" (Session) or "seq" (Note)
+        self.menus = {"clip": "clip_params", "seq": "seq_env"}   # current menu of each view
+        self.overlay = None        # "mix" / "mute" / "solo" screen on top of the view, or None
+        self.ov_latched = False    # overlay opened by a click (stays) rather than a hold
+        self.ov_stack = []         # latched overlays underneath the current one (click again = back)
+        self.ov_press = {}         # overlay -> [press time, used] while its button is down
+        self._pages = {}           # menu -> parameter page
         self.color_idx = 0         # which colour param the COLOR menu edits
         self.color_target = "clip"  # "clip" or "master" (composition colour effect)
         self.paste_held = False    # Duplicate
@@ -196,7 +213,6 @@ class Bridge:
         self.colors_path = Path(cfg.get("colors_file") or Path(__file__).with_name("colors.yaml"))
         self.own_palette = self._load_palette()
         self.hsv_cache = {}        # param id -> (rgb, [h, s, v]) keeps hue while saturation is 0
-        self.page = 0
         self.fx_page = 0
         self.shift = False
         self.play_held = False     # B_1
@@ -241,6 +257,73 @@ class Bridge:
         self.dup_src = None        # Duplicate + pattern: source pattern
         self.seq_note = ""         # last setup / load message (shown on the display)
         self.last_grid_step = None
+
+    # ---- screens: view (pads) + menu (display, knobs, buttons below) + MIX / MUTE / SOLO ---- #
+    @property
+    def mode(self):
+        """The screen shown now: the overlay if one is open, else the view's menu."""
+        return self.overlay or self.menus[self.view]
+
+    @mode.setter
+    def mode(self, m):
+        m = LEGACY_MODES.get(m, m)
+        if m in MIX_MODES:
+            self.overlay, self.ov_latched = m, True
+            return
+        self._clear_overlay()
+        self.view = "seq" if m in SEQ_PAGES else "clip"
+        self.menus[self.view] = m
+
+    @property
+    def page(self):
+        return self._pages.get(self.mode, 0)
+
+    @page.setter
+    def page(self, v):
+        self._pages[self.mode] = v
+
+    def _clear_overlay(self):
+        self.overlay, self.ov_latched, self.ov_stack = None, False, []
+
+    def _overlay_back(self):
+        self.overlay = self.ov_stack.pop() if self.ov_stack else None
+        self.ov_latched = self.overlay is not None
+
+    def _ov_used(self):
+        """Something was pressed / turned while an overlay button is down: it is a hold."""
+        for press in self.ov_press.values():
+            press[1] = True
+
+    def overlay_button(self, ov, down):
+        """Mix / Mute / Solo: click = open (click again = back), hold = open until released."""
+        now = time.time()
+        with self.lock:
+            if down:
+                if self.overlay == ov and self.ov_latched:            # second click = previous screen
+                    self._overlay_back()
+                    return
+                if self.overlay and self.ov_latched:
+                    self.ov_stack = [o for o in self.ov_stack if o != self.overlay] + [self.overlay]
+                self.ov_stack = [o for o in self.ov_stack if o != ov]
+                self.overlay, self.ov_latched = ov, False
+                self.ov_press[ov] = [now, False]
+                self.move_src = None
+                return
+            press = self.ov_press.pop(ov, None)
+            if press is None or self.overlay != ov:
+                return
+            if now - press[0] < HOLD_TIME and not press[1]:
+                self.ov_latched = True                                 # click: stays open
+            else:
+                self._overlay_back()                                   # hold: back on release
+
+    def set_view(self, view):
+        self._clear_overlay()
+        self.view = view
+        self.move_src = None
+        self.held_steps.clear()
+        self.held_bars.clear()
+        self.select_held = False
 
     # ---- composition access --------------------------------------------- #
     def layers(self):
@@ -555,9 +638,10 @@ class Bridge:
             if not down:
                 self.dup_src = None
             return True
+        seq_row = name in LOWER_ROW and self.overlay is None
         if not down:
             return name in (PLAY_BUTTON, REPEAT_BUTTON, ACCENT_BUTTON, DOUBLE_LOOP_BUTTON,
-                            OCTAVE_UP, OCTAVE_DOWN) or name in SCENE_BUTTONS or name in LOWER_ROW
+                            OCTAVE_UP, OCTAVE_DOWN) or name in SCENE_BUTTONS or seq_row
         with self.lock:
             if name == PLAY_BUTTON:
                 if self.seq.running:
@@ -582,7 +666,7 @@ class Bridge:
                 else:
                     self._group_button(SCENE_BUTTONS.index(name))
                 return True
-            if name in LOWER_ROW:
+            if seq_row:
                 k = LOWER_ROW.index(name)
                 if self.fixed_len_held:
                     self.seq.set_length((k + 1) * 4)
@@ -598,40 +682,44 @@ class Bridge:
         return False
 
     def _turn_seq(self, idx, inc):
+        names = SEQ_PAGES.get(self.mode, [])
+        if idx >= len(names):
+            return
+        name = names[idx]
         seq, tr = self.seq, self.seq.pattern.tracks[self.seq.track]
         fine = 0.2 if self.shift else 1.0
-        if self.held_steps and idx in (4, 7):                     # hold step + knob, all selected pads
+        if self.held_steps and name in ("Gate", "Level"):         # hold step + knob, all selected pads
             for key in self.sel_keys():
                 st = seq._steps(key)
                 for s_ in self.held_steps:
                     if s_ in st:
-                        if idx == 7:
+                        if name == "Level":
                             seq.set_step_values(key, [s_], level=st[s_][0] + inc * 0.02 * fine)
                         else:
                             gate = st[s_][1] if st[s_][1] is not None else tr.gate
                             seq.set_step_values(key, [s_], gate=gate + inc * 0.02 * fine)
             return
         e = tr.envelope
-        if idx == 0:
+        if name == "Attack":
             e.attack = max(0.0, min(4.0, e.attack + inc * 0.05 * fine))
-        elif idx == 1:
+        elif name == "Decay":
             e.decay = max(0.0, min(4.0, e.decay + inc * 0.05 * fine))
-        elif idx == 2:
+        elif name == "Sustain":
             e.sustain = max(0.0, min(1.0, e.sustain + inc * 0.01 * fine))
-        elif idx == 3:
+        elif name == "Release":
             e.release = max(0.0, min(4.0, e.release + inc * 0.05 * fine))
-        elif idx == 4:
+        elif name == "Gate":
             tr.gate = max(0.1, min(1.0, tr.gate + inc * 0.02 * fine))
-        elif idx == 5:
+        elif name == "Direction":
             acc = self.choice_acc.get("seqdir", 0) + inc
             if abs(acc) >= 4:
                 i = (DIRECTIONS.index(seq.pattern.direction) + (1 if acc > 0 else -1)) % len(DIRECTIONS)
                 seq.set_direction(DIRECTIONS[i])
                 acc = 0
             self.choice_acc["seqdir"] = acc
-        elif idx == 6:
+        elif name == "Length":
             seq.set_length(seq.pattern.length + inc)
-        elif idx == 7:
+        elif name == "Level":
             tr.level = max(0.0, min(1.0, tr.level + inc * 0.01 * fine))
         seq.save()
 
@@ -743,7 +831,9 @@ class Bridge:
         self.order = prefix + [k for k in self.order if k not in prefix]
         self._save_order()
 
-    def slots(self):
+    def slots(self, scope=None):
+        """Parameter slots of the CLIP PARAMS (scope "clip") or LAYER PARAMS (scope "layer") menu."""
+        scope_wanted = scope or ("layer" if self.mode == "layer_params" else "clip")
         L, C = self.sel
         layer, clip = self.layer_json(L), self.clip_json(L, C)
         if layer is None:
@@ -754,6 +844,8 @@ class Bridge:
         if spec == "auto":
             seen = set()
             for scope, path in AUTO_SOURCES:
+                if scope != scope_wanted:
+                    continue
                 node = resolve_node(roots[scope], path) if roots[scope] else None
                 if node is None:
                     continue
@@ -770,6 +862,8 @@ class Bridge:
         else:
             for s in spec:
                 scope = s.get("scope", "layer")
+                if scope != scope_wanted:
+                    continue
                 root = roots.get(scope)
                 node = resolve_node(root, s["path"]) if root else None
                 out.append(Slot(s.get("label") or s["path"].rsplit("/", 1)[-1],
@@ -821,10 +915,11 @@ class Bridge:
 
     def turn(self, idx, inc):
         with self.lock:
-            if self.mode == "seq":
+            self._ov_used()
+            if self.mode in SEQ_PAGES:
                 self._turn_seq(idx, inc)
                 return
-            if self.mode == "mix":
+            if self.mode in MIX_MODES:
                 layers = self.mix_layers()
                 p = master_param(self.layer_json(layers[idx])) if idx < len(layers) else None
                 if p:
@@ -833,12 +928,12 @@ class Bridge:
             if self.mode == "color":
                 self._turn_color(idx, inc)
                 return
-            if self.mode == "fx":
+            if self.mode in FX_MODES:
                 items, _ = self.fx_page_items()
                 if idx < len(items) and items[idx][3]:
                     self._nudge(items[idx][3], {}, inc)
                 return
-            if self.move_src is not None:
+            if self.move_src is not None or self.mode not in PARAM_MODES:
                 return
             slots, _ = self.page_slots()
             if idx < len(slots) and slots[idx].param is not None:
@@ -846,7 +941,8 @@ class Bridge:
 
     def turn_master(self, inc):
         with self.lock:
-            if self.mode == "mix":
+            self._ov_used()
+            if self.mode in MIX_MODES:
                 p = master_param(self.comp)
                 self.blackout = None
             else:
@@ -952,11 +1048,15 @@ class Bridge:
 
     # ---- FX menu ----------------------------------------------------------- #
     def fx_list(self):
-        """[(tag, name, bypassed param or None, amount param or None)] clip, layer, composition effects."""
+        """[(tag, name, bypassed param or None, amount param or None)]: the clip's effects in CLIP
+        EFFECTS, the layer's in LAYER EFFECTS."""
         L, C = self.sel
-        roots = {"clip": self.clip_json(L, C), "layer": self.layer_json(L), "comp": self.comp}
+        roots = {"clip": self.clip_json(L, C), "layer": self.layer_json(L)}
+        wanted = "layer" if self.mode == "layer_fx" else "clip"
         out = []
         for tag, scope in FX_SOURCES:
+            if scope != wanted:
+                continue
             for fx in resolve_node(roots[scope], "video/effects") or [] if roots[scope] else []:
                 if not isinstance(fx, dict):
                     continue
@@ -1087,7 +1187,7 @@ class Bridge:
     def touch(self, idx):
         with self.lock:
             self.touched = idx
-            if self.mode != "params":
+            if self.mode not in PARAM_MODES:
                 return
             n = len(self.slots())
             i = self.page * 8 + idx
@@ -1160,7 +1260,8 @@ class Bridge:
         return (vis[k] if 0 <= k < len(vis) else 0), self.col_offset + j + 1
 
     def pad_pressed(self, ij, velocity=100):
-        if self.mode == "seq":
+        self._ov_used()
+        if self.view == "seq":
             return self._seq_pad(ij, velocity, True)
         L, C = self.pad_to_cell(*ij)
         with self.lock:
@@ -1181,7 +1282,7 @@ class Bridge:
                     self.sender.clear(L)
                 return
             if L != self.sel[0]:
-                self.page = 0
+                self._pages.clear()
             if (L, C) != self.sel:
                 self.move_src = None
                 self.color_idx = 0
@@ -1194,7 +1295,7 @@ class Bridge:
         self.sender.trigger(L, C, True)
 
     def pad_released(self, ij):
-        if self.mode == "seq":
+        if self.view == "seq":
             return self._seq_pad(ij, 0, False)
         cell = self.pad_to_cell(*ij)
         with self.lock:
@@ -1207,19 +1308,22 @@ class Bridge:
         if name == "Shift":
             self.shift = down
             return
-        if self.mode == "seq" and self._seq_button(name, down):
+        if name in OVERLAY_BUTTONS:                        # Mix / Mute / Solo: click = open, hold = peek
+            if name == MUTE_BUTTON:
+                self.mute_held = down                      # hold + pad = mute that layer
+            elif name == SOLO_BUTTON:
+                self.solo_held = down
+            self.overlay_button(OVERLAY_BUTTONS[name], down)
+            return
+        if down:
+            self._ov_used()
+        if self.view == "seq" and self._seq_button(name, down):
             return
         if name == PLAY_BUTTON:
             self.play_held = down
             return
         if name == STOP_BUTTON:
             self.stop_held = down
-            return
-        if name == MUTE_BUTTON:
-            self.mute_held = down
-            return
-        if name == SOLO_BUTTON:
-            self.solo_held = down
             return
         if name == PASTE_BUTTON:
             self.paste_held = down
@@ -1276,42 +1380,37 @@ class Bridge:
                 self.col_offset = min(max_c, self.col_offset + jump)
             elif name == "Left":
                 self.col_offset = max(0, self.col_offset - jump)
-            elif name == "Page Right" and self.mode == "fx":
+            elif name == "Page Right" and self.mode in FX_MODES:
                 _, pages = self.fx_page_items()
                 self.fx_page = min(pages - 1, self.fx_page + 1)
-            elif name == "Page Left" and self.mode == "fx":
+            elif name == "Page Left" and self.mode in FX_MODES:
                 self.fx_page = max(0, self.fx_page - 1)
             elif name == "Page Right":
                 _, pages = self.page_slots()
                 self.page = min(pages - 1, self.page + 1)
             elif name == "Page Left":
                 self.page = max(0, self.page - 1)
-            elif name == MIX_BUTTON:
-                self.mode = "params" if self.mode == "mix" else "mix"
-                self.move_src = None
-            elif name in MENU_BUTTONS:
-                self.mode = MENU_BUTTONS[name]
+            elif name in (SEQ_MENUS if self.view == "seq" else CLIP_MENUS):
+                self.menus[self.view] = (SEQ_MENUS if self.view == "seq" else CLIP_MENUS)[name]
+                self._clear_overlay()
                 self.move_src = None
                 self.color_target = "clip"
-                self.held_steps.clear()
-                self.held_bars.clear()
-                self.select_held = False
             elif name == NOTE_BUTTON:
                 if self.shift:
                     self.add_chaser()
                 else:
-                    self.mode = "seq"
-                    self.move_src = None
+                    self.set_view("seq")
             elif name == SESSION_BUTTON:
-                self.mode = "params"
-                self.held_steps.clear()
-                self.held_bars.clear()
-                self.select_held = False
+                self.set_view("clip")
             elif name == MASTER_COLOR_BUTTON:
                 master = self.mode == "color" and self.color_target == "master"
-                self.mode, self.color_target, self.color_idx = "color", "clip" if master else "master", 0
+                if self.view != "clip":
+                    self.set_view("clip")
+                self._clear_overlay()
+                self.menus["clip"] = "color"
+                self.color_target, self.color_idx = "clip" if master else "master", 0
                 self.move_src = None
-            elif name in LOWER_ROW and self.mode == "fx":
+            elif name in LOWER_ROW and self.mode in FX_MODES:
                 items, _ = self.fx_page_items()
                 k = LOWER_ROW.index(name)
                 if k < len(items) and items[k][2]:
@@ -1320,14 +1419,15 @@ class Bridge:
                     self._set(byp["id"], v, {"value": v})
             elif name in LOWER_ROW and self.mode == "color" and self.shift:
                 self.save_palette_color(LOWER_ROW.index(name))
-            elif name in LOWER_ROW and self.mode == "mix":
+            elif name in LOWER_ROW and self.mode in MIX_MODES:
                 layers = self.mix_layers()
                 k = LOWER_ROW.index(name)
                 if k < len(layers):
-                    self.toggle_layer(layers[k], "solo" if self.solo_held else "bypassed")
+                    solo = self.mode == "solo" or (self.mode == "mix" and self.solo_held)
+                    self.toggle_layer(layers[k], "solo" if solo else "bypassed")
             elif name in LOWER_ROW and self.mode == "color":
                 self.set_palette_color(LOWER_ROW.index(name))
-            elif name in LOWER_ROW and self.mode == "params":
+            elif name in LOWER_ROW and self.mode in PARAM_MODES:
                 _, pages = self.page_slots()
                 k = LOWER_ROW.index(name)
                 if k < pages:
@@ -1340,9 +1440,9 @@ class Bridge:
 
     def button_colors(self):
         with self.lock:
-            params = self.mode == "params"
+            params = self.mode in PARAM_MODES
             pages = self.page_slots()[1] if params else 0
-            out = {MIX_BUTTON: "dark_gray" if params else "white",
+            out = {MIX_BUTTON: "white" if self.overlay == "mix" else "dark_gray",
                    PLAY_BUTTON: "green" if self.play_held else "dark_gray",
                    STOP_BUTTON: "red" if self.stop_held else "dark_gray",
                    MOVE_BUTTON: "white" if self.move_src is not None or self.convert_held else "dark_gray",
@@ -1353,7 +1453,7 @@ class Bridge:
                    else "dark_gray",
                    PASTE_BUTTON: ("white" if self.paste_held else "dark_gray") if self.mode == "color"
                    else "black"}
-            seq = self.mode == "seq"
+            seq = self.view == "seq"
             out[NOTE_BUTTON] = "white" if seq else "dark_gray"
             out[SESSION_BUTTON] = "dark_gray" if seq else "white"
             for b_, on in ((REPEAT_BUTTON, self.repeat), (ACCENT_BUTTON, self.accent), (DELETE_BUTTON, self.delete_held),
@@ -1367,17 +1467,18 @@ class Bridge:
             if seq:
                 out[PLAY_BUTTON] = "green" if self.seq.running else "dark_gray"
                 out[PASTE_BUTTON] = "white" if self.paste_held else "dark_gray"
+            menus = SEQ_MENUS if seq else CLIP_MENUS
+            on, off = (SEQ_RED, SEQ_RED_DIM) if seq else ("white", "dark_gray")
             for b in UPPER_ROW:
-                out[b] = "black"
-            for b, m in MENU_BUTTONS.items():
-                active = self.mode == m and not (m == "color" and self.color_target == "master")
-                out[b] = "white" if active else "dark_gray"
+                m = menus.get(b)
+                active = m == self.mode and not (m == "color" and self.color_target == "master")
+                out[b] = "black" if m is None else (on if active else off)
             n_sw = len(self.swatches())
             blink = int(time.time() / BLINK) % 2 == 0
             mix_layers = self.mix_layers()
-            fx_items = self.fx_page_items()[0] if self.mode == "fx" else []
+            fx_items = self.fx_page_items()[0] if self.mode in FX_MODES else []
             for k, b in enumerate(LOWER_ROW):
-                if seq:
+                if seq and self.overlay is None:
                     if k < self.seq.n_tracks:
                         has = self.engine.ready(k)
                         out[b] = f"L{k}" if k == self.seq.track else (f"L{k}_dim" if has else "dark_gray")
@@ -1388,16 +1489,16 @@ class Bridge:
                     out[b] = {"Connected": "green", "Disconnected": "dark_gray"}.get(st, "black")
                 elif self.mode == "color":
                     out[b] = f"P{k}" if k < n_sw else "black"
-                elif self.mode == "fx":
+                elif self.mode in FX_MODES:
                     byp = fx_items[k][2] if k < len(fx_items) else None
                     out[b] = "black" if byp is None else ("dark_gray" if self.value_of(byp) else "white")
-                elif self.mode == "mix":
+                elif self.mode in MIX_MODES:
                     if k >= len(mix_layers):
                         out[b] = "black"
                         continue
                     L = mix_layers[k]
                     solo, mute = self.layer_flag(L, "solo"), self.layer_flag(L, "bypassed")
-                    if self.solo_held:
+                    if self.solo_held or self.mode == "solo":
                         out[b] = "yellow" if solo and self.value_of(solo) else "dark_gray"
                     elif mute and self.value_of(mute):
                         out[b] = "red"
@@ -1421,15 +1522,15 @@ class Bridge:
                            for l in all_l)
             any_solo = any(self.layer_flag(l, "solo") and self.value_of(self.layer_flag(l, "solo"))
                            for l in all_l)
-            out[MUTE_BUTTON] = "white" if self.mute_held else ("red" if any_mute else "dark_gray")
-            out[SOLO_BUTTON] = "white" if self.solo_held else ("yellow" if any_solo else "dark_gray")
+            out[MUTE_BUTTON] = "white" if self.overlay == "mute" else ("red" if any_mute else "dark_gray")
+            out[SOLO_BUTTON] = "white" if self.overlay == "solo" else ("yellow" if any_solo else "dark_gray")
             out[BLACKOUT_BUTTON] = ("red" if blink else "black") if self.blackout is not None else "dark_gray"
             return out
 
     def pad_colors(self):
         grid = {}
         with self.lock:
-            if self.mode == "seq":
+            if self.view == "seq":
                 return self._seq_pad_colors()
             dim_live = self.pulse and self.online and not self.on_beat()
             for i in range(8):
@@ -1501,15 +1602,16 @@ class Bridge:
             b = self.beat()
             note = self.note[0] if time.time() - self.note[1] < NOTE_TIME else ""
             fx = None
-            if self.mode == "fx":
+            if self.mode in FX_MODES:
                 items, fx_pages = self.fx_page_items()
-                fx = {"page": self.fx_page, "pages": fx_pages, "items": [
+                fx = {"scope": "layer" if self.mode == "layer_fx" else "clip",
+                      "page": self.fx_page, "pages": fx_pages, "items": [
                     {"tag": tag, "name": name,
                      "on": None if byp is None else not self.value_of(byp),
                      "amount": fmt_value(amt, self.value_of(amt), {}) if amt else None}
                     for tag, name, byp, amt in items]}
             seq = None
-            if self.mode == "seq":
+            if self.view == "seq":
                 sq, tr = self.seq, self.seq.pattern.tracks[self.seq.track]
                 e = tr.envelope
 
@@ -1519,14 +1621,15 @@ class Bridge:
                 def pct(v):
                     return f"{v * 100:.0f}%", v
 
-                knobs = [("Attack",) + beats(e.attack), ("Decay",) + beats(e.decay), ("Sustain",) + pct(e.sustain),
-                         ("Release",) + beats(e.release), ("Gate",) + pct(tr.gate),
-                         ("Direction", sq.pattern.direction, 0.0),
-                         ("Length", f"{sq.pattern.length} steps", sq.pattern.length / 32),
-                         ("Level",) + pct(tr.level)]
+                every = {"Attack": beats(e.attack), "Decay": beats(e.decay), "Sustain": pct(e.sustain),
+                         "Release": beats(e.release), "Gate": pct(tr.gate),
+                         "Direction": (sq.pattern.direction, 0.0),
+                         "Length": (f"{sq.pattern.length} steps", sq.pattern.length / 32),
+                         "Level": pct(tr.level)}
+                knobs = [(n,) + every[n] for n in SEQ_PAGES.get(self.menus["seq"], [])]
                 pads = [(k + 1, self.engine.pad_name(sq.track, k) or "—") for k in sorted(self.sel_pads)]
                 ready = self.engine.ready(sq.track)
-                seq = {"knobs": knobs, "track": sq.track, "pattern": sq.pattern.name, "running": sq.running,
+                seq = {"knobs": knobs, "menu": self.menus["seq"], "track": sq.track, "pattern": sq.pattern.name, "running": sq.running,
                        "pos": sq.position(self.beat_time() or 0.0), "length": sq.pattern.length, "grid": sq.grid,
                        "pads": pads, "layer": self.engine.layer_name(sq.track), "ready": ready,
                        "env": {"attack": e.attack, "decay": e.decay, "sustain": e.sustain, "release": e.release,
@@ -1547,7 +1650,7 @@ class Bridge:
                 "color": color,
                 "bpm": f"{float(self.value_of(tp) or 0):.1f} BPM" if tp else "",
                 "move": move,
-                "mode": self.mode, "mix": mix,
+                "mode": self.mode, "view": self.view, "mix": mix,
                 "comp_master": fmt_value(cp, self.value_of(cp), {}) if cp else None,
                 "online": self.online and self.comp is not None,
                 "url": self.rest.url,

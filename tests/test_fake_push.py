@@ -86,6 +86,19 @@ def state(comp, L, C):
     return comp["layers"][L - 1]["clips"][C - 1]["connected"]["value"]
 
 
+def tap(name):
+    fire("on_button_pressed", name); fire("on_button_released", name)
+
+
+def since(n0, *items):
+    return all(("btn", it) in calls[n0:] for it in items)
+
+
+def last(name):
+    """Last colour sent to a button."""
+    return next((a[1] for n, a in reversed(calls) if n == "btn" and a[0] == name), None)
+
+
 fire("on_pad_pressed", 60, (7, 1), 100)          # plain press = select only
 fire("on_pad_released", 60, (7, 1), 0)
 time.sleep(0.5)
@@ -114,45 +127,64 @@ fire("on_encoder_rotated", "Master Encoder", 5)   # selected layer opacity
 fire("on_encoder_touched", "Track2 Encoder")
 time.sleep(0.5)
 
+time.sleep(0.3)
+assert ("btn", ("Upper Row 1", "white")) in calls and ("btn", ("Upper Row 6", "dark_gray")) in calls \
+    and ("btn", ("Upper Row 4", "black")) in calls, "CLIP view menus: 1-3, 6, 7 lit, CLIP PARAMS white"
 before = rest.composition()
-fire("on_button_pressed", "Mix")          # B_3 → mix mode
+tap("Mix")                                        # click → MIX stays open
 fire("on_encoder_rotated", "Track1 Encoder", -5)  # top layer (3) master
 fire("on_encoder_rotated", "Master Encoder", -5)  # composition master
 time.sleep(0.3)                                   # let a frame light B_3
-fire("on_button_pressed", "Mix")          # back to params
+assert ("btn", ("Mix", "white")) in calls, "B_3 not lit in mix mode"
+n0 = len(calls)
+tap("Mix")                                        # click again → previous screen
 time.sleep(1.0)
 after = rest.composition()
 assert after["layers"][2]["master"]["value"] < before["layers"][2]["master"]["value"], "layer 3 master unchanged"
 assert after["layers"][0]["master"]["value"] == before["layers"][0]["master"]["value"], "wrong layer changed"
 assert after["master"]["value"] < before["master"]["value"], "composition master unchanged"
-assert ("btn", ("Mix", "white")) in calls, "B_3 not lit in mix mode"
+assert since(n0, ("Mix", "dark_gray"), ("Upper Row 1", "white")), "second click must go back to CLIP PARAMS"
+n0 = len(calls)
+fire("on_button_pressed", "Mix"); time.sleep(0.6); fire("on_button_released", "Mix")   # hold → back on release
+time.sleep(0.2)
+assert since(n0, ("Mix", "white")) and last("Mix") == "dark_gray", "hold: MIX while held, back on release"
 
 
-# --- move a param: L1 C1 has 10 auto slots → 2 pages. Frequency (p1 K2) ↔ Speed (p2 K2)
+# --- move a param in CLIP PARAMS: L1 C1 = Frequency, Fade, Width, Height, Offset, Position X, Scale, Speed
 fire("on_pad_pressed", 60, (7, 0), 100); fire("on_pad_released", 60, (7, 0), 0)
 time.sleep(0.2)
 fire("on_button_pressed", "Convert")
-fire("on_encoder_touched", "Track2 Encoder")
-fire("on_encoder_released", "Track2 Encoder")
+fire("on_encoder_touched", "Track1 Encoder")
+fire("on_encoder_released", "Track1 Encoder")
 fire("on_button_released", "Convert")
-fire("on_button_pressed", "Lower Row 2")          # BD2 → page 2
 time.sleep(0.3)
-assert ("btn", ("Lower Row 2", "white")) in calls, "BD2 not lit on page 2"
 assert ("btn", ("Convert", "white")) in calls, "Convert not lit while moving"
-fire("on_encoder_touched", "Track2 Encoder")      # target: page 2, K2
-fire("on_encoder_released", "Track2 Encoder")
-fire("on_button_pressed", "Lower Row 1")
+assert ("btn", ("Lower Row 1", "white")) in calls and ("btn", ("Lower Row 2", "black")) in calls, "one page"
+fire("on_encoder_touched", "Track8 Encoder")      # target: K8 (Speed)
+fire("on_encoder_released", "Track8 Encoder")
 order = yaml.safe_load(pins.read_text())["order"]
-assert order[1] == "transport/controls/speed" and order[9] == "video/sourceparams/frequency", order
+assert order[0] == "transport/controls/speed" and order[7] == "video/sourceparams/frequency", order
 
-# order carries over: L2 C2 (Comets down) natural = Opacity, Position X, Scale, Speed → K2 = Speed
+# order carries over: L2 C2 (Comets down) clip params natural = Position X, Scale, Speed → K1 = Speed
 fire("on_pad_pressed", 60, (6, 1), 100); fire("on_pad_released", 60, (6, 1), 0)
 before = rest.composition()
-fire("on_encoder_rotated", "Track2 Encoder", 10)
+fire("on_encoder_rotated", "Track1 Encoder", 10)
 time.sleep(0.5)
 after = rest.composition()
 spd = lambda c: c["layers"][1]["clips"][1]["transport"]["controls"]["speed"]["value"]
-assert spd(after) > spd(before), "K2 on L2 C2 should now be Speed"
+assert spd(after) > spd(before), "K1 on L2 C2 should now be Speed"
+
+# --- LAYER PARAMS (button 6): K1 = layer Opacity; the clip's params are not there
+fire("on_pad_pressed", 60, (7, 0), 100); fire("on_pad_released", 60, (7, 0), 0)     # L1 C1
+tap("Upper Row 6")
+op = lambda: rest.composition()["layers"][0]["video"]["opacity"]["value"]
+op0 = op()
+fire("on_encoder_rotated", "Track1 Encoder", -10)
+time.sleep(0.4)
+assert op() < op0, "LAYER PARAMS K1 must be the layer's Opacity"
+time.sleep(0.2)
+assert ("btn", ("Upper Row 6", "white")) in calls and ("btn", ("Upper Row 1", "dark_gray")) in calls
+tap("Upper Row 1")
 
 # --- F8 tempo: taps → Resolume's own tap event, Shift + Tap → resync; K10 +3 BPM
 events = lambda: requests.get("http://127.0.0.1:8080/api/v1/_events").json()
@@ -247,12 +279,35 @@ fire("on_pad_pressed", 60, (6, 1), 100); fire("on_pad_released", 60, (6, 1), 0) 
 fire("on_button_released", "Solo")
 time.sleep(0.4)
 assert flag(2, "solo") is True, "Solo + pad must solo the layer"
-fire("on_button_pressed", "Mix")                   # MIX: K1 = layer 3, K2 = layer 2, K3 = layer 1
+tap("Mix")                                         # MIX: K1 = layer 3, K2 = layer 2, K3 = layer 1
 fire("on_button_pressed", "Lower Row 3")           # unmute layer 1
 fire("on_button_pressed", "Solo"); fire("on_button_pressed", "Lower Row 2"); fire("on_button_released", "Solo")
 time.sleep(0.4)
 assert flag(1, "bypassed") is False and flag(2, "solo") is False, "MIX Lower Row mute / Solo+Lower Row solo"
-fire("on_button_pressed", "Mix")
+assert last("Mix") == "white", "holding Solo over MIX must come back to MIX"
+tap("Mix")
+n0 = len(calls)
+tap("Mute")                                        # click → MUTE screen stays
+fire("on_button_pressed", "Lower Row 3"); fire("on_button_released", "Lower Row 3")   # mute layer 1
+time.sleep(0.4)
+assert flag(1, "bypassed") is True, "MUTE screen: button below must mute"
+assert since(n0, ("Mute", "white")), "Mute lit while its screen is open"
+tap("Solo")                                        # click → SOLO screen on top of MUTE
+fire("on_button_pressed", "Lower Row 1"); fire("on_button_released", "Lower Row 1")   # solo layer 3
+time.sleep(0.4)
+assert flag(3, "solo") is True, "SOLO screen: button below must solo"
+n0 = len(calls)
+tap("Solo")                                        # back to MUTE
+time.sleep(0.2)
+fire("on_button_pressed", "Lower Row 3"); fire("on_button_released", "Lower Row 3")   # unmute layer 1
+tap("Mute")                                        # back to CLIP PARAMS
+time.sleep(0.4)
+assert flag(1, "bypassed") is False, "click Solo again must return to MUTE"
+assert since(n0, ("Mute", "white"), ("Upper Row 1", "white")), "back through MUTE to the menu"
+fire("on_button_pressed", "Solo"); fire("on_pad_pressed", 60, (5, 0), 100)   # hold Solo + pad: un-solo layer 3
+fire("on_pad_released", 60, (5, 0), 0); fire("on_button_released", "Solo")
+time.sleep(0.4)
+assert flag(3, "solo") is False
 
 # --- F10 master colour: Master button → composition Colorize (white, bypassed, opacity 1)
 fx = lambda: rest.composition()["video"]["effects"][0]
@@ -283,18 +338,18 @@ clouds = rest.composition()["layers"][2]["clips"][0]["video"]["sourceparams"]["C
 assert clouds == cur, (clouds, cur)
 fire("on_button_pressed", "Upper Row 1")
 
-# --- F13 FX menu on L1 C1: [Clip Transform, Layer Hue Rotate (no bypass), Comp Colorize]
+# --- F13 CLIP EFFECTS (button 3) on L1 C1 = [Transform]; LAYER EFFECTS (button 7) = [Hue Rotate, no bypass]
 fire("on_pad_pressed", 60, (7, 0), 100); fire("on_pad_released", 60, (7, 0), 0)
 fire("on_button_pressed", "Upper Row 3")
-op0 = fx()["params"]["Opacity"]["value"]
 fire("on_button_pressed", "Lower Row 1")          # Transform off
-fire("on_encoder_rotated", "Track3 Encoder", -10) # Colorize amount -10 %
-fire("on_button_pressed", "Lower Row 3")          # Colorize off
 time.sleep(0.4)
 tr = rest.composition()["layers"][0]["clips"][0]["video"]["effects"][0]["bypassed"]["value"]
 assert tr is True, "BD1 must bypass the clip's Transform"
-assert abs(fx()["params"]["Opacity"]["value"] - (op0 - 0.1)) < 1e-6 and fx()["bypassed"]["value"] is True, fx()
-assert ("btn", ("Lower Row 2", "black")) in calls, "effect without bypass must stay unlit"
+assert ("btn", ("Lower Row 2", "black")) in calls, "no second clip effect"
+n0 = len(calls)
+fire("on_button_pressed", "Upper Row 7")
+time.sleep(0.3)
+assert since(n0, ("Lower Row 1", "black"), ("Upper Row 7", "white")), "Hue Rotate has no bypass: BD1 unlit"
 fire("on_button_pressed", "Upper Row 1")
 
 # --- empty pad: Arena sends empty slots with transport / video = null (crashed live updates once)
@@ -322,6 +377,7 @@ fire("on_pad_pressed", 60, (6, 1), 100); fire("on_pad_released", 60, (6, 1), 0) 
 fire("on_button_pressed", "Note")                                                    # SEQ mode
 time.sleep(0.3)
 assert ("btn", ("Note", "white")) in calls and ("btn", ("Lower Row 1", "L0")) in calls, "SEQ LEDs"
+assert ("btn", ("Upper Row 1", "L6")) in calls and ("btn", ("Upper Row 2", "L6_dim")) in calls, "SEQ menus red"
 fire("on_button_pressed", "Browse"); fire("on_button_pressed", "Lower Row 2")       # Browse + BD2 = layer 2 → track 2
 fire("on_button_released", "Lower Row 2"); fire("on_button_released", "Browse")
 time.sleep(1.0)
@@ -329,15 +385,6 @@ fx2 = [e for e in rest.composition()["layers"][1]["video"]["effects"] if e["name
 assert len(fx2) == 1 and fx2[0]["params"]["Track"]["value"] == "2", "Browse + BD2 must make layer 2 track 2"
 assert ("pad", ((7, 3), "black")) in calls, "unassigned pad 4 must be dark"
 assert ("btn", ("Lower Row 2", "L1_dim")) in calls, "BD2 dim: track 2 has a Bar Chaser"
-
-
-def tap(name):
-    fire("on_button_pressed", name); fire("on_button_released", name)
-
-
-def since(n0, *items):
-    return all(("btn", it) in calls[n0:] for it in items)
-
 
 assert ("btn", ("Select", "dark_gray")) in calls and ("btn", ("Layout", "white")) in calls, "SEQ: Select dim, Layout lit"
 n0 = len(calls)
@@ -374,6 +421,19 @@ steps = chases["patterns"][0]["tracks"][0]["steps"]
 assert steps["pad 1"] == [[0, 1.0, None]] and steps["pad 2"][0] == [0, 1.0, None] and steps["pad 2"][1][1] < 0.6, steps
 assert ("pad", ((0, 2), "L0_mid")) in calls or ("pad", ((0, 2), "L0_dim")) in calls, "half-level step pad"
 assert chases["groups"] == [[1, 2]] + [None] * 7, chases["groups"]
+tap("Upper Row 2")                                                                  # SETTINGS: K2 = Length
+fire("on_encoder_rotated", "Track2 Encoder", 2); fire("on_encoder_rotated", "Track2 Encoder", -2)
+time.sleep(0.2)
+assert ("btn", ("Upper Row 2", "L6")) in calls, "SETTINGS lit red"
+tap("Upper Row 1")                                                                  # ENVELOPE
+n0 = len(calls)
+tap("Mute")                                                                         # MUTE on top of SEQ
+time.sleep(0.2)
+assert last("Lower Row 1") == "L2" and last("Mute") == "white", "MUTE on SEQ: BD1 = top layer (3)"
+assert not any(n == "pad" for n, _ in calls[n0:]), "MUTE on SEQ must not change the pads"
+tap("Mute")
+time.sleep(0.2)
+assert ("btn", ("Lower Row 1", "L0")) in calls[n0:], "back in SEQ: BD1 = track 1"
 log0 = len(requests.get("http://127.0.0.1:8080/api/v1/_opacity_log").json())
 fire("on_button_pressed", "Play")                                                    # run
 time.sleep(2.6)

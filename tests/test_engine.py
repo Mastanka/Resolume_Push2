@@ -89,8 +89,7 @@ def test_plugin_engine():
     assert len(sent) == 3 + 48 and all(v == 0.0 for _, v in sent[3:])
 
 
-def test_seq_pads_current_track_only():
-    """SEQ pads flash only for the selected track, never for other tracks that are playing."""
+def _bridge():
     import tempfile
     import push_resolume_bridge as B
     cfg = B.load_config(Path(__file__).resolve().parent.parent / "config.yaml")
@@ -98,6 +97,49 @@ def test_seq_pads_current_track_only():
         cfg[k] = str(Path(tempfile.mkdtemp()) / (k + ".yaml"))
     br = B.Bridge(cfg, Resolume("127.0.0.1", 8080))
     br.set_comp(rest.composition())
+    return br
+
+
+def test_screens():
+    """Two views with their own menus; Mix / Mute / Solo: click = open, click again = back, hold = peek."""
+    br = _bridge()
+
+    def click(name):
+        br.button(name, True); br.button(name, False)
+
+    assert br.view == "clip" and br.mode == "clip_params"
+    br.mode = "seq"; assert br.view == "seq" and br.mode == "seq_env"              # legacy names still work
+    br.mode = "params"; assert br.view == "clip" and br.mode == "clip_params"
+    br.page = 1; br.mode = "layer_params"; assert br.page == 0                        # page per menu
+    br.mode = "clip_params"; assert br.page == 1
+    click("Mix"); assert br.mode == "mix"                                             # click: stays
+    click("Mix"); assert br.mode == "clip_params"                                     # click again: back
+    br.button("Mix", True); br.ov_press["mix"][0] -= 1; br.button("Mix", False)       # held 1 s: back
+    assert br.mode == "clip_params"
+    br.button("Mute", True); assert br.mode == "mute" and br.mute_held
+    br.turn(0, 1); br.button("Mute", False)                                           # short, but used = hold
+    assert br.mode == "clip_params" and not br.mute_held
+    click("Mix"); click("Mute"); assert br.mode == "mute"                             # MUTE on top of MIX
+    click("Mute"); assert br.mode == "mix"
+    click("Mix"); assert br.mode == "clip_params" and br.overlay is None
+    click("Mix"); br.button("Upper Row 2", True); assert br.mode == "color" and br.overlay is None
+    br.button("Upper Row 4", True); assert br.mode == "color"                         # empty menu button
+    br.button("Note", True); assert br.view == "seq" and br.mode == "seq_env"
+    br.button("Upper Row 2", True); assert br.mode == "seq_settings"
+    br.button("Upper Row 6", True); assert br.mode == "seq_settings"                  # no 6th SEQ menu
+    click("Solo"); assert br.mode == "solo" and br.view == "seq"                      # SOLO on top of SEQ
+    br.button("Session", True); assert br.mode == "color" and br.overlay is None      # each view keeps its menu
+    br.button("Note", True); assert br.mode == "seq_settings"
+    leds = br.button_colors()
+    assert leds["Upper Row 2"] == "L6" and leds["Upper Row 1"] == "L6_dim" and leds["Upper Row 4"] == "black"
+    br.button("Session", True)
+    leds = br.button_colors()
+    assert leds["Upper Row 2"] == "white" and leds["Upper Row 6"] == "dark_gray" and leds["Upper Row 8"] == "black"
+
+
+def test_seq_pads_current_track_only():
+    """SEQ pads flash only for the selected track, never for other tracks that are playing."""
+    br = _bridge()
     br.seq.track = 0
     br.seq.levels = {(1, "pad 1"): 1.0, (0, "pad 2"): 1.0, (2, "pad 2"): 1.0}
     grid = br._seq_pad_colors()

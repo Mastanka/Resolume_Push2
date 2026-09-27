@@ -27,8 +27,9 @@ it works with any Resolume deck.
 - **Colors:** red / green / blue and hue / saturation / brightness knobs for the clip's colours, your own
   palette on the buttons below the display, a **master colour** for the whole show, and paste a colour
   to many clips at once.
-- **FX:** switch the clip's, layer's and composition's effects on and off, with their amount on the knobs.
-- **Mix:** one knob per layer master, plus the composition master; mute and solo per layer.
+- **FX:** switch the clip's and the layer's effects on and off, with their amount on the knobs.
+- **Mix:** one knob per layer master, plus the composition master; mute and solo per layer. Mix, Mute
+  and Solo open their screen on a click, or only while held.
 - **Tempo:** Tap Tempo (Resolume's own tap), resync, a BPM knob, and a beat indicator.
 - **Step sequencer:** a drum-rack style chaser for LED bars. Up to 4 textures flash across the bars in
   16-pattern step sequences with ADSR envelopes, edited on the pads like Push's own drum sequencer. The
@@ -119,20 +120,35 @@ The Push display shows your deck. Press **Ctrl+C** to quit.
 | **Play** + pad | Launch the clip |
 | **Play** + button below the display | Launch the whole column above that button |
 | **Record** + pad | Stop that layer |
-| **Mute** / **Solo** + pad | Mute / solo that pad's layer (muted layers turn grey) |
+| Hold **Mute** / **Solo** + pad | Mute / solo that pad's layer (muted layers turn grey) |
 | **Buttons right of the pads** | Flash: hold = that row's layer at 100 %, release = back |
 | **Stop Clip** | Blackout: composition master to 0, press again to restore (blinks red, banner on the display) |
 | ▲ ▼ ◀ ▶ | Scroll layers / columns (Shift = jump 8) |
 
-**Menus** (buttons above the display, and Mix / Master)
+**Two views.** **Session** = the pads show clips (CLIP view). **Note** = the pads show the step
+sequencer (SEQUENCER view). Each view has its own menus on the buttons above the display (white in
+CLIP, red in SEQUENCER) and remembers the last one you used.
 
-| Menu | 8 knobs | Buttons below the display |
+**CLIP view menus**
+
+| Button above the display | 8 knobs | Buttons below the display |
 |---|---|---|
-| **PARAMS** (1st button) | The clip's parameters. **Convert** + touch a knob = move a parameter: change page, touch the target knob, the two swap | Page 1–8 |
-| **COLOR** (2nd button) | Red, Green, Blue, Hue, Saturation, Brightness; last knob = which colour | Your palette. **Shift** + button = save the current colour there. Hold **Duplicate** + pad / button right of a row / button below = paste the colour to that clip / layer / column |
-| **FX** (3rd button) | Effect amount | Effect on / off (Page < > for more effects) |
-| **MIX** (Mix button) | Layer masters, top layer first | Mute; hold **Solo** = solo |
+| **1 CLIP PARAMS** | The clip's parameters (source, clip effects, speed). **Convert** + touch a knob = move a parameter: change page, touch the target knob, the two swap | Page 1–8 |
+| **2 CLIP COLOR** | Red, Green, Blue, Hue, Saturation, Brightness; last knob = which colour | Your palette. **Shift** + button = save the current colour there. Hold **Duplicate** + pad / button right of a row / button below = paste the colour to that clip / layer / column |
+| **3 CLIP EFFECTS** | The clip's effects: amount | Effect on / off (Page < > for more effects) |
+| **6 LAYER PARAMS** | The layer's opacity and its effects' parameters (Convert works here too) | Page 1–8 |
+| **7 LAYER EFFECTS** | The layer's effects: amount | Effect on / off |
 | **Master** button | COLOR for the whole show (the composition's Colorize effect); 7th knob = amount, 8th = on / off | Your palette |
+
+**MIX, MUTE, SOLO** (Mix, Mute and Solo buttons) work in both views. **Click** = the screen opens and
+stays; click the same button again = back to the previous screen. **Hold** = the screen shows while you
+hold the button and goes back when you let go.
+
+| Screen | 8 knobs | Buttons below the display |
+|---|---|---|
+| **MIX** | Layer masters, top layer first (Master knob = composition master) | Mute; hold **Solo** = solo |
+| **MUTE** | Layer masters | Mute (red = muted) |
+| **SOLO** | Layer masters | Solo (yellow = soloed) |
 
 **Knobs and tempo**
 
@@ -144,7 +160,9 @@ The Push display shows your deck. Press **Ctrl+C** to quit.
 | **Tempo knob** (far left) | BPM ±1, Shift ±0.1 |
 | **Metronome** | Pads pulse on the beat on / off |
 
-**Step sequencer (SEQ)** — press **Note** (or the 4th button above the display); **Session** goes back to the clip grid.
+**Step sequencer (SEQUENCER view)** — press **Note**; **Session** goes back to the clips.
+Menus (red): **1 ENVELOPE** = knobs Attack, Decay, Sustain, Release, Gate. **2 SETTINGS** = knobs
+Direction, Length, Level. **3 PRESETS** = not designed yet.
 
 It needs the **Bar Chaser** effect (in `plugin/`, built with `plugin/build.sh`, installed with
 `python push_resolume_bridge.py --install-plugin`, then restart Arena). Save your Advanced Output as a
@@ -164,7 +182,7 @@ rows 6–8   pads 1–24, bottom-left = pad 1, each = a slice chosen in the effe
 | Pad | Select only that pad and flash it |
 | **Select** (dim in SEQ) | Tap = multi-select on (lit) / off; then each pad adds to / removes from the selection. Hold + pads works too |
 | Tap a step | On / off for every selected pad; tap harder for a brighter flash (**Accent** = always full) |
-| Hold a step + knob 8 / 5 | That step's level / gate on the selected pads |
+| Hold a step + Gate knob (ENVELOPE) / Level knob (SETTINGS) | That step's gate / level on the selected pads |
 | **Repeat** on + hold a pad | Strobe at the grid rate |
 | Buttons below the display 1–4 | Select the texture track; **Browse** + button = the selected clip's layer joins that track |
 | Pattern pad (row 5) | Switch at the next bar; press it again to switch now |
@@ -174,7 +192,7 @@ rows 6–8   pads 1–24, bottom-left = pad 1, each = a slice chosen in the effe
 | **Delete** + step / pad / track / pattern / group | Clear |
 | **Duplicate** + pattern → pattern | Copy |
 | **Double Loop** / **Fixed Length** + button 1–8 | Double the pattern / length 4–32 |
-| Knobs | Attack, Decay, Sustain, Release, Gate, Direction, Length, Level; Swing encoder = swing |
+| Knobs | See ENVELOPE / SETTINGS above; Swing encoder = swing |
 
 **In the effect's panel:** Preset (empty = newest), Reload, Track, Master, Edge (soft edges), Outside
 (transparent / black / pass through), Mode (Texture / Solid white / Show pads = numbered rectangles for

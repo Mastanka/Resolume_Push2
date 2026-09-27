@@ -67,26 +67,26 @@ python push_resolume_bridge.py --dump 3   # list parameter paths for layer 3 (fo
 
 | Label | push2-python name | Current use |
 |---|---|---|
-| K1–K8 | `Track1 Encoder`…`Track8 Encoder` | Menu knobs (params / colour / layer masters / FX amount) |
+| K1–K8 | `Track1 Encoder`…`Track8 Encoder` | Menu knobs (params / colour / FX amount / layer masters / SEQ) |
 | K9 | `Swing Encoder` | – |
 | K10 | `Tempo Encoder` | BPM ±1 (Shift ±0.1) |
 | K11 | `Master Encoder` | Selected layer opacity / composition master in MIX (ends blackout) |
-| BU1–BU8 | `Upper Row 1..8` (above display) | Menus: BU1 PARAMS, BU2 COLOR, BU3 FX |
+| BU1–BU8 | `Upper Row 1..8` (above display) | Menus of the current view. CLIP: BU1 CLIP PARAMS, BU2 CLIP COLOR, BU3 CLIP EFFECTS, BU6 LAYER PARAMS, BU7 LAYER EFFECTS (white). SEQ: BU1 ENVELOPE, BU2 SETTINGS, BU3 PRESETS (red = `L6`) |
 | BD1–BD8 | `Lower Row 1..8` (below display) | Context row: PARAMS pages, COLOR palette (Shift = save), MIX mute (Solo held = solo), FX on/off. Play held: launch column above |
 | B_1 | `Play` (bottom-left) | Hold + pad = launch clip; hold + BD = launch column (lit green) |
 | B_2 | `Record` (above B_1) | Hold + pad = stop layer (lit red) |
-| B_3 | `Mix` (right of display) | MIX menu toggle |
+| B_3 | `Mix` (right of display) | MIX screen: click = open / click again = back, hold = while held |
 | B_4 | `Convert` (left column) | Hold + touch knob = pick param to move |
 | B_5 | `Tap Tempo` (top-left) | Resolume's tap; Shift = resync. Flashes on the beat |
 | – | `Metronome` | Pad pulse on/off |
 | – | `Stop` ("Stop Clip") | Blackout toggle (blinks red) |
-| – | `Mute` / `Solo` | Hold + pad = mute (layer `bypassed`) / solo that layer |
+| – | `Mute` / `Solo` | MUTE / SOLO screen (click / hold like Mix). Hold + pad = mute (layer `bypassed`) / solo that layer |
 | – | `Master` (right of BD row) | COLOR on the composition's Colorize (master colour) |
 | – | `Duplicate` | COLOR: hold + pad / scene button / BD = paste colour to clip / layer / column |
 | – | `1/32t` … `1/4` (right of pads) | Flash: hold = that row's layer master 100 %. SEQ: pad groups 1–8 (Layout) or grid (Scale) |
 | – | `Select` | SEQ: tap = multi-select latch (dim / lit), hold + pads = momentary, hold + group button = store group |
 | – | `Layout` / `Scale` | SEQ: buttons right of the pads = pad groups / grid |
-| – | `Note` / `Session` / BU4 | SEQ mode / back to the clip grid. Shift + Note = add Bar Chaser to the layer |
+| – | `Note` / `Session` | The two views: SEQUENCER / CLIP. Shift + Note = add Bar Chaser to the layer |
 | – | `Browse`, `Repeat`, `Accent`, `Delete`, `Double Loop`, `Fixed Length`, `Octave Up/Down`, `Swing Encoder` | SEQ only, see `docs/specs/2026-09-24-step-sequencer-design.md` |
 
 ## Pads
@@ -97,7 +97,16 @@ Playing pads pulse between full and `L{k}_mid` on the beat; muted / non-solo lay
 
 ## Modes
 
-- **params** (default, BU1): K1–K8 = parameter slots of the selected layer/clip. BD1–BD8 = page.
+Screen = `Bridge.view` ("clip" = Session, "seq" = Note: what the pads show) + that view's menu
+(`Bridge.menus[view]`, from `CLIP_MENUS` / `SEQ_MENUS`) + optionally an overlay (`Bridge.overlay`:
+"mix" / "mute" / "solo"). `Bridge.mode` (property) = overlay or menu; its setter still accepts the old
+names "params" / "fx" / "seq". Overlays: `overlay_button()` — press opens; release before `HOLD_TIME`
+with nothing else touched = latched (stays), else back; pressing a latched overlay's button = back
+(`ov_stack` returns to a latched overlay underneath). Menu buttons, Session, Note and Master close
+overlays. Parameter page is per menu (`Bridge.page` property over `_pages`).
+
+- **clip_params / layer_params** (BU1 / BU6): K1–K8 = parameter slots (`slots(scope)`: `AUTO_SOURCES`
+  entries of that scope, or config slots with that `scope`). BD1–BD8 = page.
   **Move:** Convert + touch knob picks a slot (`move_src`, absolute index), touch another knob on any
   page → swap. Order = priority list of scope-less keys (`Slot.key`) in `pins.yaml`, applied to
   auto layers only (`Bridge.swap`, sort in `slots()`). Turns are ignored while moving.
@@ -107,9 +116,11 @@ Playing pads pulse between full and `L{k}_mid` on the beat; muted / non-solo lay
   LEDs via palette slots 80–87. Values are `#rrggbbaa`; writes keep alpha.
   `color_target = "master"` (Master button): composition `video/effects` colour; K7 = that effect's
   Opacity, K8 = on/off (`bypassed`). Paste (`paste_color`) matches the param by `color_label()`.
-- **fx** (BU3): `fx_list()` = clip, layer, composition effects; K = effect `Opacity` param, BD = `bypassed`.
-  Page ◀▶ = `fx_page`.
-- **seq** (Note / BU4): rows 1–4 steps, row 5 patterns 1–8 (Shift 9–16), rows 6–8 pads 1–24
+- **clip_fx / layer_fx** (BU3 / BU7): `fx_list()` = the clip's / the layer's effects; K = effect
+  `Opacity` param, BD = `bypassed`. Page ◀▶ = `fx_page`. Composition effects are in no menu (Master
+  button reaches the composition colour).
+- **seq_env / seq_settings / seq_presets** (Note view, BU1–3): knobs from `SEQ_PAGES` (hold step +
+  Gate / Level knob = that step). PRESETS is a placeholder. Rows 1–4 steps, row 5 patterns 1–8 (Shift 9–16), rows 6–8 pads 1–24
   (bottom-left = 1). `Bridge.sel_pads` = multi-selection (`Bridge.multi`: Select latch, or Select held →
   pad toggles); steps act on all selected pads. Buttons right of the pads: `Bridge.side` = "groups"
   (Layout, default) → `Sequencer.groups` (8 saved selections, shared by all tracks, in `chases.yaml`;
@@ -121,8 +132,9 @@ Playing pads pulse between full and `L{k}_mid` on the beat; muted / non-solo lay
   effect to the selected clip's layer; Browse (+ BDn) = that layer's `Track`. Specs + plans in `docs/`.
   **The effect must be the last effect on the layer** (it masks in composition space; a Transform after
   it moves the bars).
-- **mix** (B_3 toggles, B_3 lit white): K1–K8 = `layer.master` (fallback `video/opacity`),
-  K1 = top visible layer, going down; K11 = `composition.master`. BD = mute, Solo + BD = solo.
+- **mix / mute / solo** (overlays, either view): K1–K8 = `layer.master` (fallback `video/opacity`),
+  K1 = top visible layer, going down; K11 = `composition.master`. BD = mute (mix: Solo held = solo;
+  solo: solo). In the SEQ view the pads stay the sequencer; the SEQ track buttons return with the menu.
 - Always: blackout (`Bridge.blackout` = saved master), flash (`Bridge.flash`), beat clock
   (`beat_anchor` from taps / resync + Resolume BPM → `beat()`), short messages (`note_msg`).
 

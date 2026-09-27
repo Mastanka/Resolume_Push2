@@ -28,6 +28,10 @@ def shot(name):
     surf.write_to_png(str(HERE / f"preview_{name}.png"))
 
 
+def click(name):
+    br.button(name, True); br.button(name, False)
+
+
 br.pad_pressed((7, 0)); br.pad_released((7, 0))   # select layer 1, clip 1
 br.touched = 1
 time.sleep(0.3)
@@ -48,8 +52,12 @@ shot("master_color")
 br.button("Master", True)
 br.button("Upper Row 1", True)
 
-br.button("Upper Row 3", True)                  # FX menu
+br.button("Upper Row 3", True)                  # CLIP EFFECTS
 shot("fx")
+br.button("Upper Row 6", True)                  # LAYER PARAMS
+shot("layer_params")
+br.button("Upper Row 7", True)                  # LAYER EFFECTS
+shot("layer_fx")
 br.button("Upper Row 1", True)
 
 br.button("Convert", True); br.touch(1); br.untouch(1); br.button("Convert", False)
@@ -58,14 +66,17 @@ _, surf = B.render(br.snapshot(), bgr=False)
 surf.write_to_png(str(HERE / "preview_move.png"))
 br.button("Convert", True); br.button("Convert", False); br.page = 0
 
-br.button("Mix", True)                         # mix mode
+click("Mix")                                   # MIX screen (click = stays open)
 br.touched = None
 _, surf = B.render(br.snapshot(), bgr=False)
 surf.write_to_png(str(HERE / "preview_mix.png"))
 br.toggle_layer(2, "bypassed"); br.toggle_layer(3, "solo")
 shot("mix_mute_solo")
+click("Mute")                                  # MUTE screen on top
+shot("mute")
+click("Mute")
 br.toggle_layer(2, "bypassed"); br.toggle_layer(3, "solo")
-br.button("Mix", True)
+click("Mix")
 
 br.toggle_blackout()
 shot("blackout")
@@ -81,6 +92,10 @@ br.sel_pads = {0, 1}; br.seq.store_group(2, br.sel_pads); br.cur_group = 2; br.m
 br.seq.start(br.beat_time() or 0.0)
 br.seq.tick(br.beat_time() or 0.0)
 shot("seq")
+br.button("Upper Row 2", True)                  # SETTINGS
+shot("seq_settings")
+br.button("Upper Row 3", True)                  # PRESETS (placeholder)
+shot("seq_presets")
 br.seq.stop(); br.mode = "params"
 
 br.online = False
