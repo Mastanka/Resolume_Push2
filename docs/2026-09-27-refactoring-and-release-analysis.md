@@ -44,6 +44,10 @@ the release options.
 
 ## 2. Confirmed bugs
 
+Six more stuck-state bugs (T1–T6: flash, Play, Delete / Browse across views, held clip / column
+across a scroll, deck switch, held step) are in `2026-09-27-state-isolation.md`, found with
+`tests/fuzz_states.py`.
+
 ### B1 — the chaser engine drops flashes on fast grids
 
 `PluginEngine.set_level` (`chaser_engine.py:231`) skips a non-zero value that arrives within 20 ms
