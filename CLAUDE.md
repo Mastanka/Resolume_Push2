@@ -23,6 +23,13 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 | `resolume_check.py` | `--check LAYER`: tries every Resolume call on a spare layer, undoes it, prints OK/FAIL |
 | `colors.yaml` | Own COLOR palette (Shift + BD saves), Štefan's show data |
 | `display.py` | `render()`: draws a `Bridge.snapshot()` on the 960×160 display, `LAYER_RGB` |
+| `sequencer.py` | SEQ logic, pure: bars from the Advanced Output preset XML, `Envelope`, `Track` / `Pattern`, `Sequencer` (editing, `tick()`, `chases.yaml`) |
+| `chaser_engine.py` | `PluginEngine`: levels → `Level n` params of the Bar Chaser effect instances (grouped by their `Track`); pad memory (`sync_pads`, run by `Bridge.set_comp`) |
+| `plugin/` | The **Bar Chaser** FFGL effect (C++, CMake, vendored FFGL SDK lib + pugixml). `plugin/build.sh` → `plugin/dist/Bar Chaser.bundle`; `ctest` runs the preset-parser test and an offscreen GL host test |
+| `chases.yaml` | Sequencer patterns, Štefan's show data |
+| `tests/test_sequencer.py` | Pure tests for `sequencer.py` (no mock) |
+| `tests/test_engine.py` | `LayerEngine` + new REST calls against the mock |
+| `tests/fixtures/preset_small.xml` | 4-screen Advanced Output preset for the plugin tests |
 | `config.yaml` | Resolume host/port, grid offsets, encoder steps, per-layer parameter slots |
 | `pins.yaml` | Param order for auto layers, written by the bridge (Convert move). Štefan's show data |
 | `docs/specs/` | Short design specs per feature |
@@ -60,23 +67,27 @@ python push_resolume_bridge.py --dump 3   # list parameter paths for layer 3 (fo
 
 | Label | push2-python name | Current use |
 |---|---|---|
-| K1–K8 | `Track1 Encoder`…`Track8 Encoder` | Menu knobs (params / colour / layer masters / FX amount) |
+| K1–K8 | `Track1 Encoder`…`Track8 Encoder` | Menu knobs (params / colour / FX amount / layer masters / SEQ) |
 | K9 | `Swing Encoder` | – |
 | K10 | `Tempo Encoder` | BPM ±1 (Shift ±0.1) |
 | K11 | `Master Encoder` | Selected layer opacity / composition master in MIX (ends blackout) |
-| BU1–BU8 | `Upper Row 1..8` (above display) | Menus: BU1 PARAMS, BU2 COLOR, BU3 FX |
+| BU1–BU8 | `Upper Row 1..8` (above display) | Menus of the current view. CLIP: BU1 CLIP PARAMS, BU2 CLIP COLOR, BU3 CLIP EFFECTS, BU6 LAYER PARAMS, BU7 LAYER EFFECTS (white). SEQ: BU1 ENVELOPE, BU2 SETTINGS, BU3 PRESETS (red = `L6`) |
 | BD1–BD8 | `Lower Row 1..8` (below display) | Context row: PARAMS pages, COLOR palette (Shift = save), MIX mute (Solo held = solo), FX on/off. Play held: launch column above |
 | B_1 | `Play` (bottom-left) | Hold + pad = launch clip; hold + BD = launch column (lit green) |
 | B_2 | `Record` (above B_1) | Hold + pad = stop layer (lit red) |
-| B_3 | `Mix` (right of display) | MIX menu toggle |
+| B_3 | `Mix` (right of display) | MIX screen: click = open / click again = back, hold = while held |
 | B_4 | `Convert` (left column) | Hold + touch knob = pick param to move |
 | B_5 | `Tap Tempo` (top-left) | Resolume's tap; Shift = resync. Flashes on the beat |
 | – | `Metronome` | Pad pulse on/off |
 | – | `Stop` ("Stop Clip") | Blackout toggle (blinks red) |
-| – | `Mute` / `Solo` | Hold + pad = mute (layer `bypassed`) / solo that layer |
+| – | `Mute` / `Solo` | MUTE / SOLO screen (click / hold like Mix). Hold + pad = mute (layer `bypassed`) / solo that layer |
 | – | `Master` (right of BD row) | COLOR on the composition's Colorize (master colour) |
 | – | `Duplicate` | COLOR: hold + pad / scene button / BD = paste colour to clip / layer / column |
-| – | `1/32t` … `1/4` (right of pads) | Flash: hold = that row's layer master 100 % |
+| – | `1/32t` … `1/4` (right of pads) | Flash: hold = that row's layer master 100 %. SEQ: pad groups 1–8 (Layout) or grid (Scale) |
+| – | `Select` | SEQ: tap = multi-select latch (dim / lit), hold + pads = momentary, hold + group button = store group |
+| – | `Layout` / `Scale` | SEQ: buttons right of the pads = pad groups / grid |
+| – | `Note` / `Session` | The two views: SEQUENCER / CLIP. Shift + Note = add Bar Chaser to the layer |
+| – | `Browse`, `Repeat`, `Accent`, `Delete`, `Double Loop`, `Fixed Length`, `Octave Up/Down`, `Swing Encoder` | SEQ only, see `docs/specs/2026-09-24-step-sequencer-design.md` |
 
 ## Pads
 
@@ -86,7 +97,16 @@ Playing pads pulse between full and `L{k}_mid` on the beat; muted / non-solo lay
 
 ## Modes
 
-- **params** (default, BU1): K1–K8 = parameter slots of the selected layer/clip. BD1–BD8 = page.
+Screen = `Bridge.view` ("clip" = Session, "seq" = Note: what the pads show) + that view's menu
+(`Bridge.menus[view]`, from `CLIP_MENUS` / `SEQ_MENUS`) + optionally an overlay (`Bridge.overlay`:
+"mix" / "mute" / "solo"). `Bridge.mode` (property) = overlay or menu; its setter still accepts the old
+names "params" / "fx" / "seq". Overlays: `overlay_button()` — press opens; release before `HOLD_TIME`
+with nothing else touched = latched (stays), else back; pressing a latched overlay's button = back
+(`ov_stack` returns to a latched overlay underneath). Menu buttons, Session, Note and Master close
+overlays. Parameter page is per menu (`Bridge.page` property over `_pages`).
+
+- **clip_params / layer_params** (BU1 / BU6): K1–K8 = parameter slots (`slots(scope)`: `AUTO_SOURCES`
+  entries of that scope, or config slots with that `scope`). BD1–BD8 = page.
   **Move:** Convert + touch knob picks a slot (`move_src`, absolute index), touch another knob on any
   page → swap. Order = priority list of scope-less keys (`Slot.key`) in `pins.yaml`, applied to
   auto layers only (`Bridge.swap`, sort in `slots()`). Turns are ignored while moving.
@@ -96,10 +116,31 @@ Playing pads pulse between full and `L{k}_mid` on the beat; muted / non-solo lay
   LEDs via palette slots 80–87. Values are `#rrggbbaa`; writes keep alpha.
   `color_target = "master"` (Master button): composition `video/effects` colour; K7 = that effect's
   Opacity, K8 = on/off (`bypassed`). Paste (`paste_color`) matches the param by `color_label()`.
-- **fx** (BU3): `fx_list()` = clip, layer, composition effects; K = effect `Opacity` param, BD = `bypassed`.
-  Page ◀▶ = `fx_page`.
-- **mix** (B_3 toggles, B_3 lit white): K1–K8 = `layer.master` (fallback `video/opacity`),
-  K1 = top visible layer, going down; K11 = `composition.master`. BD = mute, Solo + BD = solo.
+- **clip_fx / layer_fx** (BU3 / BU7): `fx_list()` = the clip's / the layer's effects; K = effect
+  `Opacity` param, BD = `bypassed`. Page ◀▶ = `fx_page`. Composition effects are in no menu (Master
+  button reaches the composition colour).
+- **seq_env / seq_settings / seq_presets** (Note view, BU1–3): knobs from `SEQ_PAGES` (hold step +
+  Gate / Level knob = that step). PRESETS is a placeholder. Rows 1–4 steps, row 5 patterns 1–8 (Shift 9–16), rows 6–8 pads 1–24
+  (bottom-left = 1). `Bridge.sel_pads` = multi-selection (`Bridge.multi`: Select latch, or Select held →
+  pad toggles); steps act on all selected pads. Buttons right of the pads: `Bridge.side` = "groups"
+  (Layout, default) → pad groups: `Sequencer.track_groups[track]` (G, Select + button, track colour)
+  shadow `Sequencer.groups` (GG, global, Select + Shift + button, white); `Sequencer.group(g, track)`;
+  Delete (+ Shift) clears; tap recalls; `current_group()` = ("track" | "global", g) lit fully. Or "grid"
+  (Scale). Groups only select pads: steps stay on their track (isolation). Pads flash only for the
+  selected track. **Pad memory:** `Sequencer.pad_configs[track]` = 24 slice names, saved in
+  `chases.yaml`; `PluginEngine.sync_pads()` gives them to an instance that joins the track (new
+  effect id, or its Track changed) and takes a pad changed in Arena as the track's new assignment
+  (own writes pending `PENDING` s). A new composition master id = a loaded composition: its pads are
+  adopted, nothing written. BD1–4 = texture tracks = layers carrying a **Bar Chaser** effect with that `Track`.
+  Knobs = the selected track's ADSR + Gate + Level and the pattern's Direction + Length. `Bridge.seq`
+  (`Sequencer`, bars named `pad 1`…`pad 24`), `Bridge.engine` (`PluginEngine`), `seq_loop` thread at
+  100 Hz → `engine.set_level` → WebSocket `set` of the instance's `Level n`. Shift + Note = add the
+  effect to the selected clip's layer; Browse (+ BDn) = that layer's `Track`. Specs + plans in `docs/`.
+  **The effect must be the last effect on the layer** (it masks in composition space; a Transform after
+  it moves the bars).
+- **mix / mute / solo** (overlays, either view): K1–K8 = `layer.master` (fallback `video/opacity`),
+  K1 = top visible layer, going down; K11 = `composition.master`. BD = mute (mix: Solo held = solo;
+  solo: solo). In the SEQ view the pads stay the sequencer; the SEQ track buttons return with the menu.
 - Always: blackout (`Bridge.blackout` = saved master), flash (`Bridge.flash`), beat clock
   (`beat_anchor` from taps / resync + Resolume BPM → `beat()`), short messages (`note_msg`).
 
@@ -153,6 +194,13 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
   `select`, clip connect true/false, layer `/clear`, WebSocket subscribe by id.
   **ParamChoice: only `{"value": "<option name>"}` works; `{"index": i}` → HTTP 400.**
   Column launch `POST /composition/columns/{n}/connect` true/false works too (`--check-columns`).
+- Composition editing (verified on the mock, on Arena via `--check` steps "WebSocket set", "Open source
+  into a clip", "Add Crop + display name + delete", "Set string (layer name)"): `POST /composition/layers/add`
+  (text body `/composition/layers/N` or empty = on top), `POST …/layers/{L}/effects/video/add` (text
+  `effect:///video/Crop`, spaces as `%20` — verified on Arena), `DELETE …/effects/video/{offset}`
+  (0-based, verified), `POST …/effects/video/{i}/set-display-name` (text), `POST …/clips/{C}/open`
+  (text `source:///video/<name>` or `file:///…`), `POST …/clips/{C}/clear`, WebSocket
+  `{"action": "set", "parameter": "/parameter/by-id/<id>", "value": v}`.
 
 **push2-python** (ffont/push2-python):
 - Only the **first** registered handler per action is called (`trigger_action` calls `func[0]`).
@@ -182,17 +230,37 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
 - Tempo uses `composition/tempocontroller/tempo` (ParamRange 20–500, BPM) — path confirmed in the live
   JSON; `tempo_tap` / `resync` ParamEvents are triggered by Tap / Shift+Tap.
 
+## Bar Chaser plugin (plugin/)
+
+FFGL 2.1 effect, universal bundle. 55 params: `Preset` (text), `Reload` (event), `Track` (1–4),
+`Master`, `Edge`, `Outside`, `Mode` (Texture / Solid / Show pads), `Pad 1..24` (option, elements from the
+Advanced Output preset via `SetParamElements`), `Level 1..24`. Hosts reset every param to its declared
+default after creation, so defaults must carry the initial pad assignment. `plugin/tests/host_test.cpp`
+is a tiny CGL host: loads the bundle, feeds a red/green picture, checks pass-through, masking, solid,
+show pads. Build needs Xcode CLT + `brew install cmake`. Verified on Arena 7.23.2 (2026-09-27): loads
+from `~/Documents/Resolume Arena/Extra Effects`, preset dropdowns fill (pads pre-assigned), Texture /
+Solid / Show pads all render on a layer. Arena's log (`~/Library/Logs/Resolume Arena/Resolume Arena
+log.txt`) shows the plugin's `LogToHost` lines; a layer input texture there is 1920×1080 in a
+1920×1088 RGBA8 texture, linear filters, no sampler object, host FBO 1. Pitfalls met: a `Transform`
+effect *after* Bar Chaser (or on the layer when the effect is on the clip) moves the bars off the
+slices — keep Bar Chaser last on the layer; `SetOptionParamInfo` appends a parameter, never call it
+twice for one index (set `FindParamInfo(i)->defaultFloatVal` instead).
+
 ## Testing workflow
 
 Always run before handing changes back:
 ```
 python tests/mock_resolume.py &
+python tests/test_sequencer.py      # pure logic, no mock needed
+plugin/build.sh                     # C++: builds the bundle and runs ctest (preset parser + GL host test)
+python tests/test_engine.py         # restart the mock before each script: they change its composition
 python tests/test_fake_push.py      # must print OK (runs on the mock's WebSocket)
 TEST_POLL=1 python tests/test_fake_push.py   # same with the WebSocket off (polling fallback)
 python tests/render_preview.py      # then look at tests/preview_*.png for display changes
 python -c "import ast; ast.parse(open('push_resolume_bridge.py').read(), feature_version=(3,9))"
 ```
-Extend `tests/mock_resolume.py` when touching new parts of the JSON. Final check is always on the
+Extend `tests/mock_resolume.py` when touching new parts of the JSON. The test scripts refuse to run
+unless `GET /product` says "Mock Resolume" (the mock binds 127.0.0.1:8080 even while Arena runs on *:8080). Final check is always on the
 real Push + Arena, done by Štefan.
 
 ## Backlog (ideas, not commitments)

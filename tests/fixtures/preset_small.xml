@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<XmlState name="preset_small">
+  <ScreenSetup>
+    <CurrentCompositionTextureSize width="1920" height="1080"/>
+    <screens>
+      <DmxScreen name="Bar B" uniqueId="2">
+        <layers>
+          <DmxSlice uniqueId="20">
+            <Params name="Common"><Param name="Name" T="STRING" value="1 - 423 141 RGB"/></Params>
+            <InputRect orientation="1.5707">
+              <v x="345.0" y="70.0"/><v x="375.0" y="70.0"/><v x="375.0" y="532.0"/><v x="345.0" y="532.0"/>
+            </InputRect>
+          </DmxSlice>
+        </layers>
+      </DmxScreen>
+      <DmxScreen name="Bar A" uniqueId="1">
+        <layers>
+          <DmxSlice uniqueId="10">
+            <Params name="Common"><Param name="Name" T="STRING" value="1 - 423 141 RGB"/></Params>
+            <InputRect orientation="1.5707">
+              <v x="174.99" y="72.2"/><v x="175.0" y="529.8"/><v x="145.0" y="529.8"/><v x="144.99" y="72.2"/>
+            </InputRect>
+          </DmxSlice>
+        </layers>
+      </DmxScreen>
+      <DmxScreen name="Bar A copy" uniqueId="3">
+        <layers>
+          <DmxSlice uniqueId="30">
+            <Params name="Common"><Param name="Name" T="STRING" value="1 - 423 141 RGB"/></Params>
+            <InputRect orientation="1.5707">
+              <v x="174.99" y="72.2"/><v x="175.0" y="529.8"/><v x="145.0" y="529.8"/><v x="144.99" y="72.2"/>
+            </InputRect>
+          </DmxSlice>
+        </layers>
+      </DmxScreen>
+      <DmxScreen name="Bar C" uniqueId="4">
+        <layers>
+          <DmxSlice uniqueId="40">
+            <Params name="Common"><Param name="Name" T="STRING" value="1 - 855 h3 2m grb"/></Params>
+            <InputRect orientation="1.5707">
+              <v x="545.0" y="70.0"/><v x="575.0" y="70.0"/><v x="575.0" y="1009.0"/><v x="545.0" y="1009.0"/>
+            </InputRect>
+          </DmxSlice>
+          <DmxSlice uniqueId="41">
+            <Params name="Common"><Param name="Name" T="STRING" value="second slice"/></Params>
+            <InputRect orientation="0">
+              <v x="580.0" y="70.0"/><v x="600.0" y="70.0"/><v x="600.0" y="200.0"/><v x="580.0" y="200.0"/>
+            </InputRect>
+          </DmxSlice>
+        </layers>
+      </DmxScreen>
+    </screens>
+  </ScreenSetup>
+</XmlState>

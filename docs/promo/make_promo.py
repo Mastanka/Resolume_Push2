@@ -410,6 +410,7 @@ def main():
     cfg = B.load_config(HERE.parent.parent / "config.yaml")
     cfg["pins_file"] = str(Path(tempfile.mkdtemp()) / "pins.yaml")
     cfg["colors_file"] = str(Path(tempfile.mkdtemp()) / "colors.yaml")
+    cfg["chases_file"] = str(Path(tempfile.mkdtemp()) / "chases.yaml")
     br = B.Bridge(cfg, B.Resolume("127.0.0.1", 1))                # never sends anything
     br.comp, br.online = demo_comp(comp), True
     for L in range(1, 9):                                          # nice mixer values

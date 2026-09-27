@@ -211,6 +211,74 @@ class Checker:
         self.add(name + " subscribe", bool(got),
                  f"{got.get('type')} {got.get('path')} = {got.get('value')}" if got else "no reply")
 
+    def s_ws_set(self, name):
+        try:
+            import websocket
+        except ImportError:
+            return self.add(name, None, "pip install websocket-client")
+        p = master_param(self.layer())
+        old = p["value"]
+        new = 0.37 if abs(old - 0.37) > 0.01 else 0.61
+        ws = websocket.create_connection(self.ws_url, timeout=3)
+        ws.send(json.dumps({"action": "set", "parameter": f"/parameter/by-id/{p['id']}", "value": new}))
+        time.sleep(WAIT)
+        got = (self.param_by_id(p["id"]) or {}).get("value")
+        ws.send(json.dumps({"action": "set", "parameter": f"/parameter/by-id/{p['id']}", "value": old}))
+        time.sleep(WAIT)
+        ws.close()
+        self.add(name, got == new, f"sent {new}, read {got}")
+
+    def _post_text(self, path, body):
+        return self.s.post(self.base + path, data=body.encode(), headers={"Content-Type": "text/plain"},
+                           timeout=3).status_code
+
+    def s_open_clip(self, name):
+        layer = self.layer()
+        C = next((i + 1 for i, c in enumerate(layer.get("clips") or []) if clip_state(c) == "Empty"), None)
+        if not C:
+            return self.add(name, None, "no empty clip slot on this layer")
+        code = self._post_text(f"/composition/layers/{self.L}/clips/{C}/open", "source:///video/Checkered")
+        time.sleep(WAIT)
+        clip = self.layer()["clips"][C - 1]
+        desc = (clip.get("video") or {}).get("description")
+        code2 = self.req("POST", f"/composition/layers/{self.L}/clips/{C}/clear")[0]
+        time.sleep(WAIT)
+        cleared = clip_state(self.layer()["clips"][C - 1]) == "Empty"
+        self.add(name, code == 204 and desc == "Checkered" and cleared,
+                 f"open HTTP {code}, description {desc!r}, clear HTTP {code2}, empty again {cleared}")
+
+    def s_crop(self, name):
+        before = len(self.layer()["video"].get("effects") or [])
+        code = self._post_text(f"/composition/layers/{self.L}/effects/video/add", "effect:///video/Crop")
+        time.sleep(WAIT)
+        fx = self.layer()["video"].get("effects") or []
+        if len(fx) != before + 1:
+            return self.add(name, False, f"add HTTP {code}, effects {before} → {len(fx)}")
+        idx = len(fx) - 1
+        code2 = self._post_text(f"/composition/layers/{self.L}/effects/video/{idx}/set-display-name", "CH:T9:check")
+        time.sleep(WAIT)
+        dn = text(self.layer()["video"]["effects"][idx].get("display_name"))
+        left = self.layer()["video"]["effects"][idx]["params"].get("Left")
+        code3 = self.put(left["id"], {"value": 100.0}) if left else None
+        time.sleep(WAIT)
+        lv = (self.param_by_id(left["id"]) or {}).get("value") if left else None
+        code4 = self.s.delete(f"{self.base}/composition/layers/{self.L}/effects/video/{idx}", timeout=3).status_code
+        time.sleep(WAIT)
+        gone = len(self.layer()["video"].get("effects") or []) == before
+        self.add(name, dn == "CH:T9:check" and lv == 100.0 and gone,
+                 f"add {code}, display name {code2} → {dn!r}, Left {code3} → {lv}, delete {code4}, removed {gone}")
+
+    def s_layer_name(self, name):
+        p = self.layer().get("name")
+        old = p["value"]
+        code = self.put(p["id"], {"value": old + " ✓"})
+        time.sleep(WAIT)
+        got = (self.param_by_id(p["id"]) or {}).get("value")
+        self.put(p["id"], {"value": old})
+        time.sleep(WAIT)
+        self.add(name, "info" if got != old + " ✓" else True,
+                 f"HTTP {code}, read {got!r} (informational: the bridge names bar layers best-effort)")
+
     # ---- run --------------------------------------------------------------- #
     def run(self, columns=False):
         comp = self.comp()
@@ -238,6 +306,10 @@ class Checker:
         else:
             self.add("Launch column", None, "affects all layers; run with --check-columns")
         self.step("WebSocket", self.s_ws)
+        self.step("WebSocket set", self.s_ws_set)
+        self.step("Open source into a clip", self.s_open_clip)
+        self.step("Add Crop + display name + delete", self.s_crop)
+        self.step("Set string (layer name)", self.s_layer_name)
         fails = [r for r in self.results if r[1] is False]
         print(f"\n{len(fails)} failed." if fails else "\nAll OK.")
         return not fails

@@ -10,17 +10,21 @@ Pads      8x8 clip grid. Bottom pad row = lowest visible layer (same as Resolume
 Display   Selected layer + clip, and 8 parameter slots (one above each encoder).
 Encoders  Track 1-8 edit the 8 slots. Hold Shift for fine steps.
           Master encoder (far right) = selected layer opacity.
-Mix       Mix button toggles the mixer: Track 1-8 = layer masters (1 = top visible
-          layer), Master encoder = composition master.
-Menus     Upper Row 1 = PARAMS view. Lower Row 1-8 = jump to parameter page 1-8.
-Color     Upper Row 2 = COLOR view for the selected clip: Track 1-3 = R/G/B, 4-6 = Hue/Sat/
+Views     Session = CLIP view (pads = clips), Note = SEQUENCER view (pads = step sequencer).
+          Each view has its own menus on Upper Row (CLIP: white, SEQUENCER: red).
+Mix       Mix / Mute / Solo: click = MIX / MUTE / SOLO screen (click again = back), hold = only
+          while held. Track 1-8 = layer masters (1 = top visible layer), Master encoder =
+          composition master, Lower Row = mute (SOLO: solo).
+Menus     CLIP: Upper Row 1 CLIP PARAMS, 6 LAYER PARAMS (Lower Row 1-8 = parameter page 1-8),
+          3 CLIP EFFECTS, 7 LAYER EFFECTS. SEQUENCER: 1 ENVELOPE, 2 SETTINGS, 3 PRESETS.
+Color     Upper Row 2 = CLIP COLOR for the selected clip: Track 1-3 = R/G/B, 4-6 = Hue/Sat/
           Brightness, 8 = which colour param. Lower Row 1-8 = that param's palette colours.
 Order     Hold Convert + touch a knob, go to any page, touch the target knob -> the two
           params swap. The order is saved per param type in pins.yaml.
 Tempo     Tap Tempo = Resolume's own tap, Shift + Tap Tempo = resync (beat 1 now).
           Tempo encoder = BPM +-1 (Shift +-0.1). Tap Tempo, the display and playing pads
           blink on the beat; Metronome turns the pad pulse on / off.
-FX        Upper Row 3 = effects of the selected clip, its layer and the composition:
+FX        CLIP / LAYER EFFECTS = effects of the selected clip / its layer:
           Track 1-8 = effect amount (Opacity), Lower Row = effect on / off, Page < > = more.
 Master    Master button = COLOR on the composition's colour effect (Colorize): K7 = amount,
           K8 = on/off. Press again = back to the clip.
@@ -43,6 +47,7 @@ Usage
     python push_resolume_bridge.py --dump 3        list parameter paths for layer 3 (for config.yaml)
     python push_resolume_bridge.py --dump 3 --clip 2
     python push_resolume_bridge.py --check 8       test every Resolume call on layer 8 (undone after)
+    python push_resolume_bridge.py --install-plugin  copy the Bar Chaser effect into Resolume's Extra Effects
 """
 
 from __future__ import annotations
@@ -57,12 +62,15 @@ import math
 import sys
 import threading
 import time
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import requests
 import yaml
 
+from chaser_engine import PluginEngine, pad_key
+from sequencer import DIRECTIONS, Sequencer
 from display import LAYER_RGB, render  # noqa: F401  (render re-exported for tests/tools)
 from resolume_api import (  # noqa: F401
     Resolume, ResolumeWS, Sender, clip_state, color_label, fmt_value, hex_to_rgba, is_param, label_of,
@@ -94,11 +102,28 @@ LED_HZ = 50           # LED updates per second (beat edges); the display runs at
 MASTER_COLOR_BUTTON = "Master"              # COLOR on the composition's colour effect
 PASTE_BUTTON = "Duplicate"                  # COLOR: hold + pad / row / column = paste colour
 NOTE_TIME = 1.8       # s a short message stays on the display
-PARAMS_BUTTON = "Upper Row 1"               # BU1
-COLOR_BUTTON = "Upper Row 2"                # BU2
-FX_BUTTON = "Upper Row 3"                   # BU3
-MENU_BUTTONS = {PARAMS_BUTTON: "params", COLOR_BUTTON: "color", FX_BUTTON: "fx"}
-FX_SOURCES = [("Clip", "clip"), ("Layer", "layer"), ("Comp", "comp")]   # FX menu order
+NOTE_BUTTON, SESSION_BUTTON = "Note", "Session"   # the two views: sequencer / clips
+BROWSE_BUTTON, REPEAT_BUTTON, ACCENT_BUTTON = "Browse", "Repeat", "Accent"
+DELETE_BUTTON, DOUBLE_LOOP_BUTTON, FIXED_LENGTH_BUTTON = "Delete", "Double Loop", "Fixed Length"
+OCTAVE_UP, OCTAVE_DOWN = "Octave Up", "Octave Down"
+SELECT_BUTTON = "Select"                    # SEQ: tap = multi-select on / off; hold + group button = store
+LAYOUT_BUTTON, SCALE_BUTTON = "Layout", "Scale"   # SEQ: buttons right of the pads = pad groups / grid
+SWING_ENCODER = "Swing Encoder"
+SEQ_HZ = 100          # sequencer clock ticks per second
+# Menus on the buttons above the display, per view. CLIP view (Session): white; SEQUENCER view (Note): red.
+CLIP_MENUS = {"Upper Row 1": "clip_params", "Upper Row 2": "color", "Upper Row 3": "clip_fx",
+              "Upper Row 6": "layer_params", "Upper Row 7": "layer_fx"}
+SEQ_MENUS = {"Upper Row 1": "seq_env", "Upper Row 2": "seq_settings", "Upper Row 3": "seq_presets"}
+SEQ_PAGES = {"seq_env": ["Attack", "Decay", "Sustain", "Release", "Gate"],     # knobs per SEQ menu
+             "seq_settings": ["Direction", "Length", "Level"], "seq_presets": []}
+PARAM_MODES = ("clip_params", "layer_params")
+FX_MODES = ("clip_fx", "layer_fx")
+MIX_MODES = ("mix", "mute", "solo")       # screens on top of either view (Mix / Mute / Solo button)
+OVERLAY_BUTTONS = {MIX_BUTTON: "mix", MUTE_BUTTON: "mute", SOLO_BUTTON: "solo"}
+HOLD_TIME = 0.4       # s: shorter press = click (the screen stays), longer = hold (back on release)
+LEGACY_MODES = {"params": "clip_params", "fx": "clip_fx", "seq": "seq_env"}
+SEQ_RED, SEQ_RED_DIM = "L6", "L6_dim"     # layer colour 7 is red: the SEQUENCER menu buttons
+FX_SOURCES = [("Clip", "clip"), ("Layer", "layer")]   # FX menus: CLIP EFFECTS / LAYER EFFECTS
 UPPER_ROW = [f"Upper Row {i}" for i in range(1, 9)]
 LOWER_ROW = [f"Lower Row {i}" for i in range(1, 9)]
 TEMPO_PATH = "tempocontroller/tempo"
@@ -133,6 +158,8 @@ DEFAULT_CONFIG = {
     "stop_column": None,   # None = stop via /clear; N = trigger column N instead
     "pins_file": None,     # param order file; None = pins.yaml next to this script
     "colors_file": None,   # own palette (Shift + Lower Row in COLOR); None = colors.yaml here
+    "chases_file": None,   # step sequencer patterns; None = chases.yaml next to this script
+    "sequencer": {"tracks": 4},
     "layers": {"default": "auto"},
 }
 
@@ -172,7 +199,13 @@ class Bridge:
         self.coarse = float(cfg["encoders"]["coarse"])
         self.fine = float(cfg["encoders"]["fine"])
         self.sel = (1, 1)          # (layer, column), 1-based, as in Resolume
-        self.mode = "params"       # "params", "color" or "mix"
+        self.view = "clip"         # what the pads show: "clip" (Session) or "seq" (Note)
+        self.menus = {"clip": "clip_params", "seq": "seq_env"}   # current menu of each view
+        self.overlay = None        # "mix" / "mute" / "solo" screen on top of the view, or None
+        self.ov_latched = False    # overlay opened by a click (stays) rather than a hold
+        self.ov_stack = []         # latched overlays underneath the current one (click again = back)
+        self.ov_press = {}         # overlay -> [press time, used] while its button is down
+        self._pages = {}           # menu -> parameter page
         self.color_idx = 0         # which colour param the COLOR menu edits
         self.color_target = "clip"  # "clip" or "master" (composition colour effect)
         self.paste_held = False    # Duplicate
@@ -180,7 +213,6 @@ class Bridge:
         self.colors_path = Path(cfg.get("colors_file") or Path(__file__).with_name("colors.yaml"))
         self.own_palette = self._load_palette()
         self.hsv_cache = {}        # param id -> (rgb, [h, s, v]) keeps hue while saturation is 0
-        self.page = 0
         self.fx_page = 0
         self.shift = False
         self.play_held = False     # B_1
@@ -206,10 +238,101 @@ class Bridge:
         self.overrides = {}        # param id -> (value, time sent)
         self.choice_acc = {}
         self.midi_reset = False
+        # ---- step sequencer (SEQ) ----
+        sc = cfg.get("sequencer") or {}
+        self.seq = Sequencer(cfg.get("chases_file") or Path(__file__).with_name("chases.yaml"),
+                             n_tracks=int(sc.get("tracks", 4)))
+        self.engine = PluginEngine(rest, lambda: self.comp, self.refresh_comp, self._send_level,
+                                   store=self.seq, send_param=self.sender.param)
+        self.sel_pads = {0}        # selected pads (0-based); steps edit all of them
+        self.multi = False         # Select latched: pad press adds / removes instead of replacing
+        self.select_held = self.select_used = False
+        self.side = "groups"       # buttons right of the pads in SEQ: "groups" (Layout) or "grid" (Scale)
+        self.cur_group = None      # ("track" | "global", button) last stored / recalled (lit while it matches)
+        self.repeat = False
+        self.accent = False
+        self.delete_held = self.browse_held = self.fixed_len_held = False
+        self.browse_used = False
+        self.held_steps = set()    # step indices held on the pads
+        self.held_bars = {}        # pad key -> track, while a pad is held
+        self.dup_src = None        # Duplicate + pattern: source pattern
+        self.seq_note = ""         # last setup / load message (shown on the display)
+        self.last_grid_step = None
+
+    # ---- screens: view (pads) + menu (display, knobs, buttons below) + MIX / MUTE / SOLO ---- #
+    @property
+    def mode(self):
+        """The screen shown now: the overlay if one is open, else the view's menu."""
+        return self.overlay or self.menus[self.view]
+
+    @mode.setter
+    def mode(self, m):
+        m = LEGACY_MODES.get(m, m)
+        if m in MIX_MODES:
+            self.overlay, self.ov_latched = m, True
+            return
+        self._clear_overlay()
+        self.view = "seq" if m in SEQ_PAGES else "clip"
+        self.menus[self.view] = m
+
+    @property
+    def page(self):
+        return self._pages.get(self.mode, 0)
+
+    @page.setter
+    def page(self, v):
+        self._pages[self.mode] = v
+
+    def _clear_overlay(self):
+        self.overlay, self.ov_latched, self.ov_stack = None, False, []
+
+    def _overlay_back(self):
+        self.overlay = self.ov_stack.pop() if self.ov_stack else None
+        self.ov_latched = self.overlay is not None
+
+    def _ov_used(self):
+        """Something was pressed / turned while an overlay button is down: it is a hold."""
+        for press in self.ov_press.values():
+            press[1] = True
+
+    def overlay_button(self, ov, down):
+        """Mix / Mute / Solo: click = open (click again = back), hold = open until released."""
+        now = time.time()
+        with self.lock:
+            if down:
+                if self.overlay == ov and self.ov_latched:            # second click = previous screen
+                    self._overlay_back()
+                    return
+                if self.overlay and self.ov_latched:
+                    self.ov_stack = [o for o in self.ov_stack if o != self.overlay] + [self.overlay]
+                self.ov_stack = [o for o in self.ov_stack if o != ov]
+                self.overlay, self.ov_latched = ov, False
+                self.ov_press[ov] = [now, False]
+                self.move_src = None
+                return
+            press = self.ov_press.pop(ov, None)
+            if press is None or self.overlay != ov:
+                return
+            if now - press[0] < HOLD_TIME and not press[1]:
+                self.ov_latched = True                                 # click: stays open
+            else:
+                self._overlay_back()                                   # hold: back on release
+
+    def set_view(self, view):
+        self._clear_overlay()
+        self.view = view
+        self.move_src = None
+        self.held_steps.clear()
+        self.held_bars.clear()
+        self.select_held = False
 
     # ---- composition access --------------------------------------------- #
     def layers(self):
         return (self.comp or {}).get("layers") or []
+
+    def visible_layers(self):
+        """1-based indices of the layers on the pads and in MIX (all of them)."""
+        return list(range(1, len(self.layers()) + 1))
 
     def layer_json(self, L):
         layers = self.layers()
@@ -222,8 +345,9 @@ class Bridge:
 
     def mix_layers(self):
         """Layers on encoders 1-8 in mix mode: top visible layer first."""
-        top = min(self.layer_offset + 8, len(self.layers()))
-        return list(range(top, max(self.layer_offset, 0), -1))[:8]
+        vis = self.visible_layers()
+        top = min(self.layer_offset + 8, len(vis))
+        return [vis[k] for k in range(top - 1, self.layer_offset - 1, -1)][:8]
 
     def max_cols(self):
         return max((len(l.get("clips") or []) for l in self.layers()), default=0)
@@ -247,6 +371,10 @@ class Bridge:
         with self.lock:
             self.comp, self.index, self.online = comp, index, True
             self._check_blackout()
+            try:
+                self.engine.sync_pads(comp)             # pad memory: tracks keep their pad assignment
+            except Exception:
+                traceback.print_exc()
 
     def on_param(self, pid, value):
         """WebSocket parameter_update: patch the value in place."""
@@ -297,6 +425,371 @@ class Bridge:
                 add_all(layer.get("video"))
             add_all(resolve_node(comp, "video/effects"))
         return ids
+
+    # ---- step sequencer ---------------------------------------------------------- #
+    def refresh_comp(self):
+        try:
+            self.set_comp(self.rest.composition())
+        except Exception as e:
+            print(f"[seq] refresh failed: {e}", file=sys.stderr)
+
+    def _send_level(self, pid, value):
+        with self.lock:
+            n = self.index.get(pid)
+            if n is not None:
+                n["value"] = value
+        if self.live():
+            self.ws.set(pid, value)
+        else:
+            self.sender.param(pid, {"value": value})
+
+    def beat_time(self, now=None):
+        """Continuous beats since the beat anchor, or None without a tempo."""
+        p = self.tempo_param()
+        bpm = float(self.value_of(p) or 0) if p else 0.0
+        if bpm <= 0:
+            return None
+        t0, b0 = self.beat_anchor
+        return b0 + ((now or time.time()) - t0) * bpm / 60.0
+
+    def add_chaser(self):
+        """Shift + Note: put a Bar Chaser on the selected clip's layer (runs in a worker thread)."""
+        L = self.sel[0]
+        layer = self.layer_json(L)
+        if layer is None:
+            self.note_msg("select a clip on the layer first")
+            return
+
+        def work():
+            code = self.engine.add_to_layer(L)
+            name = text(layer.get("name")) or f"layer {L}"
+            self.note_msg(f"Bar Chaser is on {name}" if code == 200 else
+                          f"Bar Chaser added to {name}" if code == 204 else f"can't add Bar Chaser: HTTP {code}")
+        threading.Thread(target=work, daemon=True).start()
+
+    def join_track(self, track):
+        """Browse: the selected clip's layer answers to track `track` (adds the effect if missing)."""
+        L = self.sel[0]
+        layer = self.layer_json(L)
+        if layer is None:
+            self.note_msg("select a clip on the layer first")
+            return
+
+        def work():
+            ok = self.engine.set_track(L, track + 1)
+            name = text(layer.get("name")) or f"layer {L}"
+            self.note_msg(f"T{track + 1} = {name}" if ok else f"can't set track on {name}")
+        threading.Thread(target=work, daemon=True).start()
+
+    def seq_loop(self):
+        """100 Hz: feed beat time to the sequencer, send changed levels, handle Repeat."""
+        last_err = 0.0
+        while True:
+            try:
+                bt = self.beat_time()
+                changed = {}
+                if bt is not None:
+                    with self.lock:
+                        sb = self.seq.step_beats()
+                        g = math.floor(bt / sb)
+                        if self.repeat and self.held_bars and g != self.last_grid_step:
+                            for bar, track in list(self.held_bars.items()):
+                                tr = self.seq.pattern.tracks[track]
+                                self.seq.trigger(track, bar, 1.0, tr.gate * sb, bt)
+                        self.last_grid_step = g
+                        changed = self.seq.tick(bt)
+                for (track, bar), v in changed.items():
+                    self.engine.set_level(track, bar, v)
+            except Exception:                              # never let a bug stop the clock
+                if time.time() - last_err > 5:
+                    traceback.print_exc()
+                    last_err = time.time()
+            time.sleep(1.0 / SEQ_HZ)
+
+    def bar_index(self, i, j):
+        """Pad (row i, col j) in the pad block (rows 5-7) → pad index 0-23, bottom-left = 0."""
+        return (7 - i) * 8 + j if 5 <= i <= 7 else None
+
+    def pattern_index(self, j):
+        """Row 4: patterns 1-8, with Shift 9-16."""
+        return j + (8 if self.shift else 0)
+
+    def sel_keys(self):
+        return [pad_key(k) for k in sorted(self.sel_pads)]
+
+    def current_group(self):
+        """("track" | "global", button) of the group the selection came from, while it still equals it."""
+        if self.cur_group is None:
+            return None
+        scope, g = self.cur_group
+        pads, shown = self.seq.group(g, self.seq.track)
+        return self.cur_group if pads and shown == scope and set(pads) == self.sel_pads else None
+
+    def group_label(self, scope, g):
+        return f"GG{g + 1}" if scope == "global" else f"G{g + 1}"
+
+    def _group_button(self, g):
+        """Button g right of the pads (Layout). Select + button = store for the selected track,
+        Select + Shift + button = store for all tracks (GG); Delete (+ Shift) = clear; tap = select."""
+        seq, t = self.seq, self.seq.track
+        scope = "global" if self.shift else "track"
+        owner = None if self.shift else t
+        tag = self.group_label(scope, g) + ("" if self.shift else f" of T{t + 1}")
+        if self.select_held:
+            self.select_used = True
+            seq.store_group(g, self.sel_pads, owner)
+            self.cur_group = (scope, g)
+            self.note_msg(f"{tag} = pad{'s' * (len(self.sel_pads) != 1)} "
+                          + ", ".join(str(k + 1) for k in sorted(self.sel_pads)))
+        elif self.delete_held:
+            seq.clear_group(g, owner)
+            self.note_msg(f"{tag} cleared")
+        else:
+            pads, shown = seq.group(g, t)
+            if pads:
+                self.sel_pads = set(pads)
+                self.cur_group = (shown, g)
+            else:
+                self.note_msg(f"G{g + 1} empty · Select + button = store (+ Shift = all tracks)")
+
+    def _seq_pad(self, ij, velocity, down):
+        i, j = ij
+        with self.lock:
+            bt = self.beat_time() or 0.0
+            seq = self.seq
+            if i < 4:                                              # steps, for every selected pad
+                step = i * 8 + j
+                if not down:
+                    self.held_steps.discard(step)
+                    return
+                if step >= seq.pattern.length:
+                    return
+                keys = self.sel_keys()
+                if self.delete_held:
+                    for key in keys:
+                        seq._steps(key).pop(step, None)
+                    seq.save()
+                    return
+                self.held_steps.add(step)
+                all_on = all(step in seq._steps(key) for key in keys)
+                level = 1.0 if self.accent else max(0.05, velocity / 127.0)
+                for key in keys:
+                    st = seq._steps(key)
+                    if all_on:
+                        st.pop(step, None)
+                    elif step not in st:
+                        st[step] = [level, None]
+                seq.save()
+            elif i == 4:                                           # patterns
+                if not down:
+                    return
+                p = self.pattern_index(j)
+                if self.delete_held:
+                    seq.clear_pattern(p)
+                elif self.paste_held:
+                    if self.dup_src is None:
+                        self.dup_src = p
+                    else:
+                        src, self.dup_src = self.dup_src, None
+                        seq.copy_pattern(src, p)
+                        self.note_msg(f"P{src + 1} copied to P{p + 1}")
+                else:
+                    seq.switch_pattern(p, bt, now=(seq.pending == p))   # same pad again = now
+            else:                                                  # pads 1-24
+                k = self.bar_index(i, j)
+                key = pad_key(k)
+                track = seq.track
+                if not down:
+                    if key in self.held_bars:
+                        seq.release(self.held_bars.pop(key), key, bt)
+                    return
+                if self.delete_held:
+                    seq.clear_steps(key)
+                    return
+                if self.select_held:
+                    self.select_used = True                    # no latch toggle on release
+                if self.multi or self.select_held:
+                    if k in self.sel_pads and len(self.sel_pads) > 1:
+                        self.sel_pads.discard(k)
+                    else:
+                        self.sel_pads.add(k)
+                else:
+                    self.sel_pads = {k}
+                self.held_bars[key] = track
+                seq.trigger(track, key, 1.0, None, bt)
+
+    def _seq_button(self, name, down):
+        """Buttons that mean something else while the pads are the sequencer. True = consumed."""
+        bt = self.beat_time() or 0.0
+        if name == DELETE_BUTTON:
+            self.delete_held = down
+            return True
+        if name == FIXED_LENGTH_BUTTON:
+            self.fixed_len_held = down
+            return True
+        if name == BROWSE_BUTTON:
+            if down:
+                self.browse_held, self.browse_used = True, False
+            else:
+                self.browse_held = False
+                if not self.browse_used:
+                    self.join_track(self.seq.track)
+            return True
+        if name == SELECT_BUTTON:                                  # tap = latch, hold = momentary
+            with self.lock:
+                if down:
+                    self.select_held, self.select_used = True, False
+                else:
+                    self.select_held = False
+                    if not self.select_used:
+                        self.multi = not self.multi
+            return True
+        if name in (LAYOUT_BUTTON, SCALE_BUTTON):
+            if down:
+                self.side = "groups" if name == LAYOUT_BUTTON else "grid"
+            return True
+        if name == PASTE_BUTTON:                                   # Duplicate: copy pattern
+            self.paste_held = down
+            if not down:
+                self.dup_src = None
+            return True
+        seq_row = name in LOWER_ROW and self.overlay is None
+        if not down:
+            return name in (PLAY_BUTTON, REPEAT_BUTTON, ACCENT_BUTTON, DOUBLE_LOOP_BUTTON,
+                            OCTAVE_UP, OCTAVE_DOWN) or name in SCENE_BUTTONS or seq_row
+        with self.lock:
+            if name == PLAY_BUTTON:
+                if self.seq.running:
+                    self.seq.stop()
+                else:
+                    self.seq.start(bt)
+                return True
+            if name == REPEAT_BUTTON:
+                self.repeat = not self.repeat
+                return True
+            if name == ACCENT_BUTTON:
+                self.accent = not self.accent
+                return True
+            if name == DOUBLE_LOOP_BUTTON:
+                self.seq.double_loop()
+                return True
+            if name in (OCTAVE_UP, OCTAVE_DOWN):
+                return True                                    # unused with 24 fixed pads
+            if name in SCENE_BUTTONS:                              # top button = 1/32t / group 1
+                if self.side == "grid":
+                    self.seq.grid = name
+                else:
+                    self._group_button(SCENE_BUTTONS.index(name))
+                return True
+            if seq_row:
+                k = LOWER_ROW.index(name)
+                if self.fixed_len_held:
+                    self.seq.set_length((k + 1) * 4)
+                elif k < self.seq.n_tracks:
+                    if self.delete_held:
+                        self.seq.clear_steps(track=k)
+                    elif self.browse_held:
+                        self.browse_used = True
+                        self.join_track(k)
+                    else:
+                        self.seq.track = k
+                return True
+        return False
+
+    def _turn_seq(self, idx, inc):
+        names = SEQ_PAGES.get(self.mode, [])
+        if idx >= len(names):
+            return
+        name = names[idx]
+        seq, tr = self.seq, self.seq.pattern.tracks[self.seq.track]
+        fine = 0.2 if self.shift else 1.0
+        if self.held_steps and name in ("Gate", "Level"):         # hold step + knob, all selected pads
+            for key in self.sel_keys():
+                st = seq._steps(key)
+                for s_ in self.held_steps:
+                    if s_ in st:
+                        if name == "Level":
+                            seq.set_step_values(key, [s_], level=st[s_][0] + inc * 0.02 * fine)
+                        else:
+                            gate = st[s_][1] if st[s_][1] is not None else tr.gate
+                            seq.set_step_values(key, [s_], gate=gate + inc * 0.02 * fine)
+            return
+        e = tr.envelope
+        if name == "Attack":
+            e.attack = max(0.0, min(4.0, e.attack + inc * 0.05 * fine))
+        elif name == "Decay":
+            e.decay = max(0.0, min(4.0, e.decay + inc * 0.05 * fine))
+        elif name == "Sustain":
+            e.sustain = max(0.0, min(1.0, e.sustain + inc * 0.01 * fine))
+        elif name == "Release":
+            e.release = max(0.0, min(4.0, e.release + inc * 0.05 * fine))
+        elif name == "Gate":
+            tr.gate = max(0.1, min(1.0, tr.gate + inc * 0.02 * fine))
+        elif name == "Direction":
+            acc = self.choice_acc.get("seqdir", 0) + inc
+            if abs(acc) >= 4:
+                i = (DIRECTIONS.index(seq.pattern.direction) + (1 if acc > 0 else -1)) % len(DIRECTIONS)
+                seq.set_direction(DIRECTIONS[i])
+                acc = 0
+            self.choice_acc["seqdir"] = acc
+        elif name == "Length":
+            seq.set_length(seq.pattern.length + inc)
+        elif name == "Level":
+            tr.level = max(0.0, min(1.0, tr.level + inc * 0.01 * fine))
+        seq.save()
+
+    def turn_swing(self, inc):
+        with self.lock:
+            p = self.seq.pattern
+            p.swing = max(0.0, min(1.0, p.swing + inc * 0.02))
+            self.seq.save()
+
+    def _seq_pad_colors(self):
+        grid = {}
+        seq = self.seq
+        pos = seq.position(self.beat_time() or 0.0)
+        keys = self.sel_keys()
+        tc = seq.track % 8
+        track_steps = [seq.pattern.tracks[seq.track].steps.get(key, {}) for key in keys]
+        lit = {key for (t, key), v in seq.levels.items()          # pads sounding on this track only
+               if t == seq.track and v > 0.02}
+        blink = int(time.time() / BLINK) % 2 == 0
+        for i in range(8):
+            for j in range(8):
+                color = "black"
+                if i < 4:
+                    step = i * 8 + j
+                    if step < seq.pattern.length:
+                        n_on = sum(1 for st in track_steps if step in st)
+                        if step == pos:
+                            color = "green"
+                        elif n_on and n_on == len(track_steps):
+                            lv = min(st[step][0] for st in track_steps if step in st)
+                            color = f"L{tc}" if lv >= 0.66 else f"L{tc}_mid"
+                        elif n_on:
+                            color = f"L{tc}_dim"
+                        else:
+                            color = "dark_gray"
+                elif i == 4:
+                    p = self.pattern_index(j)
+                    has = any(t.steps for t in seq.patterns[p].tracks)
+                    if seq.pending == p:
+                        color = "white" if blink else "dark_gray"
+                    else:
+                        color = "white" if p == seq.current else ("dark_gray" if has else "black")
+                else:
+                    k = self.bar_index(i, j)
+                    key = pad_key(k)
+                    if key in lit:
+                        color = f"L{tc}"
+                    elif not self.engine.pad_assigned(seq.track, k):
+                        color = "black"
+                    elif k in self.sel_pads:
+                        color = "light_gray"
+                    else:
+                        color = "dark_gray"
+                grid[(i, j)] = color
+        return grid
 
     def poll_loop(self):
         session = requests.Session()
@@ -353,7 +846,9 @@ class Bridge:
         self.order = prefix + [k for k in self.order if k not in prefix]
         self._save_order()
 
-    def slots(self):
+    def slots(self, scope=None):
+        """Parameter slots of the CLIP PARAMS (scope "clip") or LAYER PARAMS (scope "layer") menu."""
+        scope_wanted = scope or ("layer" if self.mode == "layer_params" else "clip")
         L, C = self.sel
         layer, clip = self.layer_json(L), self.clip_json(L, C)
         if layer is None:
@@ -364,6 +859,8 @@ class Bridge:
         if spec == "auto":
             seen = set()
             for scope, path in AUTO_SOURCES:
+                if scope != scope_wanted:
+                    continue
                 node = resolve_node(roots[scope], path) if roots[scope] else None
                 if node is None:
                     continue
@@ -380,6 +877,8 @@ class Bridge:
         else:
             for s in spec:
                 scope = s.get("scope", "layer")
+                if scope != scope_wanted:
+                    continue
                 root = roots.get(scope)
                 node = resolve_node(root, s["path"]) if root else None
                 out.append(Slot(s.get("label") or s["path"].rsplit("/", 1)[-1],
@@ -431,7 +930,11 @@ class Bridge:
 
     def turn(self, idx, inc):
         with self.lock:
-            if self.mode == "mix":
+            self._ov_used()
+            if self.mode in SEQ_PAGES:
+                self._turn_seq(idx, inc)
+                return
+            if self.mode in MIX_MODES:
                 layers = self.mix_layers()
                 p = master_param(self.layer_json(layers[idx])) if idx < len(layers) else None
                 if p:
@@ -440,12 +943,12 @@ class Bridge:
             if self.mode == "color":
                 self._turn_color(idx, inc)
                 return
-            if self.mode == "fx":
+            if self.mode in FX_MODES:
                 items, _ = self.fx_page_items()
                 if idx < len(items) and items[idx][3]:
                     self._nudge(items[idx][3], {}, inc)
                 return
-            if self.move_src is not None:
+            if self.move_src is not None or self.mode not in PARAM_MODES:
                 return
             slots, _ = self.page_slots()
             if idx < len(slots) and slots[idx].param is not None:
@@ -453,7 +956,8 @@ class Bridge:
 
     def turn_master(self, inc):
         with self.lock:
-            if self.mode == "mix":
+            self._ov_used()
+            if self.mode in MIX_MODES:
                 p = master_param(self.comp)
                 self.blackout = None
             else:
@@ -559,11 +1063,15 @@ class Bridge:
 
     # ---- FX menu ----------------------------------------------------------- #
     def fx_list(self):
-        """[(tag, name, bypassed param or None, amount param or None)] clip, layer, composition effects."""
+        """[(tag, name, bypassed param or None, amount param or None)]: the clip's effects in CLIP
+        EFFECTS, the layer's in LAYER EFFECTS."""
         L, C = self.sel
-        roots = {"clip": self.clip_json(L, C), "layer": self.layer_json(L), "comp": self.comp}
+        roots = {"clip": self.clip_json(L, C), "layer": self.layer_json(L)}
+        wanted = "layer" if self.mode == "layer_fx" else "clip"
         out = []
         for tag, scope in FX_SOURCES:
+            if scope != wanted:
+                continue
             for fx in resolve_node(roots[scope], "video/effects") or [] if roots[scope] else []:
                 if not isinstance(fx, dict):
                     continue
@@ -694,7 +1202,7 @@ class Bridge:
     def touch(self, idx):
         with self.lock:
             self.touched = idx
-            if self.mode != "params":
+            if self.mode not in PARAM_MODES:
                 return
             n = len(self.slots())
             i = self.page * 8 + idx
@@ -725,8 +1233,8 @@ class Bridge:
                 self.blackout = None
 
     def flash_layer(self, row, down):
-        L = self.layer_offset + (8 - row)
         with self.lock:
+            L = self.pad_to_cell(row, 0)[0]
             p = master_param(self.layer_json(L))
             if p is None:
                 return
@@ -762,9 +1270,14 @@ class Bridge:
         return text(cols[n - 1].get("connected"), "Empty") if 1 <= n <= len(cols) else "Empty"
 
     def pad_to_cell(self, i, j):
-        return self.layer_offset + (8 - i), self.col_offset + j + 1
+        vis = self.visible_layers()
+        k = self.layer_offset + (7 - i)
+        return (vis[k] if 0 <= k < len(vis) else 0), self.col_offset + j + 1
 
-    def pad_pressed(self, ij):
+    def pad_pressed(self, ij, velocity=100):
+        self._ov_used()
+        if self.view == "seq":
+            return self._seq_pad(ij, velocity, True)
         L, C = self.pad_to_cell(*ij)
         with self.lock:
             clip = self.clip_json(L, C)
@@ -784,7 +1297,7 @@ class Bridge:
                     self.sender.clear(L)
                 return
             if L != self.sel[0]:
-                self.page = 0
+                self._pages.clear()
             if (L, C) != self.sel:
                 self.move_src = None
                 self.color_idx = 0
@@ -797,6 +1310,8 @@ class Bridge:
         self.sender.trigger(L, C, True)
 
     def pad_released(self, ij):
+        if self.view == "seq":
+            return self._seq_pad(ij, 0, False)
         cell = self.pad_to_cell(*ij)
         with self.lock:
             if cell not in self.pressed:
@@ -808,17 +1323,22 @@ class Bridge:
         if name == "Shift":
             self.shift = down
             return
+        if name in OVERLAY_BUTTONS:                        # Mix / Mute / Solo: click = open, hold = peek
+            if name == MUTE_BUTTON:
+                self.mute_held = down                      # hold + pad = mute that layer
+            elif name == SOLO_BUTTON:
+                self.solo_held = down
+            self.overlay_button(OVERLAY_BUTTONS[name], down)
+            return
+        if down:
+            self._ov_used()
+        if self.view == "seq" and self._seq_button(name, down):
+            return
         if name == PLAY_BUTTON:
             self.play_held = down
             return
         if name == STOP_BUTTON:
             self.stop_held = down
-            return
-        if name == MUTE_BUTTON:
-            self.mute_held = down
-            return
-        if name == SOLO_BUTTON:
-            self.solo_held = down
             return
         if name == PASTE_BUTTON:
             self.paste_held = down
@@ -827,11 +1347,11 @@ class Bridge:
             if down:
                 with self.lock:
                     if name in SCENE_BUTTONS:          # whole layer of that pad row
-                        L = self.layer_offset + (8 - SCENE_BUTTONS.index(name))
+                        L = self.pad_to_cell(SCENE_BUTTONS.index(name), 0)[0]
                         cells = [(L, c) for c in range(1, len((self.layer_json(L) or {}).get("clips") or []) + 1)]
                     else:                              # whole column above that button
                         C = self.col_offset + LOWER_ROW.index(name) + 1
-                        cells = [(l, C) for l in range(1, len(self.layers()) + 1)]
+                        cells = [(l, C) for l in self.visible_layers()]
                     self.paste_color(cells)
             return
         if name in SCENE_BUTTONS:
@@ -865,7 +1385,7 @@ class Bridge:
             return
         jump = 8 if self.shift else 1
         with self.lock:
-            max_l = max(0, len(self.layers()) - 8)
+            max_l = max(0, len(self.visible_layers()) - 8)
             max_c = max(0, self.max_cols() - 8)
             if name == "Up":
                 self.layer_offset = min(max_l, self.layer_offset + jump)
@@ -875,28 +1395,37 @@ class Bridge:
                 self.col_offset = min(max_c, self.col_offset + jump)
             elif name == "Left":
                 self.col_offset = max(0, self.col_offset - jump)
-            elif name == "Page Right" and self.mode == "fx":
+            elif name == "Page Right" and self.mode in FX_MODES:
                 _, pages = self.fx_page_items()
                 self.fx_page = min(pages - 1, self.fx_page + 1)
-            elif name == "Page Left" and self.mode == "fx":
+            elif name == "Page Left" and self.mode in FX_MODES:
                 self.fx_page = max(0, self.fx_page - 1)
             elif name == "Page Right":
                 _, pages = self.page_slots()
                 self.page = min(pages - 1, self.page + 1)
             elif name == "Page Left":
                 self.page = max(0, self.page - 1)
-            elif name == MIX_BUTTON:
-                self.mode = "params" if self.mode == "mix" else "mix"
-                self.move_src = None
-            elif name in MENU_BUTTONS:
-                self.mode = MENU_BUTTONS[name]
+            elif name in (SEQ_MENUS if self.view == "seq" else CLIP_MENUS):
+                self.menus[self.view] = (SEQ_MENUS if self.view == "seq" else CLIP_MENUS)[name]
+                self._clear_overlay()
                 self.move_src = None
                 self.color_target = "clip"
+            elif name == NOTE_BUTTON:
+                if self.shift:
+                    self.add_chaser()
+                else:
+                    self.set_view("seq")
+            elif name == SESSION_BUTTON:
+                self.set_view("clip")
             elif name == MASTER_COLOR_BUTTON:
                 master = self.mode == "color" and self.color_target == "master"
-                self.mode, self.color_target, self.color_idx = "color", "clip" if master else "master", 0
+                if self.view != "clip":
+                    self.set_view("clip")
+                self._clear_overlay()
+                self.menus["clip"] = "color"
+                self.color_target, self.color_idx = "clip" if master else "master", 0
                 self.move_src = None
-            elif name in LOWER_ROW and self.mode == "fx":
+            elif name in LOWER_ROW and self.mode in FX_MODES:
                 items, _ = self.fx_page_items()
                 k = LOWER_ROW.index(name)
                 if k < len(items) and items[k][2]:
@@ -905,14 +1434,15 @@ class Bridge:
                     self._set(byp["id"], v, {"value": v})
             elif name in LOWER_ROW and self.mode == "color" and self.shift:
                 self.save_palette_color(LOWER_ROW.index(name))
-            elif name in LOWER_ROW and self.mode == "mix":
+            elif name in LOWER_ROW and self.mode in MIX_MODES:
                 layers = self.mix_layers()
                 k = LOWER_ROW.index(name)
                 if k < len(layers):
-                    self.toggle_layer(layers[k], "solo" if self.solo_held else "bypassed")
+                    solo = self.mode == "solo" or (self.mode == "mix" and self.solo_held)
+                    self.toggle_layer(layers[k], "solo" if solo else "bypassed")
             elif name in LOWER_ROW and self.mode == "color":
                 self.set_palette_color(LOWER_ROW.index(name))
-            elif name in LOWER_ROW and self.mode == "params":
+            elif name in LOWER_ROW and self.mode in PARAM_MODES:
                 _, pages = self.page_slots()
                 k = LOWER_ROW.index(name)
                 if k < pages:
@@ -925,9 +1455,9 @@ class Bridge:
 
     def button_colors(self):
         with self.lock:
-            params = self.mode == "params"
+            params = self.mode in PARAM_MODES
             pages = self.page_slots()[1] if params else 0
-            out = {MIX_BUTTON: "dark_gray" if params else "white",
+            out = {MIX_BUTTON: "white" if self.overlay == "mix" else "dark_gray",
                    PLAY_BUTTON: "green" if self.play_held else "dark_gray",
                    STOP_BUTTON: "red" if self.stop_held else "dark_gray",
                    MOVE_BUTTON: "white" if self.move_src is not None or self.convert_held else "dark_gray",
@@ -938,31 +1468,52 @@ class Bridge:
                    else "dark_gray",
                    PASTE_BUTTON: ("white" if self.paste_held else "dark_gray") if self.mode == "color"
                    else "black"}
+            seq = self.view == "seq"
+            out[NOTE_BUTTON] = "white" if seq else "dark_gray"
+            out[SESSION_BUTTON] = "dark_gray" if seq else "white"
+            for b_, on in ((REPEAT_BUTTON, self.repeat), (ACCENT_BUTTON, self.accent), (DELETE_BUTTON, self.delete_held),
+                           (BROWSE_BUTTON, self.browse_held), (DOUBLE_LOOP_BUTTON, False),
+                           (FIXED_LENGTH_BUTTON, self.fixed_len_held),
+                           (OCTAVE_UP, False), (OCTAVE_DOWN, False)):
+                out[b_] = ("white" if on else "dark_gray") if seq else "black"
+            out[SELECT_BUTTON] = ("white" if self.multi or self.select_held else "dark_gray") if seq else "black"
+            out[LAYOUT_BUTTON] = ("white" if self.side == "groups" else "dark_gray") if seq else "black"
+            out[SCALE_BUTTON] = ("white" if self.side == "grid" else "dark_gray") if seq else "black"
+            if seq:
+                out[PLAY_BUTTON] = "green" if self.seq.running else "dark_gray"
+                out[PASTE_BUTTON] = "white" if self.paste_held else "dark_gray"
+            menus = SEQ_MENUS if seq else CLIP_MENUS
+            on, off = (SEQ_RED, SEQ_RED_DIM) if seq else ("white", "dark_gray")
             for b in UPPER_ROW:
-                out[b] = "black"
-            for b, m in MENU_BUTTONS.items():
-                active = self.mode == m and not (m == "color" and self.color_target == "master")
-                out[b] = "white" if active else "dark_gray"
+                m = menus.get(b)
+                active = m == self.mode and not (m == "color" and self.color_target == "master")
+                out[b] = "black" if m is None else (on if active else off)
             n_sw = len(self.swatches())
             blink = int(time.time() / BLINK) % 2 == 0
             mix_layers = self.mix_layers()
-            fx_items = self.fx_page_items()[0] if self.mode == "fx" else []
+            fx_items = self.fx_page_items()[0] if self.mode in FX_MODES else []
             for k, b in enumerate(LOWER_ROW):
-                if self.play_held:                          # column launch view
+                if seq and self.overlay is None:
+                    if k < self.seq.n_tracks:
+                        has = self.engine.ready(k)
+                        out[b] = f"L{k}" if k == self.seq.track else (f"L{k}_dim" if has else "dark_gray")
+                    else:
+                        out[b] = "black"
+                elif self.play_held:                        # column launch view
                     st = self.column_state(self.col_offset + k + 1)
                     out[b] = {"Connected": "green", "Disconnected": "dark_gray"}.get(st, "black")
                 elif self.mode == "color":
                     out[b] = f"P{k}" if k < n_sw else "black"
-                elif self.mode == "fx":
+                elif self.mode in FX_MODES:
                     byp = fx_items[k][2] if k < len(fx_items) else None
                     out[b] = "black" if byp is None else ("dark_gray" if self.value_of(byp) else "white")
-                elif self.mode == "mix":
+                elif self.mode in MIX_MODES:
                     if k >= len(mix_layers):
                         out[b] = "black"
                         continue
                     L = mix_layers[k]
                     solo, mute = self.layer_flag(L, "solo"), self.layer_flag(L, "bypassed")
-                    if self.solo_held:
+                    if self.solo_held or self.mode == "solo":
                         out[b] = "yellow" if solo and self.value_of(solo) else "dark_gray"
                     elif mute and self.value_of(mute):
                         out[b] = "red"
@@ -970,8 +1521,22 @@ class Bridge:
                         out[b] = "yellow" if solo and self.value_of(solo) else f"L{(L - 1) % 8}"
                 else:
                     out[b] = "black" if k >= pages else ("white" if k == self.page else "dark_gray")
+            cur_g, tc = self.current_group(), self.seq.track % 8
             for i, b in enumerate(SCENE_BUTTONS):
-                L = self.layer_offset + (8 - i)
+                if seq and self.side == "grid":             # Scale: grid selection
+                    out[b] = "white" if b == self.seq.grid else "dark_gray"
+                    continue
+                if seq:                                     # Layout: track groups in its colour, global white
+                    pads, scope = self.seq.group(i, self.seq.track)
+                    cur = cur_g == (scope, i)
+                    if not pads:
+                        out[b] = "black"
+                    elif scope == "track":
+                        out[b] = f"L{tc}" if cur else f"L{tc}_dim"
+                    else:
+                        out[b] = "white" if cur else "dark_gray"
+                    continue
+                L = self.pad_to_cell(i, 0)[0]
                 out[b] = ("black" if self.layer_json(L) is None
                           else f"L{(L - 1) % 8}" if L in self.flash else f"L{(L - 1) % 8}_dim")
             all_l = range(1, len(self.layers()) + 1)
@@ -979,14 +1544,16 @@ class Bridge:
                            for l in all_l)
             any_solo = any(self.layer_flag(l, "solo") and self.value_of(self.layer_flag(l, "solo"))
                            for l in all_l)
-            out[MUTE_BUTTON] = "white" if self.mute_held else ("red" if any_mute else "dark_gray")
-            out[SOLO_BUTTON] = "white" if self.solo_held else ("yellow" if any_solo else "dark_gray")
+            out[MUTE_BUTTON] = "white" if self.overlay == "mute" else ("red" if any_mute else "dark_gray")
+            out[SOLO_BUTTON] = "white" if self.overlay == "solo" else ("yellow" if any_solo else "dark_gray")
             out[BLACKOUT_BUTTON] = ("red" if blink else "black") if self.blackout is not None else "dark_gray"
             return out
 
     def pad_colors(self):
         grid = {}
         with self.lock:
+            if self.view == "seq":
+                return self._seq_pad_colors()
             dim_live = self.pulse and self.online and not self.on_beat()
             for i in range(8):
                 for j in range(8):
@@ -1057,14 +1624,45 @@ class Bridge:
             b = self.beat()
             note = self.note[0] if time.time() - self.note[1] < NOTE_TIME else ""
             fx = None
-            if self.mode == "fx":
+            if self.mode in FX_MODES:
                 items, fx_pages = self.fx_page_items()
-                fx = {"page": self.fx_page, "pages": fx_pages, "items": [
+                fx = {"scope": "layer" if self.mode == "layer_fx" else "clip",
+                      "page": self.fx_page, "pages": fx_pages, "items": [
                     {"tag": tag, "name": name,
                      "on": None if byp is None else not self.value_of(byp),
                      "amount": fmt_value(amt, self.value_of(amt), {}) if amt else None}
                     for tag, name, byp, amt in items]}
+            seq = None
+            if self.view == "seq":
+                sq, tr = self.seq, self.seq.pattern.tracks[self.seq.track]
+                e = tr.envelope
+
+                def beats(v):
+                    return f"{v:.2f} b", min(1.0, v / 4.0)
+
+                def pct(v):
+                    return f"{v * 100:.0f}%", v
+
+                every = {"Attack": beats(e.attack), "Decay": beats(e.decay), "Sustain": pct(e.sustain),
+                         "Release": beats(e.release), "Gate": pct(tr.gate),
+                         "Direction": (sq.pattern.direction, 0.0),
+                         "Length": (f"{sq.pattern.length} steps", sq.pattern.length / 32),
+                         "Level": pct(tr.level)}
+                knobs = [(n,) + every[n] for n in SEQ_PAGES.get(self.menus["seq"], [])]
+                pads = [(k + 1, self.engine.pad_name(sq.track, k) or "—") for k in sorted(self.sel_pads)]
+                ready = self.engine.ready(sq.track)
+                seq = {"knobs": knobs, "menu": self.menus["seq"], "track": sq.track, "pattern": sq.pattern.name, "running": sq.running,
+                       "pos": sq.position(self.beat_time() or 0.0), "length": sq.pattern.length, "grid": sq.grid,
+                       "pads": pads, "layer": self.engine.layer_name(sq.track), "ready": ready,
+                       "env": {"attack": e.attack, "decay": e.decay, "sustain": e.sustain, "release": e.release,
+                               "gate": tr.gate},
+                       "pending": sq.pending, "swing": sq.pattern.swing,
+                       "group": self.group_label(*self.current_group()) if self.current_group() else None,
+                       "multi": self.multi or self.select_held,
+                       "select_held": self.select_held, "side": self.side,
+                       "warning": "" if ready else f"T{sq.track + 1}: no Bar Chaser — Shift + Note on a layer"}
             return {
+                "seq": seq,
                 "fx": fx,
                 "link": "LIVE" if self.live() else "POLL",
                 "master_color": self.color_target == "master",
@@ -1075,7 +1673,7 @@ class Bridge:
                 "color": color,
                 "bpm": f"{float(self.value_of(tp) or 0):.1f} BPM" if tp else "",
                 "move": move,
-                "mode": self.mode, "mix": mix,
+                "mode": self.mode, "view": self.view, "mix": mix,
                 "comp_master": fmt_value(cp, self.value_of(cp), {}) if cp else None,
                 "online": self.online and self.comp is not None,
                 "url": self.rest.url,
@@ -1129,7 +1727,7 @@ def run(cfg, rest, sim=False):
 
     @push2_python.on_pad_pressed()
     def _pad_down(push, pad_n, pad_ij, velocity):
-        bridge.pad_pressed(pad_ij)
+        bridge.pad_pressed(pad_ij, velocity)
 
     @push2_python.on_pad_released()
     def _pad_up(push, pad_n, pad_ij, velocity):
@@ -1143,6 +1741,8 @@ def run(cfg, rest, sim=False):
             bridge.turn_master(inc)
         elif name == TEMPO_ENCODER:
             bridge.turn_tempo(inc)
+        elif name == SWING_ENCODER:
+            bridge.turn_swing(inc)
 
     @push2_python.on_encoder_touched()
     def _enc_touch(push, name):
@@ -1171,6 +1771,7 @@ def run(cfg, rest, sim=False):
         else:
             print("[resolume] pip install websocket-client for live updates; polling instead")
     bridge.sender.start()
+    threading.Thread(target=bridge.seq_loop, daemon=True).start()
 
     print(f"Bridge running → {rest.url}   (Ctrl+C to quit)")
     if sim:
@@ -1267,6 +1868,21 @@ def dump(rest, layer_no, col_no=None):
     print("\nCopy a path into config.yaml, e.g.  - {label: Scale, path: <path>, scope: clip}\n")
 
 
+def install_plugin(bundle):
+    """Copy the built Bar Chaser bundle into ~/Documents/Resolume Arena/Extra Effects."""
+    import shutil
+    src = Path(bundle)
+    if not (src / "Contents" / "MacOS").is_dir():
+        sys.exit(f"{src} is not a plugin bundle — build it first: plugin/build.sh")
+    folder = Path.home() / "Documents" / "Resolume Arena" / "Extra Effects"
+    folder.mkdir(parents=True, exist_ok=True)
+    dst = folder / src.name
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+    print(f"installed {dst}\nRestart Resolume Arena, then add the effect 'Bar Chaser' to a layer.")
+
+
 def load_config(path):
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))  # deep copy
     p = Path(path)
@@ -1292,10 +1908,15 @@ def main():
     ap.add_argument("--check", type=int, metavar="LAYER",
                     help="try every Resolume call on this (spare) layer, undo each, report OK/FAIL")
     ap.add_argument("--check-columns", action="store_true", help="with --check: also launch a column")
+    ap.add_argument("--install-plugin", nargs="?", const="", metavar="BUNDLE",
+                    help="copy the Bar Chaser effect into Resolume's Extra Effects folder (default: plugin/dist/Bar Chaser.bundle)")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
     rest = Resolume(cfg["resolume"]["host"], cfg["resolume"]["port"])
+    if args.install_plugin is not None:
+        install_plugin(args.install_plugin or str(Path(__file__).with_name("plugin") / "dist" / "Bar Chaser.bundle"))
+        return
     if args.check:
         from resolume_check import Checker
         ok = Checker(cfg["resolume"]["host"], cfg["resolume"]["port"], args.check).run(args.check_columns)

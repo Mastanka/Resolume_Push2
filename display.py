@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import colorsys
 
+SEQ_RED = (255, 60, 60)          # the SEQUENCER view's menu colour (its buttons above the display are red)
+SEQ_MENU_NAMES = {"seq_env": "ENVELOPE", "seq_settings": "SETTINGS", "seq_presets": "PRESETS"}
+
 # One colour per layer (repeats every 8 layers). Used for pads and the display.
 LAYER_RGB = [
     (0, 190, 255),   # cyan
@@ -123,7 +126,66 @@ def render(snap, bgr=True):
         col((140, 140, 140)); font(13)
         say(950, 127, snap["bpm"], right=True)
         say(950, 150, "FINE" if snap["shift"] else "PALETTE BELOW", right=True)
-    elif snap["mode"] == "fx":
+    elif snap["mode"].startswith("seq"):
+        sq = snap["seq"]
+        tcol = LAYER_RGB[sq["track"] % 8]
+        for k in range(8):
+            x = k * 120
+            if snap["touched"] == k:
+                col((45, 45, 45)); ctx.rectangle(x, 0, 120, 98); ctx.fill()
+            if k:
+                col((35, 35, 35)); ctx.rectangle(x, 6, 1, 86); ctx.fill()
+            if k >= len(sq["knobs"]):
+                continue
+            label, value, frac = sq["knobs"][k]
+            col((150, 150, 150)); font(15)
+            say(x + 8, 24, label, 104)
+            col((255, 255, 255)); font(20, True)
+            say(x + 8, 58, str(value), 104)
+            col((45, 45, 45)); ctx.rectangle(x + 8, 72, 104, 8); ctx.fill()
+            col((200, 200, 200) if label in ("Direction", "Length") else tcol)
+            ctx.rectangle(x + 8, 72, 104 * frac, 8); ctx.fill()
+        if sq.get("menu") == "seq_presets":
+            col((200, 200, 200)); font(18, True)
+            say(24, 56, "PRESETS — to be designed")
+        col((60, 60, 60)); ctx.rectangle(0, 100, W, 1); ctx.fill()
+        e = sq["env"]                                             # envelope sketch, bottom left
+        total = max(0.25, e["attack"] + e["decay"] + 0.5 + e["release"])
+        x0, y0, w, h = 10, 108, 120, 44
+        pts = [(0, 0), (e["attack"], 1.0), (e["attack"] + e["decay"], e["sustain"]),
+               (e["attack"] + e["decay"] + 0.5, e["sustain"]), (total, 0)]
+        col((40, 40, 40)); ctx.rectangle(x0, y0, w, h); ctx.fill()
+        col(tcol); ctx.set_line_width(2)
+        for n, (t, v) in enumerate(pts):
+            (ctx.move_to if n == 0 else ctx.line_to)(x0 + w * t / total, y0 + h - h * v)
+        ctx.stroke()
+        font(18, True)
+        pos = "" if sq["pos"] is None else f"  step {sq['pos'] + 1}/{sq['length']}"
+        menu = SEQ_MENU_NAMES.get(sq.get("menu"), "SEQ") + "  "
+        col(SEQ_RED); say(144, 128, menu)
+        mx = 144 + ctx.text_extents(menu).x_advance
+        col((255, 255, 255))
+        say(mx, 128, f"{sq['pattern']}  {'RUN' if sq['running'] else 'STOP'}{pos}   {sq['grid']}", 664 - mx)
+        col((200, 200, 200)); font(15)
+        names = ", ".join(n for _, n in sq["pads"])
+        nums = ", ".join(str(k) for k, _ in sq["pads"])
+        grp = f"{sq['group']}  " if sq.get("group") else ""
+        say(144, 151, f"T{sq['track'] + 1} · {sq['layer'] or '—'}   ·   {grp}pad{'s' * (len(sq['pads']) != 1)} {nums} ({names})"
+                      + (f"   ·   next: P{sq['pending'] + 1}" if sq["pending"] is not None else ""), 560)
+        col((140, 140, 140)); font(13)
+        say(950, 127, snap["bpm"], right=True)
+        if sq["warning"]:
+            bottom = sq["warning"]
+        elif sq.get("select_held"):
+            bottom = "pad = add / remove  ·  group button = store (Shift = all tracks)"
+        elif sq.get("multi"):
+            bottom = "MULTI-SELECT  ·  pad = add / remove"
+        elif snap["shift"]:
+            bottom = "FINE"
+        else:
+            bottom = "24 pads  ·  Select = multi-select"
+        say(950, 150, bottom, 400, right=True)
+    elif snap["mode"] in ("clip_fx", "layer_fx"):
         fx = snap["fx"] or {"items": [], "page": 0, "pages": 1}
         tags = {"Clip": (0, 190, 255), "Layer": LAYER_RGB[(snap["L"] - 1) % 8], "Comp": (255, 255, 255)}
         for k in range(8):
@@ -149,19 +211,21 @@ def render(snap, bgr=True):
                 ctx.rectangle(x + 8, 72, 104 * frac, 8); ctx.fill()
                 col((130, 130, 130)); font(12)
                 say(x + 112, 93, value, right=True)
+        layer_fx = fx.get("scope") == "layer"
         if not fx["items"]:
             col((200, 200, 200)); font(18, True)
-            say(24, 56, "No effects on this clip, its layer or the composition")
+            say(24, 56, "No effects on this layer" if layer_fx else "No effects on this clip")
         col((60, 60, 60)); ctx.rectangle(0, 100, W, 1); ctx.fill()
         col((255, 255, 255)); font(18, True)
-        say(28, 128, f"FX   L{snap['L']} C{snap['C']}   {snap['clip_name'] or '—'}", 560)
+        say(28, 128, f"LAYER EFFECTS   L{snap['L']}   {snap['layer_name'] or '—'}" if layer_fx
+            else f"CLIP EFFECTS   L{snap['L']} C{snap['C']}   {snap['clip_name'] or '—'}", 560)
         col((200, 200, 200)); font(15)
         say(28, 151, "knobs = amount   ·   buttons below = on / off", 560)
         col((140, 140, 140)); font(13)
         say(950, 127, "   ·   ".join(t for t in (f"PAGE {fx['page'] + 1}/{fx['pages']}", snap["bpm"]) if t),
             right=True)
         say(950, 150, "FINE" if snap["shift"] else "Page < > = more effects", right=True)
-    elif snap["mode"] == "mix":
+    elif snap["mode"] in ("mix", "mute", "solo"):
         for k in range(8):
             x = k * 120
             if snap["touched"] == k:
@@ -187,7 +251,7 @@ def render(snap, bgr=True):
 
         col((60, 60, 60)); ctx.rectangle(0, 100, W, 1); ctx.fill()
         col((255, 255, 255)); font(18, True)
-        say(24, 137, "MIX")
+        say(24, 137, snap["mode"].upper())
         if snap["comp_master"]:
             value, frac = snap["comp_master"]
             col((150, 150, 150)); font(14)
@@ -198,8 +262,9 @@ def render(snap, bgr=True):
             col((255, 255, 255)); ctx.rectangle(300, 134, 360 * frac, 12); ctx.fill()
         col((140, 140, 140)); font(13)
         say(950, 127, snap["bpm"], right=True)
-        say(950, 150, "FINE" if snap["shift"] else f"LAYERS {snap['layers'][0]}–{snap['layers'][1]}",
-            right=True)
+        what = "solo" if snap["mode"] == "solo" else "mute"
+        say(950, 150, "FINE" if snap["shift"] else
+            f"LAYERS {snap['layers'][0]}–{snap['layers'][1]}   ·   buttons below = {what}", right=True)
     else:
         accent = LAYER_RGB[(snap["L"] - 1) % 8]
         for k in range(8):
@@ -231,11 +296,17 @@ def render(snap, bgr=True):
             say(28, 151, f"Moving {mv['label']}  (page {mv['page'] + 1}, knob {mv['col'] + 1})"
                          "   ·   touch it again or Convert = cancel", 560)
         else:
+            layer_menu = snap["mode"] == "layer_params"
             col(accent); ctx.rectangle(10, 110, 8, 42); ctx.fill()
             col((255, 255, 255)); font(18, True)
-            say(28, 128, f"L{snap['L']}   {snap['layer_name']}", 560)
+            say(28, 128, f"LAYER PARAMS   L{snap['L']}   {snap['layer_name']}" if layer_menu
+                else f"CLIP PARAMS   C{snap['C']}   {snap['clip_name'] or '—'}", 560)
             col((200, 200, 200)); font(16)
-            say(28, 151, f"C{snap['C']}   {snap['clip_name'] or '—'}", 560)
+            say(28, 151, f"C{snap['C']}   {snap['clip_name'] or '—'}" if layer_menu
+                else f"L{snap['L']}   {snap['layer_name']}", 560)
+            if not snap["rows"]:
+                col((200, 200, 200)); font(18, True)
+                say(24, 56, "No layer parameters" if layer_menu else "No clip parameters")
 
         col((140, 140, 140)); font(13)
         top = "   ·   ".join(t for t in (f"PAGE {snap['page'] + 1}/{snap['pages']}", snap["bpm"],

@@ -28,6 +28,14 @@ pins_file: null
 # Own COLOR palette (Shift + button below the display) is saved here (default: colors.yaml).
 colors_file: null
 
+# Step sequencer (Note button / 4th button above the display). Which slice each of the 24 pads
+# means is chosen in the "Bar Chaser" effect's own panel in Arena (Pad 1 … Pad 24).
+sequencer:
+  tracks: 4               # texture tracks at once (1-4) = layers carrying a Bar Chaser effect
+
+# Patterns are saved here (default: chases.yaml next to the script).
+chases_file: null
+
 # What encoders 1-8 control, per layer. More than 8 slots → Page < / Page >.
 #
 #   auto  → slots are filled automatically from the layer + the clip you pressed
