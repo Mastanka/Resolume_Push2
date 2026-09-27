@@ -70,6 +70,7 @@ colors_file = pins.with_name("colors.yaml")          # never touch the real colo
 cfg["colors_file"] = str(colors_file)
 cfg["sequencer"] = {"tracks": 4}
 cfg["chases_file"] = str(pins.with_name("chases.yaml"))
+cfg["sequencer"]["preset_folder"] = str(Path(__file__).resolve().parent / "fixtures" / "rig")   # never the user's
 cfg["resolume"]["ws_refresh"] = 30.0     # REST safety refresh rare → everything below runs on live updates
 POLL_ONLY = os.environ.get("TEST_POLL") == "1"      # TEST_POLL=1: WebSocket off, test the polling fallback
 cfg["resolume"]["websocket"] = not POLL_ONLY
@@ -450,7 +451,7 @@ assert steps["pad 1"] == [[0, 1.0, None]] and steps["pad 2"][0] == [0, 1.0, None
 assert ("pad", ((0, 2), "L0_mid")) in calls or ("pad", ((0, 2), "L0_dim")) in calls, "half-level step pad"
 assert chases["track_groups"] == {1: [[1, 2]] + [None] * 7}, chases["track_groups"]
 assert chases["groups"] == [None, [2]] + [None] * 6, chases["groups"]
-assert chases["pads"][1][:4] == ["Bar A", "Bar B", "Bar C", "\u2014"] and 2 in chases["pads"], chases["pads"]
+assert chases["pads"][:4] == ["Bar A", "Bar B", "Bar C", "\u2014"], chases["pads"]
 tap("Upper Row 2")                                                                  # SETTINGS: K2 = Length
 fire("on_encoder_rotated", "Track2 Encoder", 2); fire("on_encoder_rotated", "Track2 Encoder", -2)
 time.sleep(0.2)
@@ -496,7 +497,8 @@ tap("Upper Row 4")
 time.sleep(0.3)
 assert since(n0, ("Upper Row 4", "L6")), "MAPPING lit red"
 assert ("pad", ((4, 0), "red")) in calls[n0:] and ("pad", ((4, 7), "red")) in calls[n0:], "divider row red"
-assert ("pad", ((0, 1), "L0_dim")) in calls[n0:] and ("pad", ((0, 4), "black")) in calls[n0:], "4 fixtures, all used"
+assert last_pad((0, 1)) == "L0_dim" and last_pad((0, 4)) == "dark_gray" and last_pad((0, 6)) == "black", \
+    "6 fixtures, the first 4 used"
 assert last_pad((7, 3)) == "black" and last_pad((7, 0)) == "L0_dim", "pad 4 has no fixture, pad 1 has one"
 fire("on_button_pressed", "Select")
 fire("on_pad_pressed", 60, (0, 1), 100); fire("on_pad_released", 60, (0, 1), 0)     # pick L1F2
@@ -509,11 +511,39 @@ fxp = lambda: [e for e in rest.composition()["layers"][0]["video"]["effects"] if
 assert fxp()["Pad 4"]["value"] == "Bar A / 424 - 846 141 RGB 2", fxp()["Pad 4"]["value"]
 assert ("pad", ((7, 3), "white")) in calls[n1:] and ("pad", ((0, 1), "white")) in calls[n1:], "double blink on both"
 assert last("Select") == "dark_gray", "Select + fixture must not latch multi-select"
-assert yaml.safe_load(open(cfg["chases_file"]).read())["pads"][1][3] == "Bar A / 424 - 846 141 RGB 2"
+assert yaml.safe_load(open(cfg["chases_file"]).read())["pads"][3] == "Bar A / 424 - 846 141 RGB 2"
 fire("on_button_pressed", "Delete"); fire("on_pad_pressed", 60, (7, 3), 100)        # Delete + pad = no fixture
 fire("on_pad_released", 60, (7, 3), 0); fire("on_button_released", "Delete")
 time.sleep(0.5)
 assert fxp()["Pad 4"]["value"] == "\u2014"
+
+# --- PRESETS (SEQ menu 3): the buttons below the display are presets, not tracks
+tap("Upper Row 3")
+time.sleep(0.3)
+assert last("Lower Row 1") == "black", "3 mapped pads: presets need 4"
+tap("Upper Row 4")                                                                  # map pad 4 = L4F1 (a 2 m bar)
+fire("on_button_pressed", "Select")
+fire("on_pad_pressed", 60, (0, 4), 100); fire("on_pad_released", 60, (0, 4), 0)
+fire("on_pad_pressed", 60, (7, 3), 100); fire("on_pad_released", 60, (7, 3), 0)
+fire("on_button_released", "Select")
+tap("Upper Row 3")
+time.sleep(0.3)
+assert last("Lower Row 1") == "dark_gray" and last("Upper Row 3") == "L6", "4 pads: presets ready"
+n0 = len(calls)
+tap("Lower Row 1")                                                                  # pick R1 Pump
+time.sleep(0.6)
+assert ("pad", ((4, 5), "white")) in calls[n0:] and ("pad", ((4, 5), "black")) in calls[n0:], "pattern row blinks"
+fire("on_pad_pressed", 60, (4, 2), 100); fire("on_pad_released", 60, (4, 2), 0)     # P3 is empty: stored
+time.sleep(0.3)
+pats = lambda: yaml.safe_load(open(cfg["chases_file"]).read())["patterns"]
+assert pats()[2]["name"] == "R1 Pump" and pats()[2]["source"]["rig"] == "1S 2D 3S 4D", pats()[2].get("source")
+tap("Lower Row 2")                                                                  # R2 3/16 onto the used P3
+fire("on_pad_pressed", 60, (4, 2), 100); fire("on_pad_released", 60, (4, 2), 0)
+time.sleep(0.3)
+assert last("Lower Row 7") == "red" and last("Lower Row 8") == "green", "NO / YES"
+tap("Lower Row 8")
+time.sleep(0.3)
+assert pats()[2]["name"] == "R2 3/16"
 tap("Upper Row 1")
 
 n1 = len(calls)

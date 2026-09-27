@@ -45,8 +45,9 @@ def bar_chaser_effect():
     """The Bar Chaser FFGL effect as Arena shows it: 55 params. The dropdowns list the fixtures
     (Bar A has two), then the whole screens; pads 1-3 hold whole screens, as in an older show."""
     slices = ["\u2014", "Bar A / 1 - 423 141 RGB", "Bar A / 424 - 846 141 RGB 2", "Bar B / 1 - 855 h3 2m grb",
-              "Bar C / 1 - 423 141 RGB", "Bar A", "Bar B", "Bar C"]
-    params = {"Preset": s(""), "Reload": ev(), "Track": choice("1", ["1", "2", "3", "4"]),
+              "Bar C / 1 - 423 141 RGB", "Bar D / 1 - 855 h3 2m grb", "Bar E / 1 - 423 141 RGB",
+              "Bar A", "Bar B", "Bar C", "Bar D", "Bar E"]      # = tests/fixtures/mock_rig.xml
+    params = {"Preset": s("mock_rig"), "Reload": ev(), "Track": choice("1", ["1", "2", "3", "4"]),
               "Master": rng(1.0), "Edge": rng(0.0, 0, 20),
               "Outside": choice("Transparent", ["Transparent", "Black", "Pass through"]),
               "Mode": choice("Texture", ["Texture", "Solid", "Show pads"])}

@@ -71,7 +71,7 @@ def test_plugin_engine():
     assert eng.ready(0) and eng.ready(1) and not eng.ready(2)
     assert eng.layers_of(1) == [2] and eng.layer_name(0) == "Strobe"
     assert eng.pad_name(0, 0) == "Bar A" and eng.pad_name(0, 2) == "Bar C" and eng.pad_name(0, 5) == ""
-    assert eng.pad_assigned(1, 1) and not eng.pad_assigned(2, 0)
+    assert eng.pad_assigned(1, 1) and eng.pad_assigned(2, 0) and not eng.pad_assigned(2, 5)   # one shared mapping
     fx1 = state["comp"]["layers"][0]["video"]["effects"][-1]
     fx2 = state["comp"]["layers"][1]["video"]["effects"][-1]
     eng.set_level(0, "pad 1", 0.5)
@@ -95,13 +95,15 @@ def _bridge():
     cfg = B.load_config(Path(__file__).resolve().parent.parent / "config.yaml")
     for k in ("pins_file", "colors_file", "chases_file"):
         cfg[k] = str(Path(tempfile.mkdtemp()) / (k + ".yaml"))
+    cfg["sequencer"]["preset_folder"] = str(Path(__file__).resolve().parent / "fixtures" / "rig")
     br = B.Bridge(cfg, Resolume("127.0.0.1", 8080))
     br.set_comp(rest.composition())
     return br
 
 
 def test_pad_memory():
-    """Each track keeps its last pad assignment; an instance joining the track gets it."""
+    """One pad mapping for every Bar Chaser: a change on any instance reaches all, a new instance
+    gets it, a loaded composition takes T1's."""
     import tempfile
     from sequencer import Sequencer
     from chaser_engine import PluginEngine
@@ -117,40 +119,35 @@ def test_pad_memory():
     def fxp(L):
         return [e for e in comp()["layers"][L - 1]["video"]["effects"] if e["name"] == "Bar Chaser"][0]["params"]
 
-    eng.sync_pads(comp(), now=100.0)                                     # first composition: taken as it is
+    assert eng.sync_pads(comp(), now=100.0) is True                     # first composition = loaded
     n0 = len(comp()["layers"])
     rest.add_layer(); rest.add_layer()
     A, B = n0 + 1, n0 + 2
     assert rest.add_effect(A, "Bar Chaser") == 204
-    eng.sync_pads(comp(), now=101.0)                                     # joins track 1
-    assert store.pad_configs[0] == eng.pads_of({"fx": {"params": fxp(A)}})
-    rest.set_param(fxp(A)["Pad 1"]["id"], {"value": "Bar C"})           # edited in Arena
+    assert eng.sync_pads(comp(), now=101.0) is False
+    assert store.pad_config == eng.pads_of({"fx": {"params": fxp(A)}})  # the first instance's pads
+    rest.set_param(fxp(A)["Pad 1"]["id"], {"value": "Bar C"})          # edited in Arena
     eng.sync_pads(comp(), now=102.0)
-    assert store.pad_configs[0][0] == "Bar C" and Sequencer(store.path).pad_configs[0][0] == "Bar C"
-    assert rest.add_effect(B, "Bar Chaser") == 204                      # a second layer joins track 1
+    assert store.pad_config[0] == "Bar C" and Sequencer(store.path).pad_config[0] == "Bar C"
+    assert rest.add_effect(B, "Bar Chaser") == 204
+    rest.set_param(fxp(B)["Track"]["id"], {"value": "2"})              # another track, same mapping
     stale = comp()
     eng.sync_pads(stale, now=103.0)
-    assert fxp(B)["Pad 1"]["value"] == "Bar C", "the new instance must get track 1's pads"
-    eng.sync_pads(stale, now=103.5)                                      # old values still in a refresh
-    assert store.pad_configs[0][0] == "Bar C", "our own pending writes must not count as an edit"
+    assert fxp(B)["Pad 1"]["value"] == "Bar C", "a new instance gets the shared mapping"
+    eng.sync_pads(stale, now=103.5)                                     # old values still in a refresh
+    assert store.pad_config[0] == "Bar C", "our own pending writes must not count as an edit"
     eng.sync_pads(comp(), now=104.0)
-    rest.set_param(fxp(B)["Track"]["id"], {"value": "2"})              # B moves to track 2 (no pads yet)
+    rest.set_param(fxp(B)["Pad 2"]["id"], {"value": "\u2014"})        # edited on the track 2 layer
     eng.sync_pads(comp(), now=105.0)
-    assert store.pad_configs[1][0] == "Bar C"
-    rest.set_param(fxp(B)["Pad 2"]["id"], {"value": "\u2014"})
-    eng.sync_pads(comp(), now=106.0)
-    assert store.pad_configs[1][1] == "\u2014" and store.pad_configs[0][1] == "Bar B"
-    rest.set_param(fxp(A)["Track"]["id"], {"value": "2"})              # A moves to track 2 → gets its pads
-    eng.sync_pads(comp(), now=107.0)
-    assert fxp(A)["Pad 2"]["value"] == "\u2014"
-    eng.sync_pads(comp(), now=110.0)
-    loaded = comp()                                                      # another composition is loaded
+    assert store.pad_config[1] == "\u2014" and fxp(A)["Pad 2"]["value"] == "\u2014", "reaches every layer"
+    eng.sync_pads(comp(), now=108.0)
+    loaded = comp()                                                     # another composition is loaded
     loaded["master"]["id"] = -1
-    fx_b = [e for e in loaded["layers"][B - 1]["video"]["effects"] if e["name"] == "Bar Chaser"][0]
-    fx_b["params"]["Pad 3"]["value"] = "Bar A"                           # B = the track's last instance
+    [e for e in loaded["layers"][A - 1]["video"]["effects"] if e["name"] == "Bar Chaser"][0]["params"]["Pad 3"]["value"] = "Bar A"
     n_writes = len(writes)
-    eng.sync_pads(loaded, now=111.0)
-    assert len(writes) == n_writes and store.pad_configs[1][2] == "Bar A", "a loaded composition is kept"
+    assert eng.sync_pads(loaded, now=109.0) is True
+    assert store.pad_config[2] == "Bar A", "T1's mapping counts in a loaded composition"
+    assert len(writes) > n_writes and fxp(B)["Pad 3"]["value"] == "Bar A", "the other layers get it"
     assert rest.delete_effect(A, 0) in (200, 204) and rest.delete_effect(B, 0) in (200, 204)   # leave no instance
 
 
@@ -173,15 +170,15 @@ def test_fixtures():
     rest.add_layer(); rest.add_layer()
     A, B = n0 + 1, n0 + 2
     assert rest.add_effect(A, "Bar Chaser") == 204 and rest.add_effect(B, "Bar Chaser") == 204   # both track 1
-    assert [f["label"] for f in eng.fixtures(0)] == ["L1F1", "L1F2", "L2F1", "L3F1"]
+    assert [f["label"] for f in eng.fixtures(0)] == ["L1F1", "L1F2", "L2F1", "L3F1", "L4F1", "L5F1"]
     assert eng.short(0, "Bar B") == "L2F1" and eng.short(0, "Bar A") == "Bar A" and eng.short(0, "\u2014") == ""
     assert eng.fixtures_of_value(0, "Bar A") == [0, 1] and eng.fixtures_of_value(0, "Bar C / 1 - 423 141 RGB") == [3]
     target = "Bar A / 424 - 846 141 RGB 2"
-    assert eng.set_pad(0, 3, target)
+    assert eng.set_pad(3, target)
     pads = lambda L: [e for e in comp()["layers"][L - 1]["video"]["effects"] if e["name"] == "Bar Chaser"][0]["params"]
-    assert pads(A)["Pad 4"]["value"] == target and pads(B)["Pad 4"]["value"] == target, "every instance of the track"
-    assert store.pad_configs[0][3] == target and Sequencer(store.path).pad_configs[0][3] == target
-    assert not eng.set_pad(0, 4, "No such fixture") and not eng.set_pad(2, 0, target)        # unknown / no instance
+    assert pads(A)["Pad 4"]["value"] == target and pads(B)["Pad 4"]["value"] == target, "every instance"
+    assert store.pad_config[3] == target and Sequencer(store.path).pad_config[3] == target
+    assert not eng.set_pad(4, "No such fixture")
     assert rest.delete_effect(A, 0) in (200, 204) and rest.delete_effect(B, 0) in (200, 204)   # leave no instance
 
 
@@ -209,6 +206,67 @@ def test_global_group_isolation():
     br.seq.start(0.0)
     levels = br.seq.tick(0.01)
     assert levels and all(t == 1 for t, _ in levels), levels
+
+
+def test_presets():
+    """PRESETS: a preset fills one pattern slot on the current rig, a used slot asks first; a rig
+    change during the show is offered as a re-fit, a loaded composition re-fits at once."""
+    br = _bridge()
+    if not br.engine.instances():
+        n0 = len(comp()["layers"])
+        rest.add_layer()
+        assert rest.add_effect(n0 + 1, "Bar Chaser") == 204
+        br.set_comp(rest.composition())
+
+    def press(name):
+        br.button(name, True); br.button(name, False)
+
+    def pattern_pad(slot):
+        br.pad_pressed((4, slot)); br.pad_released((4, slot))
+
+    br.mode = "seq_presets"
+    for k in range(3, 24):
+        br.engine.set_pad(k, "\u2014")
+    r, err = br.current_rig()                                            # pads 1-3 only
+    assert r is None and "found 3" in err, err
+    press("Lower Row 1")
+    assert br.preset_pick is None and br.button_colors()["Lower Row 1"] == "black"
+    assert br.engine.set_pad(3, "Bar D / 1 - 855 h3 2m grb")            # pad 4 = a 2 m bar
+    r, err = br.current_rig()
+    assert r and r.signature() == "1S 2D 3S 4D" and r.source == "preset", (r and r.signature(), err)
+    assert br.button_colors()["Lower Row 1"] == "dark_gray"
+    press("Lower Row 1")                                                 # pick R1 Pump
+    assert br.preset_pick == "R1"
+    pattern_pad(2)                                                       # P3 is empty: stored at once
+    p3 = br.seq.patterns[2]
+    assert p3.name == "R1 Pump" and p3.source["rig"] == "1S 2D 3S 4D" and br.preset_pick is None
+    assert set(p3.tracks[0].steps) <= {"pad 2", "pad 4"}, "the kick lands on the long bars"
+    press("Lower Row 2")                                                 # R2 3/16 onto the used P3: asks
+    pattern_pad(2)
+    assert br.confirm and br.seq.patterns[2].name == "R1 Pump"
+    leds = br.button_colors()
+    assert leds["Lower Row 7"] == "red" and leds["Lower Row 8"] == "green" and leds["Lower Row 1"] == "black"
+    snap = br.snapshot()["seq"]["presets"]
+    assert snap["labels"][6:] == ["NO", "YES"] and snap["title"].startswith("Overwrite P3 (R1 Pump)"), snap
+    press("Lower Row 7")                                                 # NO: still picked, choose another slot
+    assert br.confirm is None and br.seq.patterns[2].name == "R1 Pump" and br.preset_pick == "R2"
+    pattern_pad(2); press("Lower Row 8")                                 # YES
+    assert br.seq.patterns[2].name == "R2 3/16" and br.seq.patterns[2].source["recipe"] == "R2"
+    snap = br.snapshot()["seq"]["presets"]
+    assert snap["labels"][0] == "R1 Pump" and "Rig: 4 fixtures" in snap["rig"], snap
+    br.button("Shift", True)
+    assert br.snapshot()["seq"]["presets"]["labels"][0] == "G1 Ride"   # Shift: presets 9-16
+    br.button("Shift", False)
+    assert br.engine.set_pad(4, "Bar E / 1 - 423 141 RGB")              # the rig changes during the show
+    br.check_rig()
+    assert br.refit_offer and br.question() == {"kind": "refit"} and br.seq.patterns[2].source["rig"] == "1S 2D 3S 4D"
+    assert br.button_colors()["Lower Row 8"] == "green"
+    press("Lower Row 8")                                                 # YES: re-fit
+    assert br.seq.patterns[2].source["rig"] == "1S 2D 3S 4D 5S" and not br.refit_offer
+    assert br.seq.patterns[2].name == "R2 3/16"
+    assert br.engine.set_pad(4, "\u2014")
+    br.check_rig(loaded=True)                                            # a loaded composition: at once
+    assert br.seq.patterns[2].source["rig"] == "1S 2D 3S 4D" and not br.refit_offer
 
 
 def test_screens():

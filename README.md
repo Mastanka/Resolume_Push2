@@ -162,10 +162,16 @@ hold the button and goes back when you let go.
 
 **Step sequencer (SEQUENCER view)** — press **Note**; **Session** goes back to the clips.
 Menus (red): **1 ENVELOPE** = knobs Attack, Decay, Sustain, Release, Gate. **2 SETTINGS** = knobs
-Direction, Length, Level. **3 PRESETS** = not designed yet. **4 MAPPING** = which DMX fixture each pad
-lights: the top four pad rows show the fixtures (L1F1, L1F2, L2F1 … = lumiverse / fixture, in Arena's
-order), row 5 is red, rows 6–8 are pads 1–24. Hold **Select** and press a fixture (it blinks), then press
-a pad to store it there (both blink twice). **Delete** + pad = no fixture. **Octave** ▲ ▼ = more fixtures.
+Direction, Length, Level. **3 PRESETS** = ready-made patterns (the Techno bank: 16 presets) that fit
+your rig: the buttons below the display are the presets (Shift = 9–16). Press one (it blinks, and so
+does the pattern row), then a pattern pad: an empty slot gets the preset, a used one asks
+*Overwrite?* with button 7 = NO and 8 = YES. The preset places kicks on the long bars and hats on the
+short ones of whatever rig is mapped (4–24 fixtures); if the rig changes, the bridge re-fits preset
+patterns when a composition loads, and asks in PRESETS when it changes during the show.
+**4 MAPPING** = which DMX fixture each pad lights, shared by all tracks: the top four pad rows show the
+fixtures (L1F1, L1F2, L2F1 … = lumiverse / fixture, in Arena's order), row 5 is red, rows 6–8 are pads
+1–24. Hold **Select** and press a fixture (it blinks), then press a pad to store it there (both blink
+twice). **Delete** + pad = no fixture. **Octave** ▲ ▼ = more fixtures.
 
 It needs the **Bar Chaser** effect (in `plugin/`, built with `plugin/build.sh`, installed with
 `python push_resolume_bridge.py --install-plugin`, then restart Arena). Save your Advanced Output as a
@@ -201,10 +207,9 @@ rows 6–8   pads 1–24, bottom-left = pad 1, each = a slice chosen in the effe
 **Isolation:** a group only selects pads. Steps belong to the track you made them on, so a global
 group used on track 2 only flashes track 2's layers.
 
-**Pad memory:** the bridge remembers each track's **Pad 1–24** assignment (in `chases.yaml`). A Bar
-Chaser that joins a track (added to a layer, or its **Track** switched) gets that track's last
-assignment within a few seconds. Change a pad in Arena and that becomes the track's assignment.
-Opening a composition keeps the assignments saved in it.
+**One pad mapping for all tracks:** every Bar Chaser uses the same **Pad 1–24** settings, remembered in
+`chases.yaml`. Change a pad in Arena on any layer and all layers follow; a new Bar Chaser gets the
+mapping within a few seconds. Opening a composition takes T1's mapping and gives it to the others.
 
 **In the effect's panel:** Preset (empty = newest), Reload, Track, Master, Edge (soft edges), Outside
 (transparent / black / pass through), Mode (Texture / Solid white / Show pads = numbered rectangles for

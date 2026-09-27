@@ -127,6 +127,33 @@ def render(snap, bgr=True):
         col((140, 140, 140)); font(13)
         say(950, 127, snap["bpm"], right=True)
         say(950, 150, "FINE" if snap["shift"] else "PALETTE BELOW", right=True)
+    elif snap["mode"].startswith("seq") and (snap["seq"] or {}).get("presets"):
+        pr = snap["seq"]["presets"]                               # PRESETS: labels for the buttons below
+        col(SEQ_RED); font(13, True)
+        say(24, 22, "PRESETS  ·  TECHNO")
+        col((255, 255, 255)); font(21, True)
+        say(24, 50, pr["title"], 912)
+        col((175, 175, 175)); font(14)
+        say(24, 73, pr["rig"], 912)
+        col((125, 125, 125)); font(13)
+        say(24, 92, pr["info"], 912)
+        col((60, 60, 60)); ctx.rectangle(0, 100, W, 1); ctx.fill()
+        for k, label in enumerate(pr["labels"]):
+            x = k * 120
+            if k:
+                col((35, 35, 35)); ctx.rectangle(x, 122, 1, 30); ctx.fill()
+            if not label:
+                continue
+            if pr["question"]:
+                col((200, 40, 40) if label == "NO" else (30, 170, 80)); ctx.rectangle(x + 10, 122, 100, 30); ctx.fill()
+                col((255, 255, 255)); font(17, True)
+            elif pr["picked"] == k:
+                col((255, 255, 255)); ctx.rectangle(x + 6, 122, 108, 30); ctx.fill()
+                col((0, 0, 0)); font(14, True)
+            else:
+                col((215, 215, 215)); font(14, True)
+            w = ctx.text_extents(label).x_advance
+            say(x + max(8, (120 - w) / 2), 143, label, 104)
     elif snap["mode"].startswith("seq"):
         sq = snap["seq"]
         tcol = LAYER_RGB[sq["track"] % 8]
@@ -144,9 +171,6 @@ def render(snap, bgr=True):
             col((45, 45, 45)); ctx.rectangle(x + 8, 72, 104, 8); ctx.fill()
             col((200, 200, 200) if label in ("Direction", "Length") else tcol)
             ctx.rectangle(x + 8, 72, 104 * frac, 8); ctx.fill()
-        if sq.get("menu") == "seq_presets":
-            col((200, 200, 200)); font(18, True)
-            say(24, 56, "PRESETS — to be designed")
         mp = sq.get("mapping")
         if mp:                                                    # MAPPING: what is picked / stored
             col((255, 255, 255)); font(24, True)

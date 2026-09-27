@@ -59,6 +59,7 @@ import json
 import os
 import platform
 import math
+import random
 import sys
 import threading
 import time
@@ -69,6 +70,8 @@ from pathlib import Path
 import requests
 import yaml
 
+import banks
+import rig as rigmod
 from chaser_engine import UNASSIGNED, PluginEngine, pad_key
 from sequencer import DIRECTIONS, Sequencer
 from display import LAYER_RGB, render  # noqa: F401  (render re-exported for tests/tools)
@@ -121,6 +124,8 @@ SEQ_PAGES = {"seq_env": ["Attack", "Decay", "Sustain", "Release", "Gate"],     #
              "seq_settings": ["Direction", "Length", "Level"], "seq_presets": [], "seq_mapping": []}
 MAP_FIXTURES = 32     # MAPPING: fixtures on the top four pad rows (Octave ▲ ▼ = next 32)
 MAP_BLINK = 0.08      # s per phase of the double blink that confirms a stored mapping
+PRESET_BANK = "techno"   # banks.BANKS: the presets on the buttons below the display (Shift = 9-16)
+CONFIRM_NO, CONFIRM_YES = 6, 7   # PRESETS questions: buttons 7 (NO) and 8 (YES) below the display
 PARAM_MODES = ("clip_params", "layer_params")
 FX_MODES = ("clip_fx", "layer_fx")
 MIX_MODES = ("mix", "mute", "solo")       # screens on top of either view (Mix / Mute / Solo button)
@@ -164,7 +169,9 @@ DEFAULT_CONFIG = {
     "pins_file": None,     # param order file; None = pins.yaml next to this script
     "colors_file": None,   # own palette (Shift + Lower Row in COLOR); None = colors.yaml here
     "chases_file": None,   # step sequencer patterns; None = chases.yaml next to this script
-    "sequencer": {"tracks": 4},
+    "sequencer": {"tracks": 4,
+                  "rig": {},             # optional: dominant: [pads], order: [pads] (see rig.build_rig)
+                  "preset_folder": None},  # Advanced Output presets; None = Resolume's own folder
     "layers": {"default": "auto"},
 }
 
@@ -261,6 +268,12 @@ class Bridge:
         self.map_focus = None      # MAPPING: pad last pressed (its fixture is shown)
         self.map_blink = {}        # MAPPING: ("fx", index) / ("pad", k) -> time of the confirming double blink
         self.map_page = 0          # MAPPING: which 32 fixtures are on the pads
+        self.preset_pick = None    # PRESETS: recipe id picked on the buttons below the display
+        self.confirm = None        # PRESETS question: {"kind": "overwrite", "slot", "recipe"}
+        self.refit_offer = False   # the rig changed during the show: PRESETS offers a re-fit
+        self._rig_cache = (None, None, None)   # (inputs, Rig or None, error text)
+        self._rig_checked = (None, 0.0)        # (mapping, time) of the last look at the preset file
+        self.rig_sig_seen = None   # rig signature last checked
         self.repeat = False
         self.accent = False
         self.delete_held = self.browse_held = self.fixed_len_held = False
@@ -337,7 +350,7 @@ class Bridge:
         self.held_steps.clear()
         self.held_bars.clear()
         self.select_held = False
-        self.map_armed = None
+        self.map_armed = self.preset_pick = self.confirm = None
 
     # ---- composition access --------------------------------------------- #
     def layers(self):
@@ -385,7 +398,8 @@ class Bridge:
             self.comp, self.index, self.online = comp, index, True
             self._check_blackout()
             try:
-                self.engine.sync_pads(comp)             # pad memory: tracks keep their pad assignment
+                loaded = self.engine.sync_pads(comp)    # one pad mapping on every Bar Chaser
+                self.check_rig(loaded)                  # presets still fit the Advanced Output?
             except Exception:
                 traceback.print_exc()
 
@@ -565,6 +579,170 @@ class Bridge:
             else:
                 self.note_msg(f"G{g + 1} empty · Select + button = store (+ Shift = all tracks)")
 
+    # ---- rig and presets (SEQ PRESETS menu) ------------------------------------ #
+    def current_rig(self):
+        """(Rig, "") or (None, error) from the shared pad mapping and the Advanced Output preset the
+        effect reads. Rebuilt only when the mapping, the preset file or its time, or config change."""
+        sc = self.cfg.get("sequencer") or {}
+        folder = sc.get("preset_folder") or rigmod.PRESET_FOLDER
+        values = self.engine.mapping()
+        now = time.time()
+        if self._rig_checked[0] == values and now - self._rig_checked[1] < 1.0:
+            return self._rig_cache[1], self._rig_cache[2]           # the preset file is looked at once a second
+        self._rig_checked = (values, now)
+        path = rigmod.resolve_preset(self.engine.preset_text(), folder)
+        try:
+            mtime = os.path.getmtime(path) if path else None
+        except OSError:
+            mtime = None
+        override = sc.get("rig") or {}
+        key = (tuple(values), path, mtime, repr(override))
+        if self._rig_cache[0] == key:
+            return self._rig_cache[1], self._rig_cache[2]
+        rects = {}
+        if mtime is not None:
+            try:
+                rects = rigmod.preset_rects(path)
+            except Exception as e:                                 # unreadable preset: roles by position
+                print(f"[presets] can't read {path}: {e}", file=sys.stderr)
+        pads = [rigmod.PadInfo(k + 1, v, rects.get(v)) for k, v in enumerate(values) if v]
+        try:
+            r, err = rigmod.build_rig(pads, override), ""
+        except rigmod.RigError as e:
+            r, err = None, str(e)
+        self._rig_cache = (key, r, err)
+        return r, err
+
+    def check_rig(self, loaded=False):
+        """Do the preset patterns still fit the rig? A newly loaded composition re-fits them at once;
+        a change during the show (MAPPING, a new Advanced Output preset) is reported and the PRESETS
+        menu asks before re-fitting, because a re-fit moves every hit."""
+        r, _ = self.current_rig()
+        sig = r.signature() if r else None
+        if sig == self.rig_sig_seen and not loaded:
+            return
+        self.rig_sig_seen = sig
+        todo = self.seq.mismatched(sig) if r else []
+        if not todo:
+            self.refit_offer = False
+            return
+        if loaded:
+            done = self.seq.refit(sig, lambda d: banks.refit(d, r))
+            self.note_msg(f"Rig changed: {len(done)} preset pattern{'s' * (len(done) != 1)} re-fitted")
+        else:
+            self.refit_offer = True
+            self.note_msg("Rig changed · re-fit in PRESETS")
+
+    def presets_menu(self):
+        return self.view == "seq" and self.menus["seq"] == "seq_presets"
+
+    def question(self):
+        """The YES / NO question the PRESETS menu shows, or None."""
+        if self.confirm:
+            return self.confirm
+        if self.refit_offer and self.presets_menu() and not self.preset_pick:
+            return {"kind": "refit"}
+        return None
+
+    def _store_preset(self, slot, recipe):
+        """Realise a preset on the current rig and store it as pattern `slot` (a new seed each time)."""
+        seq = self.seq
+        r, err = self.current_rig()
+        self.preset_pick, self.confirm = None, None
+        if r is None:
+            self.note_msg(err)
+            return
+        d = banks.realize(recipe, r, random.randrange(1, 1000000), PRESET_BANK)
+        seq.store_pattern(slot, d)
+        seq.grid = "1/16"                                          # presets are written for 1/16
+        self.map_blink = {("pattern", slot): time.time()}
+        self.note_msg(f"P{slot + 1} = {d['name']}")
+
+    def _preset_button(self, k):
+        """Buttons below the display in PRESETS: a preset (Shift = 9-16), or NO / YES to a question."""
+        q = self.question()
+        if q:
+            if k == CONFIRM_YES and q["kind"] == "overwrite":
+                self._store_preset(q["slot"], q["recipe"])
+            elif k == CONFIRM_YES:                                 # re-fit
+                r, err = self.current_rig()
+                if r is None:
+                    self.note_msg(err)
+                else:
+                    done = self.seq.refit(r.signature(), lambda d: banks.refit(d, r))
+                    self.note_msg(f"{len(done)} preset pattern{'s' * (len(done) != 1)} re-fitted")
+                self.refit_offer = False
+            elif k == CONFIRM_NO:
+                if q["kind"] == "refit":
+                    self.refit_offer = False
+                self.confirm = None
+                self.note_msg("Kept")
+            return
+        items = banks.presets(PRESET_BANK)
+        i = k + (8 if self.shift else 0)
+        if i >= len(items):
+            return
+        rid = items[i][0]
+        if self.preset_pick == rid:
+            self.preset_pick = None                                # pressed again = cancel
+            return
+        r, err = self.current_rig()
+        if r is None:
+            self.note_msg(err)
+            return
+        self.preset_pick = rid
+
+    def _preset_pattern_pad(self, slot):
+        """A pattern pad while a preset is picked: store it there; a used slot asks first."""
+        if self.seq.is_empty(slot):
+            self._store_preset(slot, self.preset_pick)
+        else:
+            self.confirm = {"kind": "overwrite", "slot": slot, "recipe": self.preset_pick}
+
+    def _presets_snapshot(self):
+        sq = self.seq
+        r, err = self.current_rig()
+        items = banks.presets(PRESET_BANK)
+        q = self.question()
+        names = dict(items)
+        def slot_name(i):
+            n = sq.patterns[i].name
+            return f"P{i + 1}" + ("" if n == f"P{i + 1}" else f" ({n})")
+        if q and q["kind"] == "overwrite":
+            title = f"Overwrite {slot_name(q['slot'])} with {names[q['recipe']]}?"
+        elif q:
+            n = len(sq.mismatched(r.signature())) if r else 0
+            title = f"Rig changed: re-fit {n} preset pattern{'s' * (n != 1)} to it?"
+        elif self.preset_pick:
+            title = f"{names[self.preset_pick]}  ·  press a pattern pad to store it"
+        else:
+            title = "Pick a preset below, then a pattern pad"
+        if r is None:
+            rig_line = err
+        else:
+            geo = "long / short from the Advanced Output" if r.source == "preset" else \
+                "all bars alike, long ones chosen by position" if r.virtual else f"roles from {r.source}"
+            rig_line = f"Rig: {len(r.pads)} fixtures · {len(r.D)} long, {len(r.S)} short · {geo}"
+            misfit = sq.mismatched(r.signature())
+            if misfit:
+                rig_line += "  ·  made for another rig: " + ", ".join(f"P{i + 1}" for i in misfit)
+        cur = sq.pattern
+        src = cur.source
+        info = slot_name(sq.current) + (f" · preset {src.get('recipe')} · seed {src.get('seed')}" if src
+                                        else " · own pattern")
+        missing = [t + 1 for t in range(sq.n_tracks) if not self.engine.ready(t)]
+        if missing:
+            info += "  ·  no Bar Chaser layer: " + ", ".join(f"T{t}" for t in missing)
+        page = items[8:] if self.shift else items[:8]
+        if q:
+            labels = [""] * 8
+            labels[CONFIRM_NO], labels[CONFIRM_YES] = "NO", "YES"
+        else:
+            labels = [n for _, n in page] + [""] * (8 - len(page))
+        picked = next((k for k, (rid, _) in enumerate(page) if rid == self.preset_pick), None)
+        return {"title": title, "rig": rig_line, "info": info, "labels": labels, "picked": picked,
+                "question": bool(q)}
+
     def mapping(self):
         return self.view == "seq" and self.menus["seq"] == "seq_mapping"
 
@@ -591,18 +769,20 @@ class Bridge:
         if not down:
             return False
         if self.delete_held:
-            if eng.set_pad(seq.track, k, UNASSIGNED):
+            if eng.set_pad(k, UNASSIGNED):
                 self.map_blink = {("pad", k): time.time()}
                 self.note_msg(f"Pad {k + 1}: no fixture")
+                self.check_rig()
             return True
         if self.map_armed is not None and self.map_armed < len(fx):
             f = self.map_armed
-            if eng.set_pad(seq.track, k, fx[f]["name"]):
+            if eng.set_pad(k, fx[f]["name"]):
                 now = time.time()
                 self.map_blink = {("fx", f): now, ("pad", k): now}
                 self.note_msg(f"Pad {k + 1} = {fx[f]['label']}")
+                self.check_rig()
             else:
-                self.note_msg(f"T{seq.track + 1}: no Bar Chaser to map")
+                self.note_msg("No Bar Chaser to map: Shift + Note on a layer")
             self.map_armed, self.map_focus = None, k
             if self.select_held:
                 self.select_used = True
@@ -644,6 +824,9 @@ class Bridge:
                 if not down:
                     return
                 p = self.pattern_index(j)
+                if self.presets_menu() and self.preset_pick:
+                    self._preset_pattern_pad(p)
+                    return
                 if self.delete_held:
                     seq.clear_pattern(p)
                 elif self.paste_held:
@@ -712,6 +895,11 @@ class Bridge:
             self.paste_held = down
             if not down:
                 self.dup_src = None
+            return True
+        if name in LOWER_ROW and self.overlay is None and self.presets_menu():
+            if down:                                               # presets, not tracks: a preset is all four
+                with self.lock:
+                    self._preset_button(LOWER_ROW.index(name))
             return True
         seq_row = name in LOWER_ROW and self.overlay is None
         if not down:
@@ -871,6 +1059,11 @@ class Bridge:
         lit = {key for (t, key), v in seq.levels.items()          # pads sounding on this track only
                if t == seq.track and v > 0.02}
         blink = int(time.time() / BLINK) % 2 == 0
+        presets = self.presets_menu()
+        misfit = set()
+        if presets:
+            r, _ = self.current_rig()
+            misfit = set(seq.mismatched(r.signature())) if r else set()
         for i in range(8):
             for j in range(8):
                 color = "black"
@@ -890,8 +1083,17 @@ class Bridge:
                 elif i == 4:
                     p = self.pattern_index(j)
                     has = any(t.steps for t in seq.patterns[p].tracks)
-                    if seq.pending == p:
+                    t0 = self.map_blink.get(("pattern", p))
+                    if t0 is not None and time.time() - t0 < 4 * MAP_BLINK:        # stored: blinks twice
+                        color = "white" if int((time.time() - t0) / MAP_BLINK) in (0, 2) else "black"
+                    elif presets and self.confirm and self.confirm.get("slot") == p:
+                        color = "white"
+                    elif presets and self.preset_pick:
+                        color = "white" if blink else "black"                    # pick a slot
+                    elif seq.pending == p:
                         color = "white" if blink else "dark_gray"
+                    elif presets and p in misfit:
+                        color = "orange"                                         # made for another rig
                     else:
                         color = "white" if p == seq.current else ("dark_gray" if has else "black")
                 else:
@@ -1566,7 +1768,7 @@ class Bridge:
                 self.menus[self.view] = (SEQ_MENUS if self.view == "seq" else CLIP_MENUS)[name]
                 self._clear_overlay()
                 self.move_src = None
-                self.map_armed = None
+                self.map_armed = self.preset_pick = self.confirm = None
                 self.color_target = "clip"
             elif name == NOTE_BUTTON:
                 if self.shift:
@@ -1654,8 +1856,21 @@ class Bridge:
             blink = int(time.time() / BLINK) % 2 == 0
             mix_layers = self.mix_layers()
             fx_items = self.fx_page_items()[0] if self.mode in FX_MODES else []
+            q = self.question() if seq and self.overlay is None and self.presets_menu() else None
+            rig_ok = self.current_rig()[0] is not None if seq and self.presets_menu() else False
+            items = banks.presets(PRESET_BANK)
             for k, b in enumerate(LOWER_ROW):
-                if seq and self.overlay is None:
+                if seq and self.overlay is None and self.presets_menu():
+                    i = k + (8 if self.shift else 0)
+                    if q:
+                        out[b] = "red" if k == CONFIRM_NO else ("green" if k == CONFIRM_YES else "black")
+                    elif i >= len(items):
+                        out[b] = "black"
+                    elif self.preset_pick == items[i][0]:
+                        out[b] = "white" if blink else "black"
+                    else:
+                        out[b] = "dark_gray" if rig_ok else "black"
+                elif seq and self.overlay is None:
                     if k < self.seq.n_tracks:
                         has = self.engine.ready(k)
                         out[b] = f"L{k}" if k == self.seq.track else (f"L{k}_dim" if has else "dark_gray")
@@ -1831,7 +2046,9 @@ class Bridge:
                     mapping = {"title": title, "sub": sub, "assigned": sum(1 for v in names if v),
                                "fixtures": len(fxl), "page": self.map_page, "pages": pages}
                 ready = self.engine.ready(sq.track)
-                seq = {"knobs": knobs, "menu": self.menus["seq"], "mapping": mapping, "track": sq.track, "pattern": sq.pattern.name, "running": sq.running,
+                presets = self._presets_snapshot() if self.presets_menu() else None
+                seq = {"knobs": knobs, "menu": self.menus["seq"], "mapping": mapping, "presets": presets,
+                       "track": sq.track, "pattern": sq.pattern.name, "running": sq.running,
                        "pos": sq.position(self.beat_time() or 0.0), "length": sq.pattern.length, "grid": sq.grid,
                        "pads": pads, "layer": self.engine.layer_name(sq.track), "ready": ready,
                        "env": {"attack": e.attack, "decay": e.decay, "sustain": e.sustain, "release": e.release,

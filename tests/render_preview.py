@@ -16,6 +16,7 @@ cfg = B.load_config(HERE.parent / "config.yaml")
 cfg["pins_file"] = str(Path(tempfile.mkdtemp()) / "pins.yaml")
 cfg["colors_file"] = str(Path(tempfile.mkdtemp()) / "colors.yaml")
 cfg["chases_file"] = str(Path(tempfile.mkdtemp()) / "chases.yaml")
+cfg["sequencer"]["preset_folder"] = str(HERE / "fixtures" / "rig")
 br = B.Bridge(cfg, B.Resolume("127.0.0.1", 8080))
 br.sender.start()
 threading.Thread(target=br.poll_loop, daemon=True).start()
@@ -94,8 +95,14 @@ br.seq.tick(br.beat_time() or 0.0)
 shot("seq")
 br.button("Upper Row 2", True)                  # SETTINGS
 shot("seq_settings")
-br.button("Upper Row 3", True)                  # PRESETS (placeholder)
+br.engine.set_pad(3, "Bar D / 1 - 855 h3 2m grb")   # 4 pads: enough for presets
+br.button("Upper Row 3", True)                  # PRESETS
 shot("seq_presets")
+br.preset_pick = "D2"
+shot("seq_presets_pick")
+br.preset_pick, br.confirm = "D2", {"kind": "overwrite", "slot": 0, "recipe": "D2"}
+shot("seq_presets_ask")
+br.preset_pick = br.confirm = None
 br.button("Upper Row 4", True)                  # MAPPING, a fixture picked
 br.map_armed = 1
 shot("seq_mapping")

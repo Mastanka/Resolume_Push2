@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The mock's Bar Chaser rig: 2 m bars (long) Bar B and Bar D, 1 m bars (short) elsewhere; Bar A has two. -->
+<XmlState name="mock_rig">
+  <ScreenSetup>
+    <CurrentCompositionTextureSize width="1920" height="1080"/>
+    <screens>
+      <DmxScreen name="Bar A" uniqueId="1">
+        <layers>
+          <DmxSlice uniqueId="2">
+            <Params name="Common"><Param name="Name" T="STRING" value="1 - 423 141 RGB"/></Params>
+            <InputRect orientation="1.5707"><v x="100.0" y="70.0"/><v x="130.0" y="70.0"/><v x="130.0" y="532.0"/><v x="100.0" y="532.0"/></InputRect>
+          </DmxSlice>
+          <DmxSlice uniqueId="3">
+            <Params name="Common"><Param name="Name" T="STRING" value="424 - 846 141 RGB 2"/></Params>
+            <InputRect orientation="1.5707"><v x="250.0" y="70.0"/><v x="280.0" y="70.0"/><v x="280.0" y="532.0"/><v x="250.0" y="532.0"/></InputRect>
+          </DmxSlice>
+        </layers>
+      </DmxScreen>
+      <DmxScreen name="Bar B" uniqueId="4">
+        <layers>
+          <DmxSlice uniqueId="5">
+            <Params name="Common"><Param name="Name" T="STRING" value="1 - 855 h3 2m grb"/></Params>
+            <InputRect orientation="1.5707"><v x="400.0" y="70.0"/><v x="430.0" y="70.0"/><v x="430.0" y="1009.0"/><v x="400.0" y="1009.0"/></InputRect>
+          </DmxSlice>
+        </layers>
+      </DmxScreen>
+      <DmxScreen name="Bar C" uniqueId="6">
+        <layers>
+          <DmxSlice uniqueId="7">
+            <Params name="Common"><Param name="Name" T="STRING" value="1 - 423 141 RGB"/></Params>
+            <InputRect orientation="1.5707"><v x="550.0" y="70.0"/><v x="580.0" y="70.0"/><v x="580.0" y="532.0"/><v x="550.0" y="532.0"/></InputRect>
+          </DmxSlice>
+        </layers>
+      </DmxScreen>
+      <DmxScreen name="Bar D" uniqueId="8">
+        <layers>
+          <DmxSlice uniqueId="9">
+            <Params name="Common"><Param name="Name" T="STRING" value="1 - 855 h3 2m grb"/></Params>
+            <InputRect orientation="1.5707"><v x="700.0" y="70.0"/><v x="730.0" y="70.0"/><v x="730.0" y="1009.0"/><v x="700.0" y="1009.0"/></InputRect>
+          </DmxSlice>
+        </layers>
+      </DmxScreen>
+      <DmxScreen name="Bar E" uniqueId="10">
+        <layers>
+          <DmxSlice uniqueId="11">
+            <Params name="Common"><Param name="Name" T="STRING" value="1 - 423 141 RGB"/></Params>
+            <InputRect orientation="1.5707"><v x="850.0" y="70.0"/><v x="880.0" y="70.0"/><v x="880.0" y="532.0"/><v x="850.0" y="532.0"/></InputRect>
+          </DmxSlice>
+        </layers>
+      </DmxScreen>
+    </screens>
+  </ScreenSetup>
+</XmlState>

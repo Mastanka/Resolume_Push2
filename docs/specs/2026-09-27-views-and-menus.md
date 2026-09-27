@@ -18,16 +18,17 @@ Each view remembers its last menu (Session → back to the CLIP menu you left, N
 - **CLIP EFFECTS / LAYER EFFECTS** = the old FX menu, restricted to the clip's / the layer's effects.
   Composition effects are no longer listed (the Master button still edits the composition colour).
 - **ENVELOPE** knobs: Attack, Decay, Sustain, Release, Gate. **SETTINGS**: Direction, Length, Level.
-  Hold a step + Gate / Level knob = that step's gate / level. **PRESETS**: placeholder, to be designed.
-- **MAPPING** (added 2026-09-27): which DMX fixture each of the 24 pads lights, for the selected track.
+  Hold a step + Gate / Level knob = that step's gate / level. **PRESETS**: see
+  `2026-09-27-seq-presets-design.md` (buttons below the display = presets, not tracks).
+- **MAPPING** (added 2026-09-27): which DMX fixture each of the 24 pads lights; one mapping for all tracks.
   Pads: rows 1–4 = the fixtures the Bar Chaser offers, left → right, top → bottom, labelled L#F#
   (lumiverse # in Arena's order, fixture # inside it): dim white = free, dim track colour = used by a
   pad, bright = used by the pad last pressed, blinking white = picked. Row 5 = red (marks the menu).
   Rows 6–8 = pads 1–24: dim track colour = has a fixture, off = none. **Select + fixture** = pick it;
   then **a pad** = store (the fixture pad and the pad blink twice, fast). Pressing the picked fixture
   again cancels. **Delete + pad** = no fixture. A plain pad press selects and flashes the pad and shows
-  its fixture. **Octave ▲ ▼** = next / previous 32 fixtures. Writes go to every Bar Chaser of the track
-  and into pad memory.
+  its fixture. **Octave ▲ ▼** = next / previous 32 fixtures. Writes go to every Bar Chaser (all tracks)
+  and into the remembered mapping.
 
 ## MIX / MUTE / SOLO screens
 
