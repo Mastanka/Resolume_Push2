@@ -24,11 +24,15 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 | `colors.yaml` | Own COLOR palette (Shift + BD saves), Štefan's show data |
 | `display.py` | `render()`: draws a `Bridge.snapshot()` on the 960×160 display, `LAYER_RGB` |
 | `sequencer.py` | SEQ logic, pure: bars from the Advanced Output preset XML, `Envelope`, `Track` / `Pattern`, `Sequencer` (editing, `tick()`, `chases.yaml`) |
-| `chaser_engine.py` | `PluginEngine`: levels → `Level n` params of the Bar Chaser effect instances (grouped by their `Track`); pad memory (`sync_pads`, run by `Bridge.set_comp`) |
+| `chaser_engine.py` | `PluginEngine`: levels → `Level n` params of the Bar Chaser effect instances (grouped by their `Track`); one shared pad mapping (`sync_pads`, run by `Bridge.set_comp`; `set_pad`) |
+| `rig.py` | SEQ presets: the mapped pads in physical order with long (D) / short (S) roles, from the Advanced Output preset (`preset_rects` = Python twin of `plugin/src/Preset.cpp`) |
+| `banks.py` | SEQ presets: the 16 Techno recipes in role space, `realize()` onto a rig, `refit()`, `presets()` |
 | `plugin/` | The **Bar Chaser** FFGL effect (C++, CMake, vendored FFGL SDK lib + pugixml). `plugin/build.sh` → `plugin/dist/Bar Chaser.bundle`; `ctest` runs the preset-parser test and an offscreen GL host test |
 | `chases.yaml` | Sequencer patterns, Štefan's show data |
 | `tests/test_sequencer.py` | Pure tests for `sequencer.py` (no mock) |
-| `tests/test_engine.py` | `LayerEngine` + new REST calls against the mock |
+| `tests/test_engine.py` | `PluginEngine`, shared mapping, PRESETS and screens through a `Bridge`, REST calls, against the mock |
+| `tests/test_banks.py` | Rig detection and every recipe on 110 rigs; Python preset reader = plugin names |
+| `tests/fixtures/rig/mock_rig.xml` | Advanced Output preset matching the mock's Bar Chaser fixtures (tests set `sequencer.preset_folder` here) |
 | `tests/fixtures/preset_small.xml` | 4-screen Advanced Output preset for the plugin tests |
 | `config.yaml` | Resolume host/port, grid offsets, encoder steps, per-layer parameter slots |
 | `pins.yaml` | Param order for auto layers, written by the bridge (Convert move). Štefan's show data |
@@ -71,7 +75,7 @@ python push_resolume_bridge.py --dump 3   # list parameter paths for layer 3 (fo
 | K9 | `Swing Encoder` | – |
 | K10 | `Tempo Encoder` | BPM ±1 (Shift ±0.1) |
 | K11 | `Master Encoder` | Selected layer opacity / composition master in MIX (ends blackout) |
-| BU1–BU8 | `Upper Row 1..8` (above display) | Menus of the current view. CLIP: BU1 CLIP PARAMS, BU2 CLIP COLOR, BU3 CLIP EFFECTS, BU6 LAYER PARAMS, BU7 LAYER EFFECTS (white). SEQ: BU1 ENVELOPE, BU2 SETTINGS, BU3 PRESETS (red = `L6`) |
+| BU1–BU8 | `Upper Row 1..8` (above display) | Menus of the current view. CLIP: BU1 CLIP PARAMS, BU2 CLIP COLOR, BU3 CLIP EFFECTS, BU6 LAYER PARAMS, BU7 LAYER EFFECTS (white). SEQ: BU1 ENVELOPE, BU2 SETTINGS, BU3 PRESETS, BU4 MAPPING (red = `L6`) |
 | BD1–BD8 | `Lower Row 1..8` (below display) | Context row: PARAMS pages, COLOR palette (Shift = save), MIX mute (Solo held = solo), FX on/off. Play held: launch column above |
 | B_1 | `Play` (bottom-left) | Hold + pad = launch clip; hold + BD = launch column (lit green) |
 | B_2 | `Record` (above B_1) | Hold + pad = stop layer (lit red) |
@@ -119,19 +123,31 @@ overlays. Parameter page is per menu (`Bridge.page` property over `_pages`).
 - **clip_fx / layer_fx** (BU3 / BU7): `fx_list()` = the clip's / the layer's effects; K = effect
   `Opacity` param, BD = `bypassed`. Page ◀▶ = `fx_page`. Composition effects are in no menu (Master
   button reaches the composition colour).
-- **seq_env / seq_settings / seq_presets** (Note view, BU1–3): knobs from `SEQ_PAGES` (hold step +
-  Gate / Level knob = that step). PRESETS is a placeholder. Rows 1–4 steps, row 5 patterns 1–8 (Shift 9–16), rows 6–8 pads 1–24
+- **seq_env / seq_settings / seq_presets / seq_mapping** (Note view, BU1–4): knobs from `SEQ_PAGES` (hold
+  step + Gate / Level knob = that step). **PRESETS** (`Bridge.presets_menu()`, spec
+  `docs/specs/2026-09-27-seq-presets-design.md`): BD1–8 = presets of `banks.presets()` (Shift 9–16)
+  instead of tracks; `preset_pick` blinks with the pattern row; a pattern pad stores it
+  (`_store_preset`: `banks.realize` on `current_rig()`, new seed, `Sequencer.store_pattern`, grid 1/16)
+  or asks (`confirm`, BD7 NO / BD8 YES). `Pattern.source` = {bank, recipe, seed, rig}; step edits
+  clear it (`mark_edited`, also in `_seq_pad`). `check_rig()` after every composition / MAPPING change:
+  loaded composition → `Sequencer.refit` at once; otherwise `refit_offer` → PRESETS asks. Misfit
+  pattern pads orange in PRESETS. **MAPPING** (`Bridge.mapping()`,
+  `_map_pad`, `_map_pad_colors`): rows 1–4 = the track's fixtures from the effect's Pad options
+  (`chaser_engine.fixture_list`: "Screen / slice" entries grouped by screen → L#F#, a screen without
+  fixture entries = one fixture), row 5 red, rows 6–8 = pads. Select + fixture = `map_armed` (blinks),
+  then pad = `PluginEngine.set_pad` on every instance, all tracks (shared mapping), double blink
+  (`map_blink`); Delete + pad = "—"; Octave = `map_page` (32 fixtures per page). Otherwise rows 1–4 steps, row 5 patterns 1–8 (Shift 9–16), rows 6–8 pads 1–24
   (bottom-left = 1). `Bridge.sel_pads` = multi-selection (`Bridge.multi`: Select latch, or Select held →
   pad toggles); steps act on all selected pads. Buttons right of the pads: `Bridge.side` = "groups"
   (Layout, default) → pad groups: `Sequencer.track_groups[track]` (G, Select + button, track colour)
   shadow `Sequencer.groups` (GG, global, Select + Shift + button, white); `Sequencer.group(g, track)`;
   Delete (+ Shift) clears; tap recalls; `current_group()` = ("track" | "global", g) lit fully. Or "grid"
   (Scale). Groups only select pads: steps stay on their track (isolation). Pads flash only for the
-  selected track. **Pad memory:** `Sequencer.pad_configs[track]` = 24 slice names, saved in
-  `chases.yaml`; `PluginEngine.sync_pads()` gives them to an instance that joins the track (new
-  effect id, or its Track changed) and takes a pad changed in Arena as the track's new assignment
-  (own writes pending `PENDING` s). A new composition master id = a loaded composition: its pads are
-  adopted, nothing written. BD1–4 = texture tracks = layers carrying a **Bar Chaser** effect with that `Track`.
+  selected track. **Pad mapping (shared by all tracks):** `Sequencer.pad_config` = 24 fixture names,
+  saved in `chases.yaml`; `PluginEngine.sync_pads()` keeps it on every instance: a pad changed in
+  Arena on any instance becomes the mapping (own writes pending `PENDING` s), new instances get it, a
+  new composition master id = a loaded composition → T1's mapping (else the first instance's) is
+  written to the others. Returns True for a loaded composition. BD1–4 = texture tracks = layers carrying a **Bar Chaser** effect with that `Track`.
   Knobs = the selected track's ADSR + Gate + Level and the pattern's Direction + Length. `Bridge.seq`
   (`Sequencer`, bars named `pad 1`…`pad 24`), `Bridge.engine` (`PluginEngine`), `seq_loop` thread at
   100 Hz → `engine.set_level` → WebSocket `set` of the instance's `Level n`. Shift + Note = add the
@@ -229,6 +245,13 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
 - Only the active deck is visible through the API.
 - Tempo uses `composition/tempocontroller/tempo` (ParamRange 20–500, BPM) — path confirmed in the live
   JSON; `tempo_tap` / `resync` ParamEvents are triggered by Tap / Shift+Tap.
+- Arena 7.23.2 sometimes closes an HTTP connection without answering (`RemoteDisconnected`, seen by
+  Štefan on the blackout PUT, 2026-09-27). Not reproduced in isolation: idle keep-alive up to 330 s,
+  parallel composition GETs, 404s and select-then-PUT all worked. So `Resolume._req` resends a request
+  up to twice on `requests.ConnectionError` (never on timeouts), and the blackout / restore is held
+  until Resolume reports the master value (`_check_blackout`, `blackout_watchdog` in the main loop;
+  resend every `BLACKOUT_RESEND` s, give up after `BLACKOUT_TRIES`). The mock simulates it:
+  `POST /api/v1/_drop_puts N`.
 
 ## Bar Chaser plugin (plugin/)
 
@@ -252,6 +275,7 @@ Always run before handing changes back:
 ```
 python tests/mock_resolume.py &
 python tests/test_sequencer.py      # pure logic, no mock needed
+python tests/test_banks.py          # presets: rigs × recipes, no mock needed
 plugin/build.sh                     # C++: builds the bundle and runs ctest (preset parser + GL host test)
 python tests/test_engine.py         # restart the mock before each script: they change its composition
 python tests/test_fake_push.py      # must print OK (runs on the mock's WebSocket)

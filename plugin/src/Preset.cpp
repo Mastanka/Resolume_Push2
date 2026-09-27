@@ -152,15 +152,14 @@ bool loadPreset( const std::string& path, Preset& out, std::string& error )
 		if( any )
 			screens.push_back( s );
 	}
-	std::stable_sort( screens.begin(), screens.end(), []( const Screen& a, const Screen& b ) {
-		return a.box.l != b.box.l ? a.box.l < b.box.l : a.box.t < b.box.t;
-	} );
+	// Fixtures (DMX fixtures / slices) first, in the order of Arena's list: Lumiverse 1's fixtures,
+	// then Lumiverse 2's … Then each whole screen, so pads assigned to a lumiverse keep working.
+	for( const Screen& s : screens )
+		for( const auto& sl : s.slices )
+			p.entries.push_back( { s.name + " / " + sl.first, sl.second.l, sl.second.t, sl.second.r, sl.second.b } );
+	p.fixtures = p.entries.size();
 	for( const Screen& s : screens )
 		p.entries.push_back( { s.name, s.box.l, s.box.t, s.box.r, s.box.b } );
-	for( const Screen& s : screens )
-		if( s.slices.size() > 1 )
-			for( const auto& sl : s.slices )
-				p.entries.push_back( { s.name + " / " + sl.first, sl.second.l, sl.second.t, sl.second.r, sl.second.b } );
 	if( p.entries.empty() )
 	{
 		error = "no screens with slices in " + path;

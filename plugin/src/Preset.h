@@ -7,7 +7,7 @@ namespace barchaser
 {
 struct Slice
 {
-	std::string name;              // "Lumiverse 3" or "Lumiverse 3 / 1 - 855 h3 2m grb"
+	std::string name;              // fixture "Lumiverse 3 / 1 - 855 h3 2m grb" or whole screen "Lumiverse 3"
 	float left, top, right, bottom;// composition pixels, y from the top
 };
 
@@ -15,7 +15,8 @@ struct Preset
 {
 	float width  = 1920.f;         // CurrentCompositionTextureSize of the preset
 	float height = 1080.f;
-	std::vector< Slice > entries;  // screens sorted left→right, then "Screen / slice" for multi-slice screens
+	std::vector< Slice > entries;  // every fixture ("Screen / slice") in Arena's list order, then every whole screen
+	size_t fixtures = 0;           // entries[0 .. fixtures-1] are the fixtures
 };
 
 // ~/Documents/Resolume Arena/Presets/Advanced Output

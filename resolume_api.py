@@ -148,41 +148,55 @@ def color_label(path):
 # Resolume REST client + background sender
 # --------------------------------------------------------------------------- #
 
+RETRIES = 2           # extra attempts when Resolume drops a connection without answering
+
+
 class Resolume:
     def __init__(self, host, port):
         self.url = f"http://{host}:{port}"
         self.api = self.url + "/api/v1"
-        self.session = requests.Session()   # used by the sender thread only
+        self.session = requests.Session()   # the sender thread, plus one-off setup calls
+
+    def _req(self, method, url, session=None, **kw):
+        """One HTTP request. When the connection breaks before an answer arrives (Arena closing a
+        kept-alive connection: "Remote end closed connection without response"), the request did
+        not run, so it goes out again on a fresh connection. Timeouts are not repeated: a slow
+        request may still have run, and a trigger must not fire twice."""
+        s = session or self.session
+        for attempt in range(RETRIES + 1):
+            try:
+                return s.request(method, url, **kw)
+            except requests.exceptions.ConnectionError:
+                if attempt == RETRIES:
+                    raise
 
     def composition(self, session=None):
-        r = (session or self.session).get(self.api + "/composition", timeout=2)
+        r = self._req("GET", self.api + "/composition", session=session, timeout=2)
         r.raise_for_status()
         return r.json()
 
     def connect_clip(self, layer, column, down):
         # true = press, false = release (same as mouse down/up on the clip)
-        self.session.post(f"{self.api}/composition/layers/{layer}/clips/{column}/connect",
-                          data=json.dumps(bool(down)),
-                          headers={"Content-Type": "application/json"}, timeout=1)
+        self._req("POST", f"{self.api}/composition/layers/{layer}/clips/{column}/connect",
+                  data=json.dumps(bool(down)), headers={"Content-Type": "application/json"}, timeout=1)
 
     def select_clip(self, layer, column):
-        self.session.post(f"{self.api}/composition/layers/{layer}/clips/{column}/select", timeout=1)
+        self._req("POST", f"{self.api}/composition/layers/{layer}/clips/{column}/select", timeout=1)
 
     def connect_column(self, column, down):
-        self.session.post(f"{self.api}/composition/columns/{column}/connect",
-                          data=json.dumps(bool(down)),
-                          headers={"Content-Type": "application/json"}, timeout=1)
+        self._req("POST", f"{self.api}/composition/columns/{column}/connect",
+                  data=json.dumps(bool(down)), headers={"Content-Type": "application/json"}, timeout=1)
 
     def clear_layer(self, layer):
-        self.session.post(f"{self.api}/composition/layers/{layer}/clear", timeout=1)
+        self._req("POST", f"{self.api}/composition/layers/{layer}/clear", timeout=1)
 
     def set_param(self, param_id, body):
-        self.session.put(f"{self.api}/parameter/by-id/{param_id}", json=body, timeout=1)
+        self._req("PUT", f"{self.api}/parameter/by-id/{param_id}", json=body, timeout=1)
 
     # ---- composition editing (used by the step sequencer's layer engine) ---------- #
     def _post_text(self, path, body=""):
-        r = self.session.post(self.api + path, data=body.encode("utf-8"),
-                              headers={"Content-Type": "text/plain"}, timeout=3)
+        r = self._req("POST", self.api + path, data=body.encode("utf-8"),
+                      headers={"Content-Type": "text/plain"}, timeout=3)
         return r.status_code
 
     def add_layer(self, before=None):
@@ -194,8 +208,8 @@ class Resolume:
                                "effect:///video/" + name.replace(" ", "%20"))
 
     def delete_effect(self, layer, offset):
-        return self.session.delete(f"{self.api}/composition/layers/{layer}/effects/video/{offset}",
-                                   timeout=3).status_code
+        return self._req("DELETE", f"{self.api}/composition/layers/{layer}/effects/video/{offset}",
+                         timeout=3).status_code
 
     def set_effect_display_name(self, layer, index, name):
         return self._post_text(f"/composition/layers/{layer}/effects/video/{index}/set-display-name", name)

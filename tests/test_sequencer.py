@@ -122,14 +122,58 @@ def test_groups():
     sq3.store_group(0, {9})                                      # global GG1
     assert sq3.group(0, 1) == ([1], "track") and sq3.group(0, 0) == ([9], "global")
     assert sq3.group(2, 0) == ([5, 6], "track") and sq3.group(2, 1) == (None, None)
-    sq3.pad_configs[1] = ["Bar A"] + ["\u2014"] * 23
+    sq3.pad_config = ["Bar A"] + ["\u2014"] * 23
     sq3.save()
     sq4 = S.Sequencer(path)
     assert sq4.track_groups[1][0] == [1] and sq4.track_groups[0][2] == [5, 6] and sq4.groups[0] == [9]
-    assert sq4.pad_configs == {1: ["Bar A"] + ["\u2014"] * 23}
+    assert sq4.pad_config == ["Bar A"] + ["\u2014"] * 23
     sq4.clear_group(0, track=1); assert sq4.group(0, 1) == ([9], "global")
     path.write_text("patterns: []\n")                            # old file without groups
     assert S.Sequencer(path).groups == [None] * 8 and S.Sequencer(path).track_groups == {}
+
+
+def test_presets():
+    """A pattern made by a preset keeps its source through chases.yaml, loses it on a step edit
+    (not on knob edits), and only preset patterns made for another rig are re-fitted."""
+    import tempfile
+    path = Path(tempfile.mkdtemp()) / "chases.yaml"
+    sq = S.Sequencer(path)
+    made = {"name": "R1 Pump", "length": 32, "direction": "forward", "swing": 0.1,
+            "source": {"bank": "techno", "recipe": "R1", "seed": 5, "rig": "1S 2D 3S 4D"},
+            "tracks": [{"envelope": {"attack": 0, "decay": 0.1, "sustain": 0.2, "release": 0.2}, "gate": 0.5,
+                        "level": 1.0, "steps": {"pad 2": [[0, 1.0, None]], "pad 4": [[4, 1.0, None]]}}]}
+    assert sq.is_empty(2)
+    sq.store_pattern(2, made)
+    assert not sq.is_empty(2) and sq.patterns[2].source["recipe"] == "R1"
+    sq2 = S.Sequencer(path)
+    assert sq2.patterns[2].source == made["source"] and sq2.patterns[2].name == "R1 Pump"
+    assert sq2.patterns[2].tracks[0].steps["pad 4"] == {4: [1.0, None]}
+    sq2.current = 2
+    sq2.pattern.tracks[0].envelope.release = 0.9                  # knob edit: still the preset's pattern
+    sq2.set_length(16)
+    assert sq2.pattern.source
+    sq2.copy_pattern(2, 5)
+    assert sq2.patterns[5].source["recipe"] == "R1"               # a copy is still a preset pattern
+    assert sq2.mismatched("1S 2D 3S 4D") == [] and sq2.mismatched("1S 2D 3S 4D 5S") == [2, 5]
+
+    def fake_refit(d):                                             # what banks.refit does to a dict
+        d = dict(d, source=dict(d["source"], rig="1S 2D 3S 4D 5S"))
+        d["tracks"][0]["steps"] = {"pad 5": [[0, 1.0, None]]}
+        return d
+    assert sq2.refit("1S 2D 3S 4D 5S", fake_refit) == [2, 5]
+    assert sq2.patterns[2].tracks[0].steps == {"pad 5": {0: [1.0, None]}}
+    assert sq2.patterns[2].tracks[0].envelope.release == 0.9 and sq2.patterns[2].length == 16
+    assert sq2.refit("1S 2D 3S 4D 5S", fake_refit) == []          # nothing left to do
+    sq2.toggle_step("pad 1", 3)                                    # a step edit: no longer the preset's
+    assert sq2.pattern.source is None and S.Sequencer(path).patterns[2].source is None
+    sq2.current = 5
+    sq2.clear_steps("pad 5")
+    assert sq2.patterns[5].source is None
+    sq2.pad_config = ["Bar A"] + ["\u2014"] * 23
+    sq2.save()
+    assert S.Sequencer(path).pad_config[0] == "Bar A"
+    path.write_text("pads:\n  2: [x]\n  1: [Bar B]\npatterns: []\n")       # older file: one list per track
+    assert S.Sequencer(path).pad_config == ["Bar B"]
 
 
 if __name__ == "__main__":

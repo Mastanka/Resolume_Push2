@@ -42,14 +42,17 @@ def file_clip(path):
 def choice(v, options):
     return {"id": next(ids), "valuetype": "ParamChoice", "value": v, "index": options.index(v), "options": list(options)}
 def bar_chaser_effect():
-    """The Bar Chaser FFGL effect as Arena shows it: 55 params, pads 1-3 assigned by default."""
-    slices = ["\u2014", "Bar A", "Bar B", "Bar C"]
-    params = {"Preset": s(""), "Reload": ev(), "Track": choice("1", ["1", "2", "3", "4"]),
+    """The Bar Chaser FFGL effect as Arena shows it: 55 params. The dropdowns list the fixtures
+    (Bar A has two), then the whole screens; pads 1-3 hold whole screens, as in an older show."""
+    slices = ["\u2014", "Bar A / 1 - 423 141 RGB", "Bar A / 424 - 846 141 RGB 2", "Bar B / 1 - 855 h3 2m grb",
+              "Bar C / 1 - 423 141 RGB", "Bar D / 1 - 855 h3 2m grb", "Bar E / 1 - 423 141 RGB",
+              "Bar A", "Bar B", "Bar C", "Bar D", "Bar E"]      # = tests/fixtures/mock_rig.xml
+    params = {"Preset": s("mock_rig"), "Reload": ev(), "Track": choice("1", ["1", "2", "3", "4"]),
               "Master": rng(1.0), "Edge": rng(0.0, 0, 20),
               "Outside": choice("Transparent", ["Transparent", "Black", "Pass through"]),
               "Mode": choice("Texture", ["Texture", "Solid", "Show pads"])}
     for k in range(24):
-        params[f"Pad {k + 1}"] = choice(slices[k + 1] if k < 3 else slices[0], slices)
+        params[f"Pad {k + 1}"] = choice(["Bar A", "Bar B", "Bar C"][k] if k < 3 else slices[0], slices)
     for k in range(24):
         params[f"Level {k + 1}"] = rng(0.0)
     return {"name": "Bar Chaser", "display_name": "Bar Chaser", "id": next(ids), "bypassed": b_(False), "params": params}
@@ -95,6 +98,7 @@ def index(n):
 index(COMP)
 LOG = []
 EVENTS = {}   # ParamEvent id -> times triggered (GET /api/v1/_events)
+DROP_PUTS = [0]   # POST /api/v1/_drop_puts N: the next N PUTs get no answer (connection closed), like Arena
 # ---- WebSocket (ws://127.0.0.1:8080/api/v1), like Arena 7.23: full composition on connect,
 # subscribe / unsubscribe by "/parameter/by-id/<id>", then parameter_update on every change.
 WS_CLIENTS = []          # [handler], each with .subs {id: last value sent} and .ws_lock
@@ -172,6 +176,8 @@ class H(BaseHTTPRequestHandler):
         d = json.dumps(COMP).encode(); self.send_response(200); self.send_header("Content-Type","application/json"); self.end_headers(); self.wfile.write(d)
     def do_POST(self):
         b = self._body(); LOG.append(("POST", self.path, b)); print("POST", self.path, b, flush=True)
+        if self.path.endswith("/_drop_puts"):
+            DROP_PUTS[0] = int(b or 1); self.send_response(204); self.end_headers(); return
         parts = self.path.split("/")
         if parts[3:] == ["composition", "layers", "add"]:
             L = new_layer(len(COMP["layers"]) + 1); index(L)
@@ -232,6 +238,8 @@ class H(BaseHTTPRequestHandler):
         self.send_response(404); self.end_headers()
     def do_PUT(self):
         b = self._body(); print("PUT", self.path, b, flush=True)
+        if DROP_PUTS[0] > 0:                      # "Remote end closed connection without response"
+            DROP_PUTS[0] -= 1; self.close_connection = True; return
         pid = int(self.path.rsplit("/",1)[-1]); body = json.loads(b)
         if BYID[pid]["valuetype"] == "ParamEvent":
             EVENTS[str(pid)] = EVENTS.get(str(pid), 0) + 1

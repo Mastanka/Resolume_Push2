@@ -29,7 +29,7 @@ Preferences → Video). Arena loads it at start.
 | 4 | `Edge` | 0–20 px, default 0 | Soft edge inside each bar rectangle |
 | 5 | `Outside` | option `Transparent` / `Black` / `Pass through` | What the effect outputs outside every assigned bar |
 | 6 | `Show pads` | bool | Setup overlay: every assigned rectangle is filled and shows its pad number |
-| 7–30 | `Pad 1` … `Pad 24` | option | Which screen / slice this pad is. Elements: `—`, then every screen of the preset (bounding box of its slices) sorted by x, then, for screens with several slices, `Screen / slice`. Default: pad *k* = *k*-th screen |
+| 7–30 | `Pad 1` … `Pad 24` | option | Which fixture / screen this pad is. Elements: `—`, then every fixture (DMX slice) as `Screen / slice` in the preset's order (= Arena's list: Lumiverse 1's fixtures, then Lumiverse 2's …), then every whole screen (bounding box of its slices) in the same order. Default: pad *k* = *k*-th fixture. *(Changed 2026-09-27: was screens sorted by x first; several fixtures can share one Lumiverse.)* |
 | 31–54 | `Level 1` … `Level 24` | 0–1, default 0 | Live level per pad. The bridge writes these; dragging one in Arena is the manual test |
 
 Dropdown elements are rebuilt with `SetParamElementInfo` + `RaiseParamEvent(…, FF_EVENT_FLAG_ELEMENTS)`
@@ -106,8 +106,8 @@ rows 6–8   pads 1–24: bottom row = 1–8 left → right, then 9–16, top of
 
 ## Tests
 
-- `plugin/tests/test_preset.cpp`: parses `tests/fixtures/preset_small.xml` → screens sorted by x,
-  bounding boxes, `Screen / slice` entries, newest-file lookup. Built and run by CMake (`ctest`).
+- `plugin/tests/test_preset.cpp`: parses `tests/fixtures/preset_small.xml` → fixtures in file order,
+  then whole screens (bounding boxes), newest-file lookup. Built and run by CMake (`ctest`).
 - `tests/mock_resolume.py`: `effect:///video/Bar%20Chaser` adds a fake instance with the 55
   parameters above (`Pad k` options `—`, `Bar A`, `Bar B`, `Bar C`; defaults pad 1–3 assigned).
 - `tests/test_engine.py`: `PluginEngine` finds instances by Track, names pads, rate-limits levels,

@@ -91,6 +91,7 @@ class Pattern:
     direction: str = "forward"
     swing: float = 0.0
     tracks: list = field(default_factory=lambda: [Track() for _ in range(N_TRACKS)])
+    source: dict = None        # made by a preset: {bank, recipe, seed, rig}; None = own or hand-edited
 
 
 def _track_to_dict(t):
@@ -113,16 +114,21 @@ def _track_from_dict(d):
 
 
 def _pattern_to_dict(p):
-    return {"name": p.name, "length": p.length, "direction": p.direction, "swing": p.swing,
-            "tracks": [_track_to_dict(t) for t in p.tracks]}
+    d = {"name": p.name, "length": p.length, "direction": p.direction, "swing": p.swing}
+    if p.source:
+        d["source"] = dict(p.source)
+    d["tracks"] = [_track_to_dict(t) for t in p.tracks]
+    return d
 
 
 def _pattern_from_dict(d):
     tracks = [_track_from_dict(t) for t in (d.get("tracks") or [])][:N_TRACKS]
     while len(tracks) < N_TRACKS:
         tracks.append(Track())
+    src = d.get("source")
     return Pattern(name=str(d.get("name", "P?")), length=int(d.get("length", 16)),
-                   direction=d.get("direction", "forward"), swing=float(d.get("swing", 0.0)), tracks=tracks)
+                   direction=d.get("direction", "forward"), swing=float(d.get("swing", 0.0)), tracks=tracks,
+                   source=dict(src) if isinstance(src, dict) else None)
 
 
 class Sequencer:
@@ -144,7 +150,7 @@ class Sequencer:
         self.last_random = None
         self.groups = [None] * N_GROUPS   # global pad groups GG1-8: sorted pad indices (0-based) or None
         self.track_groups = {}     # track -> [8] pad groups G1-8 of that track (shown before the global one)
-        self.pad_configs = {}      # track -> 24 slice names: the track's last Bar Chaser pad assignment
+        self.pad_config = None     # 24 fixture names shared by every track: the last Bar Chaser pad mapping
         self.voices = {}           # (track, bar name) -> Voice
         self.levels = {}           # (track, bar name) -> last level returned by tick()
         if self.path and self.path.exists():
@@ -159,8 +165,13 @@ class Sequencer:
         t = self.pattern.tracks[self.track if track is None else track]
         return t.steps.setdefault(bar, {})
 
+    def mark_edited(self, p=None):
+        """Steps changed by hand: the pattern no longer follows its preset (a re-fit leaves it alone)."""
+        self.patterns[self.current if p is None else p].source = None
+
     def toggle_step(self, bar, step, level=1.0, gate=None, track=None):
         """Returns True when the step is on afterwards."""
+        self.mark_edited()
         st = self._steps(bar, track)
         if step in st:
             del st[step]
@@ -172,6 +183,7 @@ class Sequencer:
         return on
 
     def set_step_values(self, bar, steps, level=None, gate=None, track=None):
+        self.mark_edited()
         st = self._steps(bar, track)
         for s in steps:
             if s in st:
@@ -182,6 +194,7 @@ class Sequencer:
         self.save()
 
     def clear_steps(self, bar=None, track=None):
+        self.mark_edited()
         t = self.pattern.tracks[self.track if track is None else track]
         if bar is None:
             t.steps = {}
@@ -209,7 +222,31 @@ class Sequencer:
                 for s, v in list(st.items()):
                     st[s + p.length] = list(v)
         p.length *= 2
+        self.mark_edited()
         self.save()
+
+    # ---- presets ------------------------------------------------------------- #
+    def is_empty(self, p):
+        return not any(st for t in self.patterns[p].tracks for st in t.steps.values())
+
+    def store_pattern(self, p, d):
+        """Put a pattern dict (a realised preset) into slot p. A running pattern plays on with it."""
+        self.patterns[p] = _pattern_from_dict(d)
+        self.save()
+
+    def mismatched(self, signature):
+        """Slots whose preset placement was made for a different rig than `signature`."""
+        return [i for i, p in enumerate(self.patterns) if p.source and p.source.get("rig") != signature]
+
+    def refit(self, signature, refit_fn):
+        """Re-place every preset pattern made for another rig; knobs, length and swing stay.
+        refit_fn(pattern dict) -> pattern dict (banks.refit with the current rig). Returns the slots."""
+        done = self.mismatched(signature)
+        for i in done:
+            self.patterns[i] = _pattern_from_dict(refit_fn(_pattern_to_dict(self.patterns[i])))
+        if done:
+            self.save()
+        return done
 
     def set_length(self, n):
         self.pattern.length = max(1, min(MAX_STEPS, int(n)))
@@ -340,7 +377,7 @@ class Sequencer:
             return [None if g is None else [k + 1 for k in g] for g in gs]
         return {"groups": groups(self.groups),
                 "track_groups": {t + 1: groups(gs) for t, gs in sorted(self.track_groups.items()) if any(gs)},
-                "pads": {t + 1: list(names) for t, names in sorted(self.pad_configs.items())},
+                "pads": list(self.pad_config) if self.pad_config else None,
                 "patterns": [_pattern_to_dict(p) for p in self.patterns]}
 
     def from_dict(self, d):
@@ -349,7 +386,10 @@ class Sequencer:
             return gs + [None] * (N_GROUPS - len(gs))
         self.groups = groups(d.get("groups"))
         self.track_groups = {int(t) - 1: groups(gs) for t, gs in (d.get("track_groups") or {}).items()}
-        self.pad_configs = {int(t) - 1: [str(n) for n in names] for t, names in (d.get("pads") or {}).items()}
+        pads = d.get("pads")
+        if isinstance(pads, dict):                                  # older file: one list per track, take T1's
+            pads = pads.get(min(pads, key=lambda t: int(t))) if pads else None
+        self.pad_config = [str(n) for n in pads] if pads else None
         pats = [_pattern_from_dict(x) for x in (d.get("patterns") or [])][:N_PATTERNS]
         while len(pats) < N_PATTERNS:
             pats.append(Pattern(name=f"P{len(pats) + 1}"))

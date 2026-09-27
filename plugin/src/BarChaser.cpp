@@ -209,14 +209,13 @@ void BarChaser::loadPreset( bool raiseEvents )
 		presetOk = true;
 		size_t slash = presetPath.rfind( '/' );
 		status = presetPath.substr( slash == std::string::npos ? 0 : slash + 1 ) + " (" + std::to_string( preset.entries.size() ) + ")";
-		// First load, or a preset in which none of the assigned names exist: pad k = k-th screen.
+		// First load, or a preset in which none of the assigned names exist: pad k = k-th fixture.
 		bool anyResolved = false;
 		for( const auto& n : padName )
 			anyResolved = anyResolved || ( !n.empty() && entryIndex( n ) >= 0 );
 		if( !anyResolved )
 			for( unsigned int k = 0; k < NPADS; k++ )
-				padName[ k ] = ( k < preset.entries.size() && preset.entries[ k ].name.find( " / " ) == std::string::npos )
-				                   ? preset.entries[ k ].name : "";
+				padName[ k ] = k < preset.fixtures ? preset.entries[ k ].name : "";
 	}
 	else
 	{

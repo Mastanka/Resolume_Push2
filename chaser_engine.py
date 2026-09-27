@@ -36,24 +36,47 @@ def pad_from_key(name):
 
 
 PENDING = 2.0          # s our own pad writes may take to show up before a difference counts as an edit
+SEP = " / "            # the effect names a fixture "Lumiverse 3 / 1 - 423 141 RGB"
+
+
+def fixture_list(options):
+    """Fixtures offered by the effect's Pad dropdown, in Arena's list order:
+    [{'label': 'L1F2', 'name': option to store, 'screen': 'Lumiverse 1'}].
+    A screen (lumiverse) without fixture entries counts as one fixture (older Bar Chaser builds)."""
+    opts = [o for o in (options or []) if isinstance(o, str) and o and o != UNASSIGNED]
+    order, fixtures_of = [], {}
+    for o in opts:
+        screen = o.split(SEP, 1)[0] if SEP in o else o
+        if screen not in fixtures_of:
+            order.append(screen)
+            fixtures_of[screen] = []
+        if SEP in o:
+            fixtures_of[screen].append(o)
+    out = []
+    for li, screen in enumerate(order, 1):
+        for fi, name in enumerate(fixtures_of[screen] or [screen], 1):
+            out.append({"label": f"L{li}F{fi}", "name": name, "screen": screen})
+    return out
 
 
 class PluginEngine:
     """Levels go to the 'Level n' parameters of every Bar Chaser instance whose Track matches.
 
-    Pad memory: `store.pad_configs[track]` (saved in chases.yaml) is the track's last pad assignment.
-    An instance that joins a track (added to a layer, or its Track changed) gets that assignment;
-    a pad changed in Arena becomes the track's new assignment."""
+    Pad mapping: one mapping (pad 1-24 -> fixture) shared by every instance and track, remembered in
+    `store.pad_config` (chases.yaml). A loaded composition takes T1's mapping (else the first
+    instance's) and gives it to the others; a pad changed in Arena on any instance becomes the
+    mapping for all; a new instance gets it."""
 
     def __init__(self, rest, get_comp, refresh, send_level, store=None, send_param=None):
         self.rest, self.get_comp, self.refresh, self.send_level = rest, get_comp, refresh, send_level
-        self.store = store             # has .pad_configs {track: [24 names]} and .save()
+        self.store = store             # has .pad_config [24 names] and .save()
         self.send_param = send_param   # (param id, body) -> None
         self._last = {}            # level param id -> (time, quantised value)
         self._cache_comp = None
         self._cache = []
-        self._known = {}           # effect id -> (track, pads we expect, pending until)
+        self._known = {}           # effect id -> (pads we expect, our writes pending until)
         self._comp_id = object()   # composition identity (its master param id): new id = loaded composition
+        self._fx_cache = (None, None, [])   # (composition, track, fixture list)
 
     # ---- finding instances ------------------------------------------------ #
     @staticmethod
@@ -90,9 +113,29 @@ class PluginEngine:
     def _first(self, track):
         return next((i for i in self.instances() if i["track"] == track), None)
 
+    def _reference(self, comp=None):
+        """The instance whose mapping counts when instances disagree: T1's first, else the first."""
+        insts = self.instances(comp)
+        return next((i for i in insts if i["track"] == 0), insts[0] if insts else None)
+
+    def mapping(self):
+        """The shared pad mapping: 24 fixture names, '' = no fixture."""
+        inst = self._reference()
+        vals = self.pads_of(inst) if inst else list((self.store.pad_config if self.store else None) or [])
+        vals = (vals + [UNASSIGNED] * NPADS)[:NPADS]
+        return ["" if v == UNASSIGNED else v for v in vals]
+
+    def preset_text(self):
+        """The reference instance's Preset parameter ('' = the newest Advanced Output preset)."""
+        inst = self._reference()
+        p = ((inst["fx"].get("params") or {}).get("Preset") or {}) if inst else {}
+        v = p.get("value", "")
+        return text(v) if isinstance(v, dict) else str(v or "")
+
     def pad_name(self, track, k):
-        """The slice assigned to pad k on the track's first instance, '' when unassigned or no instance."""
-        inst = self._first(track)
+        """The fixture pad k lights ('' = none). The mapping is shared; the track's own instance is
+        read when it has one."""
+        inst = self._first(track) or self._reference()
         if inst is None:
             return ""
         p = (inst["fx"].get("params") or {}).get(f"Pad {k + 1}") or {}
@@ -101,6 +144,55 @@ class PluginEngine:
 
     def pad_assigned(self, track, k):
         return bool(self.pad_name(track, k))
+
+    # ---- fixtures (MAPPING menu) -------------------------------------------- #
+    def fixtures(self, track=0):
+        """Fixtures the effect offers (see fixture_list), cached per composition."""
+        comp = self.get_comp()
+        if self._fx_cache[0] is comp and self._fx_cache[1] == track:
+            return self._fx_cache[2]
+        inst = self._first(track) or self._reference()
+        opts = ((inst["fx"].get("params") or {}).get("Pad 1") or {}).get("options") if inst else None
+        fx = fixture_list(opts)
+        self._fx_cache = (comp, track, fx)
+        return fx
+
+    def fixtures_of_value(self, track, value):
+        """Indices of the fixtures a pad value lights: one fixture, or all of a whole screen."""
+        if not value or value == UNASSIGNED:
+            return []
+        fx = self.fixtures(track)
+        hit = [i for i, f in enumerate(fx) if f["name"] == value]
+        return hit or [i for i, f in enumerate(fx) if f["screen"] == value]
+
+    def short(self, track, value):
+        """'L3F2' for a fixture, the screen name for a whole screen, '' when unassigned."""
+        if not value or value == UNASSIGNED:
+            return ""
+        idx = self.fixtures_of_value(track, value)
+        if len(idx) == 1:
+            return self.fixtures(track)[idx[0]]["label"]
+        return value
+
+    def set_pad(self, k, name, now=None):
+        """Map pad k (0-based) to a fixture ('—' = none) on every Bar Chaser: all tracks share it."""
+        now = now or time.time()
+        done = False
+        for inst in self.instances():
+            p = (inst["fx"].get("params") or {}).get(f"Pad {k + 1}")
+            opts = (p or {}).get("options")
+            if not is_param(p) or (opts and name not in opts):
+                continue
+            if self.send_param:
+                self.send_param(p["id"], {"value": name})
+            p["value"] = name                                   # shown at once; Resolume confirms later
+            if inst["fx"].get("id") is not None:
+                self._known[inst["fx"]["id"]] = (self.pads_of(inst), now + PENDING)
+            done = True
+        if done and self.store is not None:
+            self.store.pad_config = self.pads_of(self._reference())
+            self.store.save()
+        return done
 
     def layer_name(self, track):
         inst = self._first(track)
@@ -178,45 +270,45 @@ class PluginEngine:
         return now
 
     def sync_pads(self, comp=None, now=None):
-        """Call with every new composition. Remembers each track's pad assignment and gives it to
-        instances that join the track. A newly loaded composition is taken as it is."""
+        """Call with every new composition: keeps one pad mapping on every Bar Chaser. Returns True
+        when a different composition was loaded (its mapping, T1's first, becomes the mapping)."""
         comp = comp or self.get_comp()
         if not comp or self.store is None:
-            return
+            return False
         now = now or time.time()
         cid = (comp.get("master") or {}).get("id")
         loaded = cid != self._comp_id
         if loaded:
             self._comp_id, self._known = cid, {}
-        store, changed, seen = self.store.pad_configs, False, set()
-        for inst in self.instances(comp):
-            fid = inst["fx"].get("id")
-            if fid is None:
-                continue
+        insts = [i for i in self.instances(comp) if i["fx"].get("id") is not None]
+        want, new = self.store.pad_config, None
+        if loaded and insts:
+            new = self.pads_of(self._reference(comp))
+        else:
+            for inst in insts:                                     # a pad changed in Arena on any instance
+                prev = self._known.get(inst["fx"]["id"])
+                if prev is not None and now >= prev[1] and self.pads_of(inst) != prev[0]:
+                    new = self.pads_of(inst)
+                    break
+            if new is None and want is None and insts:
+                new = self.pads_of(insts[0])
+        if new is not None and new != want:
+            self.store.pad_config = want = list(new)
+            self.store.save()
+        seen = set()
+        for inst in insts:                                         # every instance gets the mapping
+            fid = inst["fx"]["id"]
             seen.add(fid)
-            t, pads = inst["track"], self.pads_of(inst)
-            prev = self._known.get(fid)
-            if prev is None and loaded:                        # composition just loaded: its pads count
-                if store.get(t) != pads:
-                    store[t], changed = pads, True
-                self._known[fid] = (t, pads, 0.0)
-            elif prev is None or prev[0] != t:                 # joined this track: give it the track's pads
-                want = store.get(t)
-                if want and want != pads and self.send_param:
-                    self._known[fid] = (t, self._apply_pads(inst, want), now + PENDING)
-                else:
-                    if not want:
-                        store[t], changed = pads, True
-                    self._known[fid] = (t, pads, 0.0)
-            elif pads != prev[1] and now >= prev[2]:           # changed in Arena: the track's newest pads
-                store[t], changed = pads, True
-                self._known[fid] = (t, pads, 0.0)
-            elif pads == prev[1] and prev[2]:
-                self._known[fid] = (t, pads, 0.0)              # our writes arrived
+            pads, prev = self.pads_of(inst), self._known.get(fid)
+            if not want or pads == want:
+                self._known[fid] = (pads, 0.0)
+            elif prev is not None and now < prev[1]:
+                continue                                           # our writes are on their way
+            elif self.send_param:
+                self._known[fid] = (self._apply_pads(inst, want), now + PENDING)
         for fid in [f for f in self._known if f not in seen]:
             del self._known[fid]
-        if changed:
-            self.store.save()
+        return loaded
 
     def all_dark(self):
         for inst in self.instances():
