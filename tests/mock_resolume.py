@@ -95,6 +95,7 @@ def index(n):
 index(COMP)
 LOG = []
 EVENTS = {}   # ParamEvent id -> times triggered (GET /api/v1/_events)
+DROP_PUTS = [0]   # POST /api/v1/_drop_puts N: the next N PUTs get no answer (connection closed), like Arena
 # ---- WebSocket (ws://127.0.0.1:8080/api/v1), like Arena 7.23: full composition on connect,
 # subscribe / unsubscribe by "/parameter/by-id/<id>", then parameter_update on every change.
 WS_CLIENTS = []          # [handler], each with .subs {id: last value sent} and .ws_lock
@@ -172,6 +173,8 @@ class H(BaseHTTPRequestHandler):
         d = json.dumps(COMP).encode(); self.send_response(200); self.send_header("Content-Type","application/json"); self.end_headers(); self.wfile.write(d)
     def do_POST(self):
         b = self._body(); LOG.append(("POST", self.path, b)); print("POST", self.path, b, flush=True)
+        if self.path.endswith("/_drop_puts"):
+            DROP_PUTS[0] = int(b or 1); self.send_response(204); self.end_headers(); return
         parts = self.path.split("/")
         if parts[3:] == ["composition", "layers", "add"]:
             L = new_layer(len(COMP["layers"]) + 1); index(L)
@@ -232,6 +235,8 @@ class H(BaseHTTPRequestHandler):
         self.send_response(404); self.end_headers()
     def do_PUT(self):
         b = self._body(); print("PUT", self.path, b, flush=True)
+        if DROP_PUTS[0] > 0:                      # "Remote end closed connection without response"
+            DROP_PUTS[0] -= 1; self.close_connection = True; return
         pid = int(self.path.rsplit("/",1)[-1]); body = json.loads(b)
         if BYID[pid]["valuetype"] == "ParamEvent":
             EVENTS[str(pid)] = EVENTS.get(str(pid), 0) + 1

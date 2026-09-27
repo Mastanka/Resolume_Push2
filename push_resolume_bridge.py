@@ -94,6 +94,8 @@ MUTE_BUTTON = "Mute"                        # hold + pad = mute (bypass) that la
 SOLO_BUTTON = "Solo"                        # hold + pad = solo that layer
 SCENE_BUTTONS = ["1/32t", "1/32", "1/16t", "1/16", "1/8t", "1/8", "1/4t", "1/4"]  # = pad rows, top first
 BLINK = 0.25          # s on / off for blinking LEDs
+BLACKOUT_RESEND = 0.5  # s: blackout / restore not reported back by Resolume yet → send it again
+BLACKOUT_TRIES = 10    # resends before giving up (with a message on the display)
 METRONOME_BUTTON = "Metronome"              # pad pulse on / off
 TAP_PATH = "tempocontroller/tempo_tap"
 RESYNC_PATH = "tempocontroller/resync"
@@ -223,6 +225,9 @@ class Bridge:
         self.solo_held = False
         self.blackout = None       # composition master before blackout, None = not blacked out
         self.blackout_t = 0.0
+        self.blackout_seen = False # Resolume has reported the master at 0 since this blackout began
+        self.restore = None        # master value being restored, until Resolume reports it
+        self.bo_sent, self.bo_tries = 0.0, 0   # last (re)send of the blackout / restore value
         self.flash = {}            # layer -> master value before the flash button was pressed
         self.col_pressed = set()   # columns we sent a "down" for
         self.move_src = None       # absolute slot index being moved
@@ -804,12 +809,49 @@ class Bridge:
                     self.online = False
             time.sleep(self.ws_refresh if self.live() else self.poll_interval)
 
-    def _check_blackout(self):
-        """Master raised by someone else (Launch Control, mouse) = no longer blacked out."""
+    def _check_blackout(self, now=None):
+        """Hold the blackout (and the restore after it) until Resolume reports the new master value,
+        sending it again when the change got lost on the way. Once the blackout has arrived, a master
+        raised by someone else (Launch Control, mouse) ends it. Uses the value Resolume reported,
+        never our own display override."""
         p = master_param(self.comp)
-        if self.blackout is not None and p and time.time() - self.blackout_t > 1.0 \
-                and float(self.value_of(p) or 0) > 0.01:
-            self.blackout = None
+        if p is None or (self.blackout is None and self.restore is None):
+            return
+        now = now or time.time()
+        try:
+            v = float(p.get("value") or 0)
+        except (TypeError, ValueError):
+            return
+        if self.blackout is not None:
+            if v <= 0.01:
+                self.blackout_seen = True
+            elif self.blackout_seen:
+                if now - self.blackout_t > 1.0:                # raised elsewhere after it arrived
+                    self.blackout = None
+            elif now - self.bo_sent > BLACKOUT_RESEND:         # our 0 has not arrived: send again
+                if self.bo_tries >= BLACKOUT_TRIES:
+                    self.blackout = None
+                    self.note_msg("Blackout failed: Resolume did not take the master change")
+                    return
+                self.bo_sent, self.bo_tries = now, self.bo_tries + 1
+                self._set(p["id"], 0.0, {"value": 0.0})
+            return
+        target = self.restore
+        if abs(v - target) <= 0.01 or v > 0.01:                # restored, or moved elsewhere meanwhile
+            self.restore = None
+        elif now - self.bo_sent > BLACKOUT_RESEND:             # still black: send the restore again
+            if self.bo_tries >= BLACKOUT_TRIES:
+                self.restore = None
+                self.note_msg("Restore failed: Resolume did not take the master change")
+                return
+            self.bo_sent, self.bo_tries = now, self.bo_tries + 1
+            self._set(p["id"], target, {"value": target})
+
+    def blackout_watchdog(self):
+        """Main loop: keep checking while a blackout or restore is waiting for Resolume."""
+        if self.blackout is not None or self.restore is not None:
+            with self.lock:
+                self._check_blackout()
 
     # ---- parameter slots ------------------------------------------------ #
     def layer_spec(self, L):
@@ -959,7 +1001,7 @@ class Bridge:
             self._ov_used()
             if self.mode in MIX_MODES:
                 p = master_param(self.comp)
-                self.blackout = None
+                self.blackout = self.restore = None            # the knob takes over
             else:
                 p = resolve_node(self.layer_json(self.sel[0]), "video/opacity")
             if is_param(p):
@@ -1225,12 +1267,15 @@ class Bridge:
             p = master_param(self.comp)
             if p is None:
                 return
+            now = time.time()
             if self.blackout is None:
-                self.blackout, self.blackout_t = float(self.value_of(p) or 0), time.time()
+                self.blackout, self.blackout_t = float(self.value_of(p) or 0), now
+                self.blackout_seen, self.restore = False, None
                 self._set(p["id"], 0.0, {"value": 0.0})
             else:
                 self._set(p["id"], self.blackout, {"value": self.blackout})
-                self.blackout = None
+                self.blackout, self.restore = None, self.blackout
+            self.bo_sent, self.bo_tries = now, 0
 
     def flash_layer(self, row, down):
         with self.lock:
@@ -1818,6 +1863,7 @@ def run(cfg, rest, sim=False):
                     if pad_cache.get(ij) != color:
                         push.pads.set_pad_color(ij, color)
                         pad_cache[ij] = color
+            bridge.blackout_watchdog()
             if t0 >= next_frame:
                 next_frame = t0 + dt
                 try:

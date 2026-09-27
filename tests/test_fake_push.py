@@ -245,6 +245,25 @@ assert ("btn", ("Stop", "red")) in calls, "Stop Clip must blink red in blackout"
 fire("on_button_pressed", "Stop")
 time.sleep(0.4)
 assert rest.composition()["master"]["value"] == m0, "blackout off must restore the master"
+# Arena sometimes closes a connection without answering: the blackout must still arrive and stay
+drop = lambda n: requests.post("http://127.0.0.1:8080/api/v1/_drop_puts", data=str(n))
+drop(1)                                               # one lost try: the request goes out again at once
+fire("on_button_pressed", "Stop")
+time.sleep(1.5)
+assert rest.composition()["master"]["value"] == 0.0, "a dropped blackout PUT must be sent again"
+fire("on_button_pressed", "Stop")
+time.sleep(0.4)
+assert rest.composition()["master"]["value"] == m0
+drop(3)                                               # all three tries lost: the watchdog sends it again
+fire("on_button_pressed", "Stop")
+time.sleep(2.0)
+assert rest.composition()["master"]["value"] == 0.0, "blackout must be resent until Resolume has it"
+assert last("Stop") in ("red", "black"), "blackout must still be on"
+drop(3)                                               # the restore gets the same treatment
+fire("on_button_pressed", "Stop")
+time.sleep(2.0)
+assert rest.composition()["master"]["value"] == m0, "restore must be resent until Resolume has it"
+assert last("Stop") == "dark_gray"
 
 # --- F3 flash: button right of pad row 6 (= layer 2) → 100 % while held
 lm = lambda L: rest.composition()["layers"][L - 1]["master"]["value"]

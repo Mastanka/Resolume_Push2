@@ -229,6 +229,13 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
 - Only the active deck is visible through the API.
 - Tempo uses `composition/tempocontroller/tempo` (ParamRange 20–500, BPM) — path confirmed in the live
   JSON; `tempo_tap` / `resync` ParamEvents are triggered by Tap / Shift+Tap.
+- Arena 7.23.2 sometimes closes an HTTP connection without answering (`RemoteDisconnected`, seen by
+  Štefan on the blackout PUT, 2026-09-27). Not reproduced in isolation: idle keep-alive up to 330 s,
+  parallel composition GETs, 404s and select-then-PUT all worked. So `Resolume._req` resends a request
+  up to twice on `requests.ConnectionError` (never on timeouts), and the blackout / restore is held
+  until Resolume reports the master value (`_check_blackout`, `blackout_watchdog` in the main loop;
+  resend every `BLACKOUT_RESEND` s, give up after `BLACKOUT_TRIES`). The mock simulates it:
+  `POST /api/v1/_drop_puts N`.
 
 ## Bar Chaser plugin (plugin/)
 
