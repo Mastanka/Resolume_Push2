@@ -315,11 +315,11 @@ def test_seq_pads_current_track_only():
     br.seq.track = 0
     br.seq.levels = {(1, "pad 1"): 1.0, (0, "pad 2"): 1.0, (2, "pad 2"): 1.0}
     grid = br._seq_pad_colors()
-    assert grid[(7, 0)] not in ("L1", "white"), grid[(7, 0)]              # pad 1 plays on track 2 only
-    assert grid[(7, 1)] == "L0", grid[(7, 1)]                              # pad 2 plays on track 1
+    assert grid[(7, 0)] != "S_yellow", grid[(7, 0)]                        # pad 1 plays on track 2 only
+    assert grid[(7, 1)] == "S_yellow", grid[(7, 1)]                        # pad 2 plays on track 1
     br.seq.track = 1
     grid = br._seq_pad_colors()
-    assert grid[(7, 0)] == "L1" and grid[(7, 1)] != "L1", (grid[(7, 0)], grid[(7, 1)])
+    assert grid[(7, 0)] == "S_yellow" and grid[(7, 1)] != "S_yellow", (grid[(7, 0)], grid[(7, 1)])
 
 
 if __name__ == "__main__":

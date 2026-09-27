@@ -137,7 +137,7 @@ overlays. Parameter page is per menu (`Bridge.page` property over `_pages`).
   pattern pads orange in PRESETS. **MAPPING** (`Bridge.mapping()`,
   `_map_pad`, `_map_pad_colors`): rows 1–4 = the track's fixtures from the effect's Pad options
   (`chaser_engine.fixture_list`: "Screen / slice" entries grouped by screen → L#F#, a screen without
-  fixture entries = one fixture), row 5 red, rows 6–8 = pads. Select + fixture = `map_armed` (blinks),
+  fixture entries = one fixture), row 5 orange, rows 6–8 = pads. Select + fixture = `map_armed` (blinks),
   then pad = `PluginEngine.set_pad` on every instance, all tracks (shared mapping), double blink
   (`map_blink`); Delete + pad = "—"; Octave = `map_page` (32 fixtures per page). Otherwise rows 1–4 steps, row 5 patterns 1–8 (Shift 9–16), rows 6–8 pads 1–24
   (bottom-left = 1). `Bridge.sel_pads` = multi-selection (`Bridge.multi`: Select latch, or Select held →
@@ -146,7 +146,10 @@ overlays. Parameter page is per menu (`Bridge.page` property over `_pages`).
   shadow `Sequencer.groups` (GG, global, Select + Shift + button, white); `Sequencer.group(g, track)`;
   Delete (+ Shift) clears; tap recalls; `current_group()` = ("track" | "global", g) lit fully. Or "grid"
   (Scale). Groups only select pads: steps stay on their track (isolation). Pads flash only for the
-  selected track. **Pad mapping (shared by all tracks):** `Sequencer.pad_config` = 24 fixture names,
+  selected track. **SEQ pad colours by section** (`SECTION_RGB`, palette slots 96–107): rows 1–4 steps = shades of red
+  (`S_red` on, `_mid` low level / on for some, `_off` off; green playhead), row 5 patterns = orange (`S_orange` current,
+  `_dim` has steps, `_off` empty, blinking queued, `pink` = made for another rig), rows 6–8 pads = yellow (`S_yellow`
+  sounding, `_mid` selected, `_dim` has a fixture, black none). **Pad mapping (shared by all tracks):** `Sequencer.pad_config` = 24 fixture names,
   saved in `chases.yaml`; `PluginEngine.sync_pads()` keeps it on every instance: a pad changed in
   Arena on any instance becomes the mapping (own writes pending `PENDING` s), new instances get it, a
   new composition master id = a loaded composition → T1's mapping (else the first instance's) is

@@ -450,7 +450,7 @@ time.sleep(0.3)
 chases = yaml.safe_load(open(cfg["chases_file"]).read())
 steps = chases["patterns"][0]["tracks"][0]["steps"]
 assert steps["pad 1"] == [[0, 1.0, None]] and steps["pad 2"][0] == [0, 1.0, None] and steps["pad 2"][1][1] < 0.6, steps
-assert ("pad", ((0, 2), "L0_mid")) in calls or ("pad", ((0, 2), "L0_dim")) in calls, "half-level step pad"
+assert ("pad", ((0, 2), "S_red_mid")) in calls or ("pad", ((0, 2), "S_red_dim")) in calls, "half-level step pad"
 assert chases["track_groups"] == {1: [[1, 2]] + [None] * 7}, chases["track_groups"]
 assert chases["groups"] == [None, [2]] + [None] * 6, chases["groups"]
 assert chases["pads"][:4] == ["Bar A", "Bar B", "Bar C", "\u2014"], chases["pads"]
@@ -486,19 +486,19 @@ assert not any(pid == fx2["params"]["Level 1"]["id"] for _, pid, _ in log), "tra
 assert ("btn", ("Play", "green")) in calls
 fire("on_pad_pressed", 60, (4, 1), 100); fire("on_pad_released", 60, (4, 1), 0)     # row 5 = pattern 2 (queued)
 time.sleep(0.2)
-assert ("pad", ((4, 1), "white")) in calls, "queued pattern blinks white"
+assert ("pad", ((4, 1), "S_orange")) in calls, "queued pattern blinks orange"
 n0 = len(calls)
 tap("1/32t")                                                                        # recall group 1
 fire("on_button_pressed", "Delete"); tap("1/32"); fire("on_button_released", "Delete")   # clear empty group 2: no-op
 time.sleep(0.2)
 assert since(n0, ("1/32t", "L0")), "recalled group lit fully"
-assert ("pad", ((7, 0), "light_gray")) in calls[n0:], "recall must select pad 1 again (group 1 = pads 1 + 2)"
+assert ("pad", ((7, 0), "S_yellow_mid")) in calls[n0:], "recall must select pad 1 again (group 1 = pads 1 + 2)"
 # --- MAPPING (SEQ menu 4): fixtures on the top rows, row 5 red, Select + fixture then a pad = store
 n0 = len(calls)
 tap("Upper Row 4")
 time.sleep(0.3)
 assert since(n0, ("Upper Row 4", "L6")), "MAPPING lit red"
-assert ("pad", ((4, 0), "red")) in calls[n0:] and ("pad", ((4, 7), "red")) in calls[n0:], "divider row red"
+assert ("pad", ((4, 0), "S_orange")) in calls[n0:] and ("pad", ((4, 7), "S_orange")) in calls[n0:], "divider row orange"
 assert last_pad((0, 1)) == "L0_dim" and last_pad((0, 4)) == "dark_gray" and last_pad((0, 6)) == "black", \
     "6 fixtures, the first 4 used"
 assert last_pad((7, 3)) == "black" and last_pad((7, 0)) == "L0_dim", "pad 4 has no fixture, pad 1 has one"

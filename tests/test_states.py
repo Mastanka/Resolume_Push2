@@ -251,6 +251,51 @@ def test_step_edit_on_the_push_clears_the_preset_source():
     assert br.seq.pattern.source is None, "Delete + step is an edit too"
 
 
+# ---- SEQ pad sections: steps red, pattern row orange, pads yellow (shades of one hue each) --------- #
+def test_seq_sections_are_red_orange_yellow():
+    br = fresh()
+    tap(br, "Note")
+    seq = br.seq
+    seq._steps("pad 1")[0] = [1.0, None]                      # step 1 full, step 2 half, step 3 off
+    seq._steps("pad 1")[1] = [0.3, None]
+    seq._steps("pad 2")[2] = [1.0, None]                      # step 3 on for pad 2 only
+    seq.patterns[2].tracks[0].steps["pad 1"] = {0: [1.0, None]}   # P3 has steps, P2 is empty
+    seq.trigger(0, "pad 3", 1.0, None, 0.0); seq.tick(0.0)    # pad 3 is sounding
+    br.sel_pads = {0}
+    g = br.pad_colors()
+    assert g[(0, 0)] == "S_red" and g[(0, 1)] == "S_red_mid" and g[(0, 2)] == "S_red_off", (g[(0, 0)], g[(0, 1)], g[(0, 2)])
+    assert g[(2, 4)] == "black", "beyond the pattern length stays dark"
+    br.sel_pads = {0, 1}
+    g = br.pad_colors()
+    assert g[(0, 2)] == "S_red_dim", "on for some of the selected pads = dim red"
+    assert g[(4, 0)] == "S_orange" and g[(4, 1)] == "S_orange_off" and g[(4, 2)] == "S_orange_dim", (g[(4, 0)], g[(4, 1)], g[(4, 2)])
+    assert g[(7, 0)] == "S_yellow_mid" and g[(7, 1)] == "S_yellow_mid", "selected pads"
+    assert g[(7, 2)] == "S_yellow", "a sounding pad is bright yellow"
+    assert g[(7, 3)] == "S_yellow_dim" and g[(6, 0)] == "black", "assigned idle = dim yellow, unassigned = off"
+    seq.switch_pattern(1, 0.0)                                # a queued pattern blinks orange, never white
+    seq.running = True; seq.pending = 1
+    assert br.pad_colors()[(4, 1)] in ("S_orange", "S_orange_off")
+    tap(br, "Upper Row 4")                                    # MAPPING keeps the middle row orange
+    assert br.pad_colors()[(4, 0)] == "S_orange"
+
+
+def test_palette_registers_the_section_shades():
+    entries = {}
+
+    class Rec:
+        def set_color_palette_entry(self, idx, name, rgb=None, **k):
+            entries[name] = (idx, tuple(rgb))
+
+        def reapply_color_palette(self):
+            pass
+    B.apply_palette(Rec())
+    for hue in ("red", "orange", "yellow"):
+        full, mid, dim, off = (entries[f"S_{hue}{s}"] for s in ("", "_mid", "_dim", "_off"))
+        assert 96 <= full[0] <= 107 and len({full[0], mid[0], dim[0], off[0]}) == 4
+        assert full[1][0] > mid[1][0] > dim[1][0] > off[1][0] > 0, (hue, full, mid, dim, off)
+    assert entries["S_red"][1][1] < entries["S_orange"][1][1] < entries["S_yellow"][1][1], "red → orange → yellow by green share"
+
+
 # ---- the fuzzer as a regression test ------------------------------------------------------------ #
 def test_random_walk_finds_no_stuck_state():
     problems, crashes = {}, {}

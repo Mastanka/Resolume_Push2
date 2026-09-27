@@ -149,6 +149,11 @@ DIM = 0.15            # brightness of loaded-but-not-playing pads
 MID = 0.45            # brightness of playing pads between beats (pulse)
 PALETTE_BASE = 64     # Push palette slots 64..79 are overwritten with the layer colours
 SWATCH_BASE = 80      # slots 80..87 = the COLOR menu's palette swatches on Lower Row 1-8
+# SEQ pad sections, top to bottom: steps red, pattern row orange, pads yellow. Four shades of each
+# hue (S_red, S_red_mid, S_red_dim, S_red_off, …) in palette slots 96..107.
+SECTION_BASE = 96
+SECTION_RGB = [("red", (255, 40, 40)), ("orange", (255, 110, 0)), ("yellow", (255, 210, 0))]
+SECTION_SHADES = [("", 1.0), ("_mid", MID), ("_dim", DIM), ("_off", 0.06)]
 COLOR_SOURCES = [("clip", "video"), ("layer", "video/effects")]   # where colour params are searched
 # COLOR menu knobs: (label, kind, coarse step, fine step). kind r/g/b 0..255, h 0..360, s/v 0..100
 COLOR_KNOBS = [("Red", "r", 3, 1), ("Green", "g", 3, 1), ("Blue", "b", 3, 1),
@@ -1043,7 +1048,7 @@ class Bridge:
                             else:
                                 color = f"L{tc}_dim" if f in used else "dark_gray"
                 elif i == 4:
-                    color = "red"
+                    color = "S_orange"                                 # the middle row is orange in every SEQ menu
                 else:
                     k = self.bar_index(i, j)
                     color = double(("pad", k))
@@ -1062,7 +1067,6 @@ class Bridge:
         seq = self.seq
         pos = seq.position(self.beat_time() or 0.0)
         keys = self.sel_keys()
-        tc = seq.track % 8
         track_steps = [seq.pattern.tracks[seq.track].steps.get(key, {}) for key in keys]
         lit = {key for (t, key), v in seq.levels.items()          # pads sounding on this track only
                if t == seq.track and v > 0.02}
@@ -1075,7 +1079,7 @@ class Bridge:
         for i in range(8):
             for j in range(8):
                 color = "black"
-                if i < 4:
+                if i < 4:                                              # steps: shades of red
                     step = i * 8 + j
                     if step < seq.pattern.length:
                         n_on = sum(1 for st in track_steps if step in st)
@@ -1083,12 +1087,12 @@ class Bridge:
                             color = "green"
                         elif n_on and n_on == len(track_steps):
                             lv = min(st[step][0] for st in track_steps if step in st)
-                            color = f"L{tc}" if lv >= 0.66 else f"L{tc}_mid"
+                            color = "S_red" if lv >= 0.66 else "S_red_mid"
                         elif n_on:
-                            color = f"L{tc}_dim"
+                            color = "S_red_dim"                          # on for some selected pads
                         else:
-                            color = "dark_gray"
-                elif i == 4:
+                            color = "S_red_off"
+                elif i == 4:                                           # patterns: shades of orange
                     p = self.pattern_index(j)
                     has = any(t.steps for t in seq.patterns[p].tracks)
                     t0 = self.map_blink.get(("pattern", p))
@@ -1099,22 +1103,22 @@ class Bridge:
                     elif presets and self.preset_pick:
                         color = "white" if blink else "black"                    # pick a slot
                     elif seq.pending == p:
-                        color = "white" if blink else "dark_gray"
+                        color = "S_orange" if blink else "S_orange_off"               # queued
                     elif presets and p in misfit:
-                        color = "orange"                                         # made for another rig
+                        color = "pink"                                           # made for another rig
                     else:
-                        color = "white" if p == seq.current else ("dark_gray" if has else "black")
-                else:
+                        color = "S_orange" if p == seq.current else ("S_orange_dim" if has else "S_orange_off")
+                else:                                                  # pads: shades of yellow
                     k = self.bar_index(i, j)
                     key = pad_key(k)
                     if key in lit:
-                        color = f"L{tc}"
+                        color = "S_yellow"
                     elif not self.engine.pad_assigned(seq.track, k):
                         color = "black"
                     elif k in self.sel_pads:
-                        color = "light_gray"
+                        color = "S_yellow_mid"
                     else:
-                        color = "dark_gray"
+                        color = "S_yellow_dim"
                 grid[(i, j)] = color
         return grid
 
@@ -2166,6 +2170,10 @@ def apply_palette(push):
                                      rgb=[int(c * DIM) for c in rgb], allow_overwrite=True)
         push.set_color_palette_entry(PALETTE_BASE + 24 + k, f"L{k}_mid",          # slots 88..95
                                      rgb=[int(c * MID) for c in rgb], allow_overwrite=True)
+    for h, (hue, rgb) in enumerate(SECTION_RGB):                                     # slots 96..107
+        for s, (suffix, level) in enumerate(SECTION_SHADES):
+            push.set_color_palette_entry(SECTION_BASE + h * len(SECTION_SHADES) + s, f"S_{hue}{suffix}",
+                                         rgb=[int(c * level) for c in rgb], allow_overwrite=True)
     push.reapply_color_palette()
 
 

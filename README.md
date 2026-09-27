@@ -169,7 +169,7 @@ does the pattern row), then a pattern pad: an empty slot gets the preset, a used
 short ones of whatever rig is mapped (4–24 fixtures); if the rig changes, the bridge re-fits preset
 patterns when a composition loads, and asks in PRESETS when it changes during the show.
 **4 MAPPING** = which DMX fixture each pad lights, shared by all tracks: the top four pad rows show the
-fixtures (L1F1, L1F2, L2F1 … = lumiverse / fixture, in Arena's order), row 5 is red, rows 6–8 are pads
+fixtures (L1F1, L1F2, L2F1 … = lumiverse / fixture, in Arena's order), row 5 is orange, rows 6–8 are pads
 1–24. Hold **Select** and press a fixture (it blinks), then press a pad to store it there (both blink
 twice). **Delete** + pad = no fixture. **Octave** ▲ ▼ = more fixtures.
 
@@ -182,9 +182,11 @@ as the **last** effect on the layer (or press **Shift + Note** with a clip of th
 and set its **Track** (1–4) — or hold **Browse** and press track button 1–4 on the Push.
 
 ```
-rows 1–4   32 steps of the selected track on the selected pads (green = playhead)
-row 5      patterns 1–8 (Shift = 9–16)
-rows 6–8   pads 1–24, bottom-left = pad 1, each = a slice chosen in the effect
+rows 1–4   32 steps of the selected track on the selected pads — red: bright = on, mid = on at a low level
+           or on for some selected pads, dark = off; green = playhead
+row 5      patterns 1–8 (Shift = 9–16) — orange: bright = current, dim = has steps, dark = empty, blinking = queued
+rows 6–8   pads 1–24, bottom-left = pad 1, each = a fixture chosen in the effect — yellow: bright = flashing now,
+           mid = selected, dim = has a fixture, off = none
 ```
 
 | Control | Does |

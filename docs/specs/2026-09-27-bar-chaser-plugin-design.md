@@ -94,10 +94,12 @@ rows 6–8   pads 1–24: bottom row = 1–8 left → right, then 9–16, top of
   for all (level = tap velocity, Accent = 1). Step pad colour: full = on for all selected, dim =
   on for some, dark grey = off. Hold step + knob 8 / 5 edits that step on all selected pads.
   Delete + step removes it from all selected.
-- **Pad LEDs:** unassigned (`—`) = off · assigned idle = dark grey · selected = light grey · lit =
+- **Pad LEDs** (changed 2026-09-27: each pad section has its own hue, steps red, patterns orange, pads yellow):
+  unassigned (`—`) = off · assigned idle = dim yellow · selected = mid yellow · lit = bright yellow. Steps: bright red =
+  on for all selected pads, mid red = low level or on for some, dark red = off, green = playhead. Old text: lit =
   the selected track's colour while that track flashes it. Other tracks playing never light the
   pads (the pads show only the track you are editing).
-- **Patterns** on row 5: white = current, grey = has steps, off = empty, blinking = queued.
+- **Patterns** on row 5: bright orange = current, dim orange = has steps, dark orange = empty, blinking orange = queued.
   Shift + pattern pad = pattern 9–16 (Shift + pad no longer means "switch now"; switching is
   always at the next bar boundary — press the same pad twice to switch now).
 - Octave ▲ / ▼ unused (unlit). Everything else as in the SEQ spec.
