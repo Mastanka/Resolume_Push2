@@ -48,4 +48,5 @@ private:
 	std::array< float, NPADS > padValue{};      // option value = element index (0 = "—")
 	std::array< float, NPADS > level{};
 	std::string displayBuffer;
+	int diagFrames = 0;             // frames logged to the host after InitGL
 };

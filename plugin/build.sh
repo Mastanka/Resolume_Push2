@@ -6,7 +6,7 @@ set -e
 cd "$(dirname "$0")"
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release > /dev/null
 cmake --build build -j8
-(cd build && ctest --output-on-failure)
+(cd build && ctest --output-on-failure) || { echo "TESTS FAILED"; exit 1; }
 rm -rf dist && mkdir -p dist
 cp -R "build/Bar Chaser.bundle" dist/
 echo "built: $(pwd)/dist/Bar Chaser.bundle"

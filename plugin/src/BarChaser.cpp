@@ -209,14 +209,14 @@ void BarChaser::loadPreset( bool raiseEvents )
 		presetOk = true;
 		size_t slash = presetPath.rfind( '/' );
 		status = presetPath.substr( slash == std::string::npos ? 0 : slash + 1 ) + " (" + std::to_string( preset.entries.size() ) + ")";
-		// first load: pad k = k-th screen
-		bool anyAssigned = false;
+		// First load, or a preset in which none of the assigned names exist: pad k = k-th screen.
+		bool anyResolved = false;
 		for( const auto& n : padName )
-			anyAssigned = anyAssigned || !n.empty();
-		if( !anyAssigned )
-			for( unsigned int k = 0; k < NPADS && k < preset.entries.size(); k++ )
-				if( preset.entries[ k ].name.find( " / " ) == std::string::npos )
-					padName[ k ] = preset.entries[ k ].name;
+			anyResolved = anyResolved || ( !n.empty() && entryIndex( n ) >= 0 );
+		if( !anyResolved )
+			for( unsigned int k = 0; k < NPADS; k++ )
+				padName[ k ] = ( k < preset.entries.size() && preset.entries[ k ].name.find( " / " ) == std::string::npos )
+				                   ? preset.entries[ k ].name : "";
 	}
 	else
 	{
@@ -249,8 +249,8 @@ void BarChaser::refillPadElements( bool raiseEvents )
 		{
 			// Hosts set every parameter to its declared default right after creating the instance,
 			// so the default must be the assignment itself or it would be wiped to "—".
-			std::string name = "Pad " + std::to_string( k + 1 );
-			SetOptionParamInfo( P_PAD0 + k, name.c_str(), (unsigned int)names.size(), padValue[ k ] );
+			if( ParamInfo* info = FindParamInfo( P_PAD0 + k ) )
+				info->defaultFloatVal = padValue[ k ];
 		}
 		SetParamElements( P_PAD0 + k, names, values, raiseEvents );
 		if( raiseEvents )
@@ -271,7 +271,31 @@ FFResult BarChaser::InitGL( const FFGLViewportStruct* vp )
 		DeInitGL();
 		return FF_FAIL;
 	}
+	const char* ver = (const char*)glGetString( GL_VERSION );
+	FFGLLog::LogToHost( ( std::string( "Bar Chaser: InitGL viewport " ) + std::to_string( vp->width ) + "x" + std::to_string( vp->height )
+	                      + " GL " + ( ver ? ver : "?" ) ).c_str() );
+	diagFrames = 0;
 	return CFFGLPlugin::InitGL( vp );
+}
+
+// One-time look at what the host hands us, written to Resolume's log (~/Library/Logs/Resolume Arena/).
+static void logInput( const FFGLTextureStruct& t, GLuint hostFBO, int frame )
+{
+	GLint w = 0, h = 0, fmt = 0, minf = 0, magf = 0, sampler = 0, fbo = 0, vp[ 4 ] = { 0, 0, 0, 0 };
+	glGetTexLevelParameteriv( GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &w );
+	glGetTexLevelParameteriv( GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &h );
+	glGetTexLevelParameteriv( GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &fmt );
+	glGetTexParameteriv( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &minf );
+	glGetTexParameteriv( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, &magf );
+	glGetIntegerv( GL_SAMPLER_BINDING, &sampler );
+	glGetIntegerv( GL_FRAMEBUFFER_BINDING, &fbo );
+	glGetIntegerv( GL_VIEWPORT, vp );
+	char buf[ 400 ];
+	std::snprintf( buf, sizeof buf,
+	               "Bar Chaser: frame %d input handle %u isTexture %d size %ux%u hw %ux%u level0 %dx%d fmt 0x%x min 0x%x mag 0x%x sampler %d fbo %d hostFBO %u viewport %d,%d %dx%d err 0x%x",
+	               frame, t.Handle, (int)glIsTexture( t.Handle ), t.Width, t.Height, t.HardwareWidth, t.HardwareHeight, w, h, fmt, minf, magf,
+	               sampler, fbo, hostFBO, vp[ 0 ], vp[ 1 ], vp[ 2 ], vp[ 3 ], glGetError() );
+	FFGLLog::LogToHost( buf );
 }
 
 FFResult BarChaser::ProcessOpenGL( ProcessOpenGLStruct* pGL )
@@ -281,6 +305,17 @@ FFResult BarChaser::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	ScopedShaderBinding shaderBinding( shader.GetGLID() );
 	ScopedSamplerActivation activateSampler( 0 );
 	Scoped2DTextureBinding textureBinding( pGL->inputTextures[ 0 ]->Handle );
+	// A sampler object left on unit 0 or a mipmap filter on a texture without mipmaps would make
+	// every sample black: sample with plain linear filtering and restore the host's state after.
+	GLint prevSampler = 0, prevMin = 0, prevMag = 0;
+	glGetIntegerv( GL_SAMPLER_BINDING, &prevSampler );
+	glBindSampler( 0, 0 );
+	glGetTexParameteriv( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &prevMin );
+	glGetTexParameteriv( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, &prevMag );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+	if( diagFrames < 3 )
+		logInput( *pGL->inputTextures[ 0 ], pGL->HostFBO, diagFrames++ );
 	shader.Set( "InputTexture", 0 );
 	FFGLTexCoords maxCoords = GetMaxGLTexCoords( *pGL->inputTextures[ 0 ] );
 	shader.Set( "MaxUV", maxCoords.s, maxCoords.t );
@@ -310,6 +345,9 @@ FFResult BarChaser::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	glUniform1i( shader.FindUniform( "Outside" ), int( outside + 0.5f ) );
 	glUniform1i( shader.FindUniform( "Mode" ), int( mode + 0.5f ) );
 	quad.Draw();
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, prevMin );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, prevMag );
+	glBindSampler( 0, (GLuint)prevSampler );
 	return FF_SUCCESS;
 }
 
