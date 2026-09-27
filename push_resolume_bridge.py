@@ -242,12 +242,13 @@ class Bridge:
         sc = cfg.get("sequencer") or {}
         self.seq = Sequencer(cfg.get("chases_file") or Path(__file__).with_name("chases.yaml"),
                              n_tracks=int(sc.get("tracks", 4)))
-        self.engine = PluginEngine(rest, lambda: self.comp, self.refresh_comp, self._send_level)
+        self.engine = PluginEngine(rest, lambda: self.comp, self.refresh_comp, self._send_level,
+                                   store=self.seq, send_param=self.sender.param)
         self.sel_pads = {0}        # selected pads (0-based); steps edit all of them
         self.multi = False         # Select latched: pad press adds / removes instead of replacing
         self.select_held = self.select_used = False
         self.side = "groups"       # buttons right of the pads in SEQ: "groups" (Layout) or "grid" (Scale)
-        self.cur_group = None      # group last stored / recalled (lit fully while the selection matches)
+        self.cur_group = None      # ("track" | "global", button) last stored / recalled (lit while it matches)
         self.repeat = False
         self.accent = False
         self.delete_held = self.browse_held = self.fixed_len_held = False
@@ -370,6 +371,10 @@ class Bridge:
         with self.lock:
             self.comp, self.index, self.online = comp, index, True
             self._check_blackout()
+            try:
+                self.engine.sync_pads(comp)             # pad memory: tracks keep their pad assignment
+            except Exception:
+                traceback.print_exc()
 
     def on_param(self, pid, value):
         """WebSocket parameter_update: patch the value in place."""
@@ -513,29 +518,39 @@ class Bridge:
         return [pad_key(k) for k in sorted(self.sel_pads)]
 
     def current_group(self):
-        """Index of the group the selection came from, while the selection still equals it."""
-        g = self.cur_group
-        if g is not None and self.seq.groups[g] and set(self.seq.groups[g]) == self.sel_pads:
-            return g
-        return None
+        """("track" | "global", button) of the group the selection came from, while it still equals it."""
+        if self.cur_group is None:
+            return None
+        scope, g = self.cur_group
+        pads, shown = self.seq.group(g, self.seq.track)
+        return self.cur_group if pads and shown == scope and set(pads) == self.sel_pads else None
+
+    def group_label(self, scope, g):
+        return f"GG{g + 1}" if scope == "global" else f"G{g + 1}"
 
     def _group_button(self, g):
-        """Button g right of the pads in Layout mode: Select held = store, Delete held = clear, else recall."""
-        seq = self.seq
+        """Button g right of the pads (Layout). Select + button = store for the selected track,
+        Select + Shift + button = store for all tracks (GG); Delete (+ Shift) = clear; tap = select."""
+        seq, t = self.seq, self.seq.track
+        scope = "global" if self.shift else "track"
+        owner = None if self.shift else t
+        tag = self.group_label(scope, g) + ("" if self.shift else f" of T{t + 1}")
         if self.select_held:
             self.select_used = True
-            seq.store_group(g, self.sel_pads)
-            self.cur_group = g
-            self.note_msg(f"G{g + 1} = pad{'s' * (len(self.sel_pads) != 1)} "
+            seq.store_group(g, self.sel_pads, owner)
+            self.cur_group = (scope, g)
+            self.note_msg(f"{tag} = pad{'s' * (len(self.sel_pads) != 1)} "
                           + ", ".join(str(k + 1) for k in sorted(self.sel_pads)))
         elif self.delete_held:
-            seq.clear_group(g)
-            self.note_msg(f"G{g + 1} cleared")
-        elif seq.groups[g]:
-            self.sel_pads = set(seq.groups[g])
-            self.cur_group = g
+            seq.clear_group(g, owner)
+            self.note_msg(f"{tag} cleared")
         else:
-            self.note_msg(f"G{g + 1} empty · hold Select + this button to store")
+            pads, shown = seq.group(g, t)
+            if pads:
+                self.sel_pads = set(pads)
+                self.cur_group = (shown, g)
+            else:
+                self.note_msg(f"G{g + 1} empty · Select + button = store (+ Shift = all tracks)")
 
     def _seq_pad(self, ij, velocity, down):
         i, j = ij
@@ -1511,8 +1526,15 @@ class Bridge:
                 if seq and self.side == "grid":             # Scale: grid selection
                     out[b] = "white" if b == self.seq.grid else "dark_gray"
                     continue
-                if seq:                                     # Layout: pad groups in the track colour
-                    out[b] = "black" if not self.seq.groups[i] else (f"L{tc}" if i == cur_g else f"L{tc}_dim")
+                if seq:                                     # Layout: track groups in its colour, global white
+                    pads, scope = self.seq.group(i, self.seq.track)
+                    cur = cur_g == (scope, i)
+                    if not pads:
+                        out[b] = "black"
+                    elif scope == "track":
+                        out[b] = f"L{tc}" if cur else f"L{tc}_dim"
+                    else:
+                        out[b] = "white" if cur else "dark_gray"
                     continue
                 L = self.pad_to_cell(i, 0)[0]
                 out[b] = ("black" if self.layer_json(L) is None
@@ -1635,7 +1657,8 @@ class Bridge:
                        "env": {"attack": e.attack, "decay": e.decay, "sustain": e.sustain, "release": e.release,
                                "gate": tr.gate},
                        "pending": sq.pending, "swing": sq.pattern.swing,
-                       "group": self.current_group(), "multi": self.multi or self.select_held,
+                       "group": self.group_label(*self.current_group()) if self.current_group() else None,
+                       "multi": self.multi or self.select_held,
                        "select_held": self.select_held, "side": self.side,
                        "warning": "" if ready else f"T{sq.track + 1}: no Bar Chaser — Shift + Note on a layer"}
             return {

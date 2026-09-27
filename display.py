@@ -169,7 +169,7 @@ def render(snap, bgr=True):
         col((200, 200, 200)); font(15)
         names = ", ".join(n for _, n in sq["pads"])
         nums = ", ".join(str(k) for k, _ in sq["pads"])
-        grp = "" if sq.get("group") is None else f"G{sq['group'] + 1}  "
+        grp = f"{sq['group']}  " if sq.get("group") else ""
         say(144, 151, f"T{sq['track'] + 1} · {sq['layer'] or '—'}   ·   {grp}pad{'s' * (len(sq['pads']) != 1)} {nums} ({names})"
                       + (f"   ·   next: P{sq['pending'] + 1}" if sq["pending"] is not None else ""), 560)
         col((140, 140, 140)); font(13)
@@ -177,7 +177,7 @@ def render(snap, bgr=True):
         if sq["warning"]:
             bottom = sq["warning"]
         elif sq.get("select_held"):
-            bottom = "pad = add / remove  ·  group button = store"
+            bottom = "pad = add / remove  ·  group button = store (Shift = all tracks)"
         elif sq.get("multi"):
             bottom = "MULTI-SELECT  ·  pad = add / remove"
         elif snap["shift"]:

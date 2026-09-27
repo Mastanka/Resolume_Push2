@@ -100,6 +100,86 @@ def _bridge():
     return br
 
 
+def test_pad_memory():
+    """Each track keeps its last pad assignment; an instance joining the track gets it."""
+    import tempfile
+    from sequencer import Sequencer
+    from chaser_engine import PluginEngine
+    store = Sequencer(Path(tempfile.mkdtemp()) / "chases.yaml")
+    writes = []
+
+    def send(pid, body):
+        writes.append(pid)
+        rest.set_param(pid, body)
+
+    eng = PluginEngine(rest, comp, None, lambda pid, v: None, store=store, send_param=send)
+
+    def fxp(L):
+        return [e for e in comp()["layers"][L - 1]["video"]["effects"] if e["name"] == "Bar Chaser"][0]["params"]
+
+    eng.sync_pads(comp(), now=100.0)                                     # first composition: taken as it is
+    n0 = len(comp()["layers"])
+    rest.add_layer(); rest.add_layer()
+    A, B = n0 + 1, n0 + 2
+    assert rest.add_effect(A, "Bar Chaser") == 204
+    eng.sync_pads(comp(), now=101.0)                                     # joins track 1
+    assert store.pad_configs[0] == eng.pads_of({"fx": {"params": fxp(A)}})
+    rest.set_param(fxp(A)["Pad 1"]["id"], {"value": "Bar C"})           # edited in Arena
+    eng.sync_pads(comp(), now=102.0)
+    assert store.pad_configs[0][0] == "Bar C" and Sequencer(store.path).pad_configs[0][0] == "Bar C"
+    assert rest.add_effect(B, "Bar Chaser") == 204                      # a second layer joins track 1
+    stale = comp()
+    eng.sync_pads(stale, now=103.0)
+    assert fxp(B)["Pad 1"]["value"] == "Bar C", "the new instance must get track 1's pads"
+    eng.sync_pads(stale, now=103.5)                                      # old values still in a refresh
+    assert store.pad_configs[0][0] == "Bar C", "our own pending writes must not count as an edit"
+    eng.sync_pads(comp(), now=104.0)
+    rest.set_param(fxp(B)["Track"]["id"], {"value": "2"})              # B moves to track 2 (no pads yet)
+    eng.sync_pads(comp(), now=105.0)
+    assert store.pad_configs[1][0] == "Bar C"
+    rest.set_param(fxp(B)["Pad 2"]["id"], {"value": "\u2014"})
+    eng.sync_pads(comp(), now=106.0)
+    assert store.pad_configs[1][1] == "\u2014" and store.pad_configs[0][1] == "Bar B"
+    rest.set_param(fxp(A)["Track"]["id"], {"value": "2"})              # A moves to track 2 → gets its pads
+    eng.sync_pads(comp(), now=107.0)
+    assert fxp(A)["Pad 2"]["value"] == "\u2014"
+    eng.sync_pads(comp(), now=110.0)
+    loaded = comp()                                                      # another composition is loaded
+    loaded["master"]["id"] = -1
+    fx_b = [e for e in loaded["layers"][B - 1]["video"]["effects"] if e["name"] == "Bar Chaser"][0]
+    fx_b["params"]["Pad 3"]["value"] = "Bar A"                           # B = the track's last instance
+    n_writes = len(writes)
+    eng.sync_pads(loaded, now=111.0)
+    assert len(writes) == n_writes and store.pad_configs[1][2] == "Bar A", "a loaded composition is kept"
+    assert rest.delete_effect(A, 0) in (200, 204) and rest.delete_effect(B, 0) in (200, 204)   # leave no instance
+
+
+def test_global_group_isolation():
+    """A global group used on track 2 only puts steps on track 2: it never plays track 1's layers."""
+    br = _bridge()
+    br.mode = "seq"
+    br.sel_pads = {0, 4}
+    br.button("Select", True); br.button("Shift", True)
+    br.button("1/32t", True); br.button("1/32t", False)                 # Select + Shift + button 1 = GG1
+    br.button("Shift", False)
+    br.sel_pads = {1}
+    br.button("1/32", True); br.button("1/32", False)                   # Select + button 2 = T1 G2
+    br.button("Select", False)
+    assert br.seq.groups[0] == [0, 4] and br.seq.track_groups[0][1] == [1] and not br.multi
+    leds = br.button_colors()
+    assert leds["1/32t"] == "dark_gray" and leds["1/32"] == "L0", leds      # GG1 stored, T1 G2 current
+    br.button("Lower Row 2", True); br.button("Lower Row 2", False)      # track 2
+    leds = br.button_colors()
+    assert leds["1/32t"] == "dark_gray" and leds["1/32"] == "black", "T1's group must not show on T2"
+    br.button("1/32t", True); br.button("1/32t", False)                 # recall GG1 on track 2
+    assert br.sel_pads == {0, 4} and br.button_colors()["1/32t"] == "white"
+    br.pad_pressed((0, 0), 127); br.pad_released((0, 0))               # step 1 on pads 1 + 5
+    assert set(br.seq.pattern.tracks[1].steps) == {"pad 1", "pad 5"} and not br.seq.pattern.tracks[0].steps
+    br.seq.start(0.0)
+    levels = br.seq.tick(0.01)
+    assert levels and all(t == 1 for t, _ in levels), levels
+
+
 def test_screens():
     """Two views with their own menus; Mix / Mute / Solo: click = open, click again = back, hold = peek."""
     br = _bridge()

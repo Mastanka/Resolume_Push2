@@ -24,7 +24,7 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 | `colors.yaml` | Own COLOR palette (Shift + BD saves), Štefan's show data |
 | `display.py` | `render()`: draws a `Bridge.snapshot()` on the 960×160 display, `LAYER_RGB` |
 | `sequencer.py` | SEQ logic, pure: bars from the Advanced Output preset XML, `Envelope`, `Track` / `Pattern`, `Sequencer` (editing, `tick()`, `chases.yaml`) |
-| `chaser_engine.py` | `PluginEngine`: levels → `Level n` params of the Bar Chaser effect instances (grouped by their `Track`) |
+| `chaser_engine.py` | `PluginEngine`: levels → `Level n` params of the Bar Chaser effect instances (grouped by their `Track`); pad memory (`sync_pads`, run by `Bridge.set_comp`) |
 | `plugin/` | The **Bar Chaser** FFGL effect (C++, CMake, vendored FFGL SDK lib + pugixml). `plugin/build.sh` → `plugin/dist/Bar Chaser.bundle`; `ctest` runs the preset-parser test and an offscreen GL host test |
 | `chases.yaml` | Sequencer patterns, Štefan's show data |
 | `tests/test_sequencer.py` | Pure tests for `sequencer.py` (no mock) |
@@ -123,9 +123,15 @@ overlays. Parameter page is per menu (`Bridge.page` property over `_pages`).
   Gate / Level knob = that step). PRESETS is a placeholder. Rows 1–4 steps, row 5 patterns 1–8 (Shift 9–16), rows 6–8 pads 1–24
   (bottom-left = 1). `Bridge.sel_pads` = multi-selection (`Bridge.multi`: Select latch, or Select held →
   pad toggles); steps act on all selected pads. Buttons right of the pads: `Bridge.side` = "groups"
-  (Layout, default) → `Sequencer.groups` (8 saved selections, shared by all tracks, in `chases.yaml`;
-  Select + button stores, Delete + button clears, tap recalls; `current_group()` = lit fully) or "grid"
-  (Scale). Pads flash only for the selected track. BD1–4 = texture tracks = layers carrying a **Bar Chaser** effect with that `Track`.
+  (Layout, default) → pad groups: `Sequencer.track_groups[track]` (G, Select + button, track colour)
+  shadow `Sequencer.groups` (GG, global, Select + Shift + button, white); `Sequencer.group(g, track)`;
+  Delete (+ Shift) clears; tap recalls; `current_group()` = ("track" | "global", g) lit fully. Or "grid"
+  (Scale). Groups only select pads: steps stay on their track (isolation). Pads flash only for the
+  selected track. **Pad memory:** `Sequencer.pad_configs[track]` = 24 slice names, saved in
+  `chases.yaml`; `PluginEngine.sync_pads()` gives them to an instance that joins the track (new
+  effect id, or its Track changed) and takes a pad changed in Arena as the track's new assignment
+  (own writes pending `PENDING` s). A new composition master id = a loaded composition: its pads are
+  adopted, nothing written. BD1–4 = texture tracks = layers carrying a **Bar Chaser** effect with that `Track`.
   Knobs = the selected track's ADSR + Gate + Level and the pattern's Direction + Length. `Bridge.seq`
   (`Sequencer`, bars named `pad 1`…`pad 24`), `Bridge.engine` (`PluginEngine`), `seq_loop` thread at
   100 Hz → `engine.set_level` → WebSocket `set` of the instance's `Level n`. Shift + Note = add the

@@ -412,6 +412,10 @@ tap("Select")                                                                   
 fire("on_pad_pressed", 60, (7, 1), 100); fire("on_pad_released", 60, (7, 1), 0)     # pad 2 only
 time.sleep(0.2)
 assert since(n0, ("Select", "dark_gray"), ("1/32t", "L0_dim")), "selection changed: group 1 dim"
+fire("on_button_pressed", "Select"); fire("on_button_pressed", "Shift"); tap("1/32")   # Select + Shift = GG2
+fire("on_button_released", "Shift"); fire("on_button_released", "Select")
+time.sleep(0.2)
+assert last("1/32") == "white" and last("1/32t") == "L0_dim", "global group lit white, track group dim"
 fire("on_pad_pressed", 60, (0, 2), 127); fire("on_pad_released", 60, (0, 2), 0)     # step 3 on pad 2
 fire("on_pad_pressed", 60, (0, 2), 64); fire("on_pad_released", 60, (0, 2), 0)      # step 3 off again
 fire("on_pad_pressed", 60, (0, 2), 64); fire("on_pad_released", 60, (0, 2), 0)      # step 3 on, half level
@@ -420,7 +424,9 @@ chases = yaml.safe_load(open(cfg["chases_file"]).read())
 steps = chases["patterns"][0]["tracks"][0]["steps"]
 assert steps["pad 1"] == [[0, 1.0, None]] and steps["pad 2"][0] == [0, 1.0, None] and steps["pad 2"][1][1] < 0.6, steps
 assert ("pad", ((0, 2), "L0_mid")) in calls or ("pad", ((0, 2), "L0_dim")) in calls, "half-level step pad"
-assert chases["groups"] == [[1, 2]] + [None] * 7, chases["groups"]
+assert chases["track_groups"] == {1: [[1, 2]] + [None] * 7}, chases["track_groups"]
+assert chases["groups"] == [None, [2]] + [None] * 6, chases["groups"]
+assert chases["pads"][1][:4] == ["Bar A", "Bar B", "Bar C", "\u2014"] and 2 in chases["pads"], chases["pads"]
 tap("Upper Row 2")                                                                  # SETTINGS: K2 = Length
 fire("on_encoder_rotated", "Track2 Encoder", 2); fire("on_encoder_rotated", "Track2 Encoder", -2)
 time.sleep(0.2)

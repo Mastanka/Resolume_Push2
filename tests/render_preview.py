@@ -88,7 +88,7 @@ br.mode = "seq"
 br.sel_pads = {1}
 br.seq.toggle_step("pad 2", 0); br.seq.toggle_step("pad 2", 8)
 br.seq.pattern.tracks[0].envelope = Envelope(attack=0.2, decay=0.3, sustain=0.6, release=0.5)
-br.sel_pads = {0, 1}; br.seq.store_group(2, br.sel_pads); br.cur_group = 2; br.multi = True   # G3, multi-select
+br.sel_pads = {0, 1}; br.seq.store_group(2, br.sel_pads, 0); br.cur_group = ("track", 2); br.multi = True  # G3
 br.seq.start(br.beat_time() or 0.0)
 br.seq.tick(br.beat_time() or 0.0)
 shot("seq")

@@ -35,14 +35,25 @@ def pad_from_key(name):
     return None
 
 
-class PluginEngine:
-    """Levels go to the 'Level n' parameters of every Bar Chaser instance whose Track matches."""
+PENDING = 2.0          # s our own pad writes may take to show up before a difference counts as an edit
 
-    def __init__(self, rest, get_comp, refresh, send_level):
+
+class PluginEngine:
+    """Levels go to the 'Level n' parameters of every Bar Chaser instance whose Track matches.
+
+    Pad memory: `store.pad_configs[track]` (saved in chases.yaml) is the track's last pad assignment.
+    An instance that joins a track (added to a layer, or its Track changed) gets that assignment;
+    a pad changed in Arena becomes the track's new assignment."""
+
+    def __init__(self, rest, get_comp, refresh, send_level, store=None, send_param=None):
         self.rest, self.get_comp, self.refresh, self.send_level = rest, get_comp, refresh, send_level
+        self.store = store             # has .pad_configs {track: [24 names]} and .save()
+        self.send_param = send_param   # (param id, body) -> None
         self._last = {}            # level param id -> (time, quantised value)
         self._cache_comp = None
         self._cache = []
+        self._known = {}           # effect id -> (track, pads we expect, pending until)
+        self._comp_id = object()   # composition identity (its master param id): new id = loaded composition
 
     # ---- finding instances ------------------------------------------------ #
     @staticmethod
@@ -140,6 +151,72 @@ class PluginEngine:
                 continue
             self._last[pid] = (now, q)
             self.send_level(pid, q)
+
+    # ---- pad memory --------------------------------------------------------- #
+    @staticmethod
+    def pads_of(inst):
+        """The instance's 24 pad assignments (slice names, '—' = unassigned)."""
+        params = inst["fx"].get("params") or {}
+        out = []
+        for k in range(NPADS):
+            v = (params.get(f"Pad {k + 1}") or {}).get("value", "")
+            v = text(v) if isinstance(v, dict) else str(v)
+            out.append(v or UNASSIGNED)
+        return out
+
+    def _apply_pads(self, inst, want):
+        """Write the wanted assignment into the instance; returns what its pads should become."""
+        params = inst["fx"].get("params") or {}
+        now = self.pads_of(inst)
+        for k in range(min(NPADS, len(want))):
+            p = params.get(f"Pad {k + 1}")
+            opts = (p or {}).get("options")
+            if not is_param(p) or want[k] == now[k] or (opts and want[k] not in opts):
+                continue                                   # slice not in this instance's preset: keep
+            self.send_param(p["id"], {"value": want[k]})
+            now[k] = want[k]
+        return now
+
+    def sync_pads(self, comp=None, now=None):
+        """Call with every new composition. Remembers each track's pad assignment and gives it to
+        instances that join the track. A newly loaded composition is taken as it is."""
+        comp = comp or self.get_comp()
+        if not comp or self.store is None:
+            return
+        now = now or time.time()
+        cid = (comp.get("master") or {}).get("id")
+        loaded = cid != self._comp_id
+        if loaded:
+            self._comp_id, self._known = cid, {}
+        store, changed, seen = self.store.pad_configs, False, set()
+        for inst in self.instances(comp):
+            fid = inst["fx"].get("id")
+            if fid is None:
+                continue
+            seen.add(fid)
+            t, pads = inst["track"], self.pads_of(inst)
+            prev = self._known.get(fid)
+            if prev is None and loaded:                        # composition just loaded: its pads count
+                if store.get(t) != pads:
+                    store[t], changed = pads, True
+                self._known[fid] = (t, pads, 0.0)
+            elif prev is None or prev[0] != t:                 # joined this track: give it the track's pads
+                want = store.get(t)
+                if want and want != pads and self.send_param:
+                    self._known[fid] = (t, self._apply_pads(inst, want), now + PENDING)
+                else:
+                    if not want:
+                        store[t], changed = pads, True
+                    self._known[fid] = (t, pads, 0.0)
+            elif pads != prev[1] and now >= prev[2]:           # changed in Arena: the track's newest pads
+                store[t], changed = pads, True
+                self._known[fid] = (t, pads, 0.0)
+            elif pads == prev[1] and prev[2]:
+                self._known[fid] = (t, pads, 0.0)              # our writes arrived
+        for fid in [f for f in self._known if f not in seen]:
+            del self._known[fid]
+        if changed:
+            self.store.save()
 
     def all_dark(self):
         for inst in self.instances():

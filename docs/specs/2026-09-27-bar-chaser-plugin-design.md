@@ -78,10 +78,17 @@ rows 6–8   pads 1–24: bottom row = 1–8 left → right, then 9–16, top of
   (also flashes). Holding Select does the same while held. The selection is a set
   (`Bridge.sel_pads`), never empty. *(Changed 2026-09-27: was Shift + pad.)*
 - **Pad groups** on the 8 buttons right of the pads (**Layout**, the default side mode): hold
-  **Select** + button = store the selection as group 1–8 (top = 1); tap = select that group's pads;
-  **Delete** + button = clear. LEDs: empty = off, stored = dim track colour, the group the selection
-  came from = full track colour (until the selection changes). Groups are saved selections, shared by
-  all tracks, stored in `chases.yaml` (`groups:`, 1-based pads). **Scale** switches the buttons to
+  **Select** + button = store the selection as group 1–8 (top = 1) **for the selected track**; hold
+  **Select + Shift** + button = store it **for all tracks** (global group, GG). A track's own group
+  hides the global one on that button. Tap = select that group's pads; **Delete** (+ Shift) + button =
+  clear. LEDs: empty = off; track group = track colour, global = white; dim = stored, full = the
+  group the selection came from (until the selection changes). Saved in `chases.yaml` (`groups:` =
+  global, `track_groups:`, 1-based pads). *(Changed 2026-09-27: groups were shared by all tracks;
+  such files load as global groups.)* **Isolation:** a group only selects pads; steps belong to the
+  track they were made on, so one track never flashes another track's layers.
+- **Pad memory:** the bridge keeps each track's last `Pad 1..24` assignment (`chases.yaml`, `pads:`).
+  An instance joining a track (new effect, or its Track changed) gets it; a pad changed in Arena
+  becomes the track's assignment. A newly loaded composition is taken as it is. **Scale** switches the buttons to
   the grid 1/4 … 1/32t (white = current), as before. Layout / Scale: active = white, other = dim.
 - **Steps** act on every selected pad: if the step is on for all of them → off for all, else → on
   for all (level = tap velocity, Accent = 1). Step pad colour: full = on for all selected, dim =

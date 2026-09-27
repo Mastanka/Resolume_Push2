@@ -142,7 +142,9 @@ class Sequencer:
         self.last_step = None
         self.last_pattern_step = None
         self.last_random = None
-        self.groups = [None] * N_GROUPS   # pad groups: sorted pad indices (0-based) or None = empty
+        self.groups = [None] * N_GROUPS   # global pad groups GG1-8: sorted pad indices (0-based) or None
+        self.track_groups = {}     # track -> [8] pad groups G1-8 of that track (shown before the global one)
+        self.pad_configs = {}      # track -> 24 slice names: the track's last Bar Chaser pad assignment
         self.voices = {}           # (track, bar name) -> Voice
         self.levels = {}           # (track, bar name) -> last level returned by tick()
         if self.path and self.path.exists():
@@ -308,23 +310,46 @@ class Sequencer:
                 out[key] = value
         return out
 
-    # ---- pad groups (a saved pad selection, shared by all tracks) ------------ #
-    def store_group(self, g, pads):
-        self.groups[g] = sorted(pads) or None
+    # ---- pad groups: saved pad selections, per track (G) or for all tracks (GG) ---- #
+    def group(self, g, track):
+        """(pads, "track" | "global") on group button g for this track: its own group first, else the
+        global one; (None, None) when both are empty. A group only selects pads: steps made with it
+        belong to the track they were made on, so one track never plays another track's layers."""
+        own = self.track_groups.get(track)
+        if own and own[g]:
+            return own[g], "track"
+        if self.groups[g]:
+            return self.groups[g], "global"
+        return None, None
+
+    def store_group(self, g, pads, track=None):
+        """Store a pad selection on group button g for one track, or for all tracks (track None)."""
+        target = self.groups if track is None else self.track_groups.setdefault(track, [None] * N_GROUPS)
+        target[g] = sorted(pads) or None
         self.save()
 
-    def clear_group(self, g):
-        self.groups[g] = None
+    def clear_group(self, g, track=None):
+        target = self.groups if track is None else self.track_groups.get(track)
+        if target:
+            target[g] = None
         self.save()
 
     # ---- storage ------------------------------------------------------------ #
     def to_dict(self):
-        return {"groups": [None if g is None else [k + 1 for k in g] for g in self.groups],   # 1-based pads
+        def groups(gs):                                           # 1-based pads in the file
+            return [None if g is None else [k + 1 for k in g] for g in gs]
+        return {"groups": groups(self.groups),
+                "track_groups": {t + 1: groups(gs) for t, gs in sorted(self.track_groups.items()) if any(gs)},
+                "pads": {t + 1: list(names) for t, names in sorted(self.pad_configs.items())},
                 "patterns": [_pattern_to_dict(p) for p in self.patterns]}
 
     def from_dict(self, d):
-        groups = [sorted(int(k) - 1 for k in g) if g else None for g in (d.get("groups") or [])][:N_GROUPS]
-        self.groups = groups + [None] * (N_GROUPS - len(groups))
+        def groups(raw):
+            gs = [sorted(int(k) - 1 for k in g) if g else None for g in (raw or [])][:N_GROUPS]
+            return gs + [None] * (N_GROUPS - len(gs))
+        self.groups = groups(d.get("groups"))
+        self.track_groups = {int(t) - 1: groups(gs) for t, gs in (d.get("track_groups") or {}).items()}
+        self.pad_configs = {int(t) - 1: [str(n) for n in names] for t, names in (d.get("pads") or {}).items()}
         pats = [_pattern_from_dict(x) for x in (d.get("patterns") or [])][:N_PATTERNS]
         while len(pats) < N_PATTERNS:
             pats.append(Pattern(name=f"P{len(pats) + 1}"))

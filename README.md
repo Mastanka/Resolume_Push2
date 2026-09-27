@@ -187,12 +187,20 @@ rows 6–8   pads 1–24, bottom-left = pad 1, each = a slice chosen in the effe
 | Buttons below the display 1–4 | Select the texture track; **Browse** + button = the selected clip's layer joins that track |
 | Pattern pad (row 5) | Switch at the next bar; press it again to switch now |
 | **Play** | Run / stop |
-| **Layout** → buttons right of the pads | Pad groups 1–8: tap = select that group's pads. **Select** + button = store the selection there. **Delete** + button = clear. Stored = dim in the track colour, current = bright, empty = off |
+| **Layout** → buttons right of the pads | Pad groups 1–8. **Select** + button = store the selection for this track; **Select** + **Shift** + button = store it for all tracks (global). Tap = select that group's pads. **Delete** (+ **Shift**) + button = clear. Track group = track colour, global group = white; dim = stored, bright = current, off = empty. A track's own group hides the global one on that button |
 | **Scale** → buttons right of the pads | Grid 1/4 … 1/32t (white = current) |
 | **Delete** + step / pad / track / pattern / group | Clear |
 | **Duplicate** + pattern → pattern | Copy |
 | **Double Loop** / **Fixed Length** + button 1–8 | Double the pattern / length 4–32 |
 | Knobs | See ENVELOPE / SETTINGS above; Swing encoder = swing |
+
+**Isolation:** a group only selects pads. Steps belong to the track you made them on, so a global
+group used on track 2 only flashes track 2's layers.
+
+**Pad memory:** the bridge remembers each track's **Pad 1–24** assignment (in `chases.yaml`). A Bar
+Chaser that joins a track (added to a layer, or its **Track** switched) gets that track's last
+assignment within a few seconds. Change a pad in Arena and that becomes the track's assignment.
+Opening a composition keeps the assignments saved in it.
 
 **In the effect's panel:** Preset (empty = newest), Reload, Track, Master, Edge (soft edges), Outside
 (transparent / black / pass through), Mode (Texture / Solid white / Show pads = numbered rectangles for

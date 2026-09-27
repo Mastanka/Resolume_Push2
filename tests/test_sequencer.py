@@ -117,8 +117,19 @@ def test_groups():
     assert "- - 1\n" in path.read_text() or "[1, 2, 5]" in path.read_text()
     sq2.clear_group(0)
     assert S.Sequencer(path).groups[0] is None
+    sq3 = S.Sequencer(path)                                      # track groups shadow the global ones
+    sq3.store_group(0, {1}, track=1); sq3.store_group(2, {5, 6}, track=0)
+    sq3.store_group(0, {9})                                      # global GG1
+    assert sq3.group(0, 1) == ([1], "track") and sq3.group(0, 0) == ([9], "global")
+    assert sq3.group(2, 0) == ([5, 6], "track") and sq3.group(2, 1) == (None, None)
+    sq3.pad_configs[1] = ["Bar A"] + ["\u2014"] * 23
+    sq3.save()
+    sq4 = S.Sequencer(path)
+    assert sq4.track_groups[1][0] == [1] and sq4.track_groups[0][2] == [5, 6] and sq4.groups[0] == [9]
+    assert sq4.pad_configs == {1: ["Bar A"] + ["\u2014"] * 23}
+    sq4.clear_group(0, track=1); assert sq4.group(0, 1) == ([9], "global")
     path.write_text("patterns: []\n")                            # old file without groups
-    assert S.Sequencer(path).groups == [None] * 8
+    assert S.Sequencer(path).groups == [None] * 8 and S.Sequencer(path).track_groups == {}
 
 
 if __name__ == "__main__":
