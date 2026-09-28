@@ -8,7 +8,7 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from banks import BANKS, BEATS, RECIPES, STEPS, presets, realize, realize_bank, refit  # noqa: E402
+from banks import BANKS, BEATS, MACRO_NAMES, RECIPES, STEPS, morph, presets, realize, realize_bank, refit, set_macros  # noqa: E402
 from rig import MAX_PADS, MIN_PADS, PadInfo, RigError, build_rig, preset_rects, rig_from_roles, virtual_positions  # noqa: E402
 
 # ---- the Python preset reader offers exactly the plugin's names (plugin/tests/test_preset.cpp) ---- #
@@ -127,6 +127,67 @@ assert p["source"]["rig"] == r9.signature() and q["source"]["rig"] == big.signat
 p2 = dict(p, source=None)
 assert refit(p2, big) is p2
 
+# ---- macros --------------------------------------------------------------------------- #
+def steps_of(p, t):
+    return {(k, s) for k, st in p["tracks"][t]["steps"].items() for s, _, _ in st}
+
+for i, rid in enumerate(BANKS["techno"]):
+    base = realize(rid, r9, 500 + i)
+    for k in MACRO_NAMES:
+        for v in (0.0, 0.25, 0.75, 1.0):
+            p = realize(rid, r9, 500 + i, macros={k: v})
+            assert p == realize(rid, r9, 500 + i, macros={k: v}), (rid, k, v, "not deterministic")
+            assert p["source"]["macros"][k] == v
+            assert sum(len(st) for tr in p["tracks"] for st in tr["steps"].values()) > 0, (rid, k, v, "empty")
+            for t in range(4):
+                if (rid, t) in skip:                     # W2 T3 / W4 T2 draw their steps at random
+                    continue
+                if k == "density":                       # only removes hits (below) or widens them (above)
+                    tb, tp = {s for _, s in steps_of(base, t)}, {s for _, s in steps_of(p, t)}
+                    assert tp <= tb if v < 0.5 else tp == tb, (rid, k, v, t)
+                elif k == "strobe":
+                    assert steps_of(p, t) == steps_of(base, t), (rid, "strobe moved steps")
+                if k != "strobe":
+                    assert p["tracks"][t]["envelope"] == base["tracks"][t]["envelope"], (rid, k, "envelope changed")
+    # density 0 leaves the backbone: kick on every beat for the kick recipes, something for the others
+    p0 = realize(rid, r9, 500 + i, macros={"density": 0})
+    if rid in KICK_ON_D:
+        assert {s for _, s in steps_of(p0, 0)} == set(BEATS), (rid, "backbone kick")
+    # accent 0 flattens, 1 spreads levels
+    lv = lambda p: [l for tr in p["tracks"] for st in tr["steps"].values() for _, l, _ in st]
+    flat, sharp = lv(realize(rid, r9, 500 + i, macros={"accent": 0})), lv(realize(rid, r9, 500 + i, macros={"accent": 1}))
+    assert max(flat) - min(flat) <= max(sharp) - min(sharp) + 1e-9, rid
+
+# strobe morph: monotone in the right direction, with floors
+soft, mid, hard = morph("kick", 0.5, 0.0), morph("kick", 0.5, 0.5), morph("kick", 0.5, 1.0)
+assert mid == {"attack": 0, "decay": 0.12, "sustain": 0.2, "release": 0.2, "gate": 0.5}
+assert soft["attack"] > mid["attack"] and soft["release"] > mid["release"] and soft["sustain"] == 1
+assert hard["attack"] == 0 and hard["release"] == 0.05 and hard["gate"] >= 0.15 and hard["sustain"] < mid["sustain"]
+assert morph("strobe", 0.25, 1.0)["release"] == 0.05
+
+# speed 0 holds pads: a stream repeats its pad; speed 1 splits block hits
+p_slow = realize("W3", r9, 7, macros={"speed": 0})
+seq = [k for s in range(32) for k, st in p_slow["tracks"][1]["steps"].items() if any(x == s for x, _, _ in st)]
+assert len(set(seq)) < len(set(k for k in seq)) + 1 and len(seq) == 24 and len(set(seq[:8])) == 1, seq
+p_fast = realize("W2", r9, 7, macros={"speed": 1})
+assert len(p_fast["tracks"][0]["steps"]) <= 3 and all(len(st) < 8 for st in p_fast["tracks"][0]["steps"].values())
+
+# spread: walking stays near, jumping goes far (W3 scatter on 9 pads)
+def mean_jump(p):
+    seq = [rig_from_roles("U9").pos(int(k[4:])) for s in range(32) for k, st in p["tracks"][1]["steps"].items() if any(x == s for x, _, _ in st)]
+    return sum(abs(a - b) for a, b in zip(seq, seq[1:])) / (len(seq) - 1)
+assert mean_jump(realize("W3", r9, 157, macros={"spread": 0})) < mean_jump(realize("W3", r9, 157, macros={"spread": 1}))
+
+# set_macros keeps name/swing/level, re-derives envelope from Strobe, keeps the seed unless given
+p = realize("D2", r9, 67)
+p["tracks"][1]["level"] = 0.33
+q = set_macros(p, r9, {"strobe": 1.0})
+assert q["tracks"][1]["level"] == 0.33 and q["tracks"][1]["envelope"]["release"] == 0.05 and q["source"]["seed"] == 67
+assert q["source"]["macros"]["strobe"] == 1.0 and q["source"]["macros"]["density"] == 0.5
+assert set_macros(p, r9, {"density": 0.2}, seed=9)["source"]["seed"] == 9
+p2 = dict(p, source=None)
+assert set_macros(p2, r9, {"strobe": 1}) is p2
+
 # ---- through the real sequencer (when run inside the repo) -------------------------- #
 try:
     from sequencer import Sequencer, _pattern_from_dict
@@ -145,4 +206,4 @@ if Sequencer:
                 bt += 0.01
             assert seen, (rig.signature(), i)
 
-print(f"OK  {len(rigs)} rigs x 16 recipes = {checked} patterns" + ("" if Sequencer else "  (sequencer.py not found: playback check skipped)"))
+print(f"OK  {len(rigs)} rigs x 16 recipes = {checked} patterns, macros checked" + ("" if Sequencer else "  (sequencer.py not found: playback check skipped)"))
