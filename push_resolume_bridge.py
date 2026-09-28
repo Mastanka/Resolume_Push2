@@ -70,7 +70,6 @@ from pathlib import Path
 import requests
 import yaml
 
-import banks
 from seq_mapping import MappingMixin
 from seq_presets import PresetsMixin
 from seq_screen import SeqMixin
@@ -78,12 +77,12 @@ from constants import (  # noqa: F401  (tests and tools read the control names f
     TRACK_ENCODERS, MASTER_ENCODER, NAV_BUTTONS, MIX_BUTTON, PLAY_BUTTON, STOP_BUTTON, MOVE_BUTTON, TAP_BUTTON,
     TEMPO_ENCODER, BLACKOUT_BUTTON, MUTE_BUTTON, SOLO_BUTTON, SCENE_BUTTONS, BLINK, BLACKOUT_RESEND, BLACKOUT_TRIES,
     METRONOME_BUTTON, TAP_PATH, RESYNC_PATH, BEAT_ON, LED_HZ, MASTER_COLOR_BUTTON, PASTE_BUTTON, NOTE_TIME,
-    SELECT_BUTTON, SWING_ENCODER, HELD_FLAGS, CLIP_MENUS, SEQ_MENUS, SEQ_PAGES, MAP_FIXTURES, PRESET_BANK,
-    PARAM_MODES, FX_MODES, MIX_MODES, OVERLAY_BUTTONS, HOLD_TIME, FX_SOURCES, UPPER_ROW, LOWER_ROW,
-    TEMPO_PATH, TAP_RESET, TAP_FLASH, DIM, MID, PALETTE_BASE, SWATCH_BASE, SECTION_BASE,
-    SECTION_RGB, SECTION_SHADES, COLOR_SOURCES, COLOR_KNOBS, AUTO_SKIP_LAST, AUTO_SOURCES, OVERRIDE_HOLD, NOTE_BUTTON,
-    SESSION_BUTTON, BROWSE_BUTTON, REPEAT_BUTTON, ACCENT_BUTTON, DELETE_BUTTON, DOUBLE_LOOP_BUTTON, FIXED_LENGTH_BUTTON, OCTAVE_UP,
-    OCTAVE_DOWN, LAYOUT_BUTTON, SCALE_BUTTON, CONFIRM_NO, CONFIRM_YES, SEQ_RED, SEQ_RED_DIM,
+    SELECT_BUTTON, SWING_ENCODER, HELD_FLAGS, CLIP_MENUS, SEQ_MENUS, SEQ_PAGES, MAP_FIXTURES, PARAM_MODES,
+    FX_MODES, MIX_MODES, OVERLAY_BUTTONS, HOLD_TIME, FX_SOURCES, UPPER_ROW, LOWER_ROW, TEMPO_PATH,
+    TAP_RESET, TAP_FLASH, DIM, MID, PALETTE_BASE, SWATCH_BASE, SECTION_BASE, SECTION_RGB,
+    SECTION_SHADES, COLOR_SOURCES, COLOR_KNOBS, AUTO_SKIP_LAST, AUTO_SOURCES, OVERRIDE_HOLD, NOTE_BUTTON, SESSION_BUTTON,
+    BROWSE_BUTTON, REPEAT_BUTTON, ACCENT_BUTTON, DELETE_BUTTON, DOUBLE_LOOP_BUTTON, FIXED_LENGTH_BUTTON, OCTAVE_UP, OCTAVE_DOWN,
+    LAYOUT_BUTTON, SCALE_BUTTON, SEQ_RED, SEQ_RED_DIM,
 )
 from display import LAYER_RGB, render  # noqa: F401  (render re-exported for tests/tools)
 from resolume_api import (  # noqa: F401
@@ -257,7 +256,7 @@ class Bridge(SeqMixin, MappingMixin, PresetsMixin):
         self.move_src = None
         self._release_seq_holds()
         self.select_held = False
-        self.map_armed = self.preset_pick = self.confirm = None
+        self.map_armed = self.confirm = self.load_armed = None
 
     # ---- composition access --------------------------------------------- #
     def layers(self):
@@ -1080,7 +1079,7 @@ class Bridge(SeqMixin, MappingMixin, PresetsMixin):
                 self.menus[self.view] = (SEQ_MENUS if self.view == "seq" else CLIP_MENUS)[name]
                 self._clear_overlay()
                 self.move_src = None
-                self.map_armed = self.preset_pick = self.confirm = None
+                self.map_armed = self.confirm = self.load_armed = None
                 self.color_target = "clip"
             elif name == NOTE_BUTTON:
                 if self.shift:
@@ -1168,20 +1167,9 @@ class Bridge(SeqMixin, MappingMixin, PresetsMixin):
             blink = int(time.time() / BLINK) % 2 == 0
             mix_layers = self.mix_layers()
             fx_items = self.fx_page_items()[0] if self.mode in FX_MODES else []
-            q = self.question() if seq and self.overlay is None and self.presets_menu() else None
-            rig_ok = self.current_rig()[0] is not None if seq and self.presets_menu() else False
-            items = banks.presets(PRESET_BANK)
             for k, b in enumerate(LOWER_ROW):
                 if seq and self.overlay is None and self.presets_menu():
-                    i = k + (8 if self.shift else 0)
-                    if q:
-                        out[b] = "red" if k == CONFIRM_NO else ("green" if k == CONFIRM_YES else "black")
-                    elif i >= len(items):
-                        out[b] = "black"
-                    elif self.preset_pick == items[i][0]:
-                        out[b] = "white" if blink else "black"
-                    else:
-                        out[b] = "dark_gray" if rig_ok else "black"
+                    out[b] = self._presets_lower_color(k, blink)
                 elif seq and self.overlay is None:
                     if k < self.seq.n_tracks:
                         has = self.engine.ready(k)

@@ -128,32 +128,61 @@ def render(snap, bgr=True):
         say(950, 127, snap["bpm"], right=True)
         say(950, 150, "FINE" if snap["shift"] else "PALETTE BELOW", right=True)
     elif snap["mode"].startswith("seq") and (snap["seq"] or {}).get("presets"):
-        pr = snap["seq"]["presets"]                               # PRESETS: labels for the buttons below
-        col(SEQ_RED); font(13, True)
-        say(24, 22, "PRESETS  ·  TECHNO")
-        col((255, 255, 255)); font(21, True)
-        say(24, 50, pr["title"], 912)
-        col((175, 175, 175)); font(14)
-        say(24, 73, pr["rig"], 912)
-        col((125, 125, 125)); font(13)
-        say(24, 92, pr["info"], 912)
-        col((60, 60, 60)); ctx.rectangle(0, 100, W, 1); ctx.fill()
-        for k, label in enumerate(pr["labels"]):
+        pr = snap["seq"]["presets"]                               # PRESETS: macro knobs, preview strip, actions
+        for k in range(8):
             x = k * 120
+            if snap["touched"] == k:
+                col((45, 45, 45)); ctx.rectangle(x, 0, 120, 98); ctx.fill()
             if k:
-                col((35, 35, 35)); ctx.rectangle(x, 122, 1, 30); ctx.fill()
+                col((35, 35, 35)); ctx.rectangle(x, 6, 1, 86); ctx.fill()
+            label, value, frac = pr["knobs"][k]
+            if not label:
+                col((140, 140, 140)); font(13)
+                say(x + 112, 58, snap["bpm"], right=True)
+                continue
+            col((150, 150, 150)); font(15)
+            say(x + 8, 24, label, 104)
+            col((255, 255, 255)); font(20, True)
+            say(x + 8, 58, str(value), 104)
+            if frac is not None:
+                col((45, 45, 45)); ctx.rectangle(x + 8, 72, 104, 8); ctx.fill()
+                col(SEQ_RED if pr["draft"] else (200, 200, 200)); ctx.rectangle(x + 8, 72, 104 * frac, 8); ctx.fill()
+        col((60, 60, 60)); ctx.rectangle(0, 100, W, 1); ctx.fill()
+        for k, label in enumerate(pr["labels"]):                  # buttons below: the actions, or NO / YES
+            x = k * 120
             if not label:
                 continue
             if pr["question"]:
-                col((200, 40, 40) if label == "NO" else (30, 170, 80)); ctx.rectangle(x + 10, 122, 100, 30); ctx.fill()
+                col((200, 40, 40) if label == "NO" else (30, 170, 80)); ctx.rectangle(x + 10, 118, 100, 34); ctx.fill()
                 col((255, 255, 255)); font(17, True)
-            elif pr["picked"] == k:
-                col((255, 255, 255)); ctx.rectangle(x + 6, 122, 108, 30); ctx.fill()
-                col((0, 0, 0)); font(14, True)
             else:
-                col((215, 215, 215)); font(14, True)
+                on = pr["active"][k]
+                col((70, 70, 70) if on else (38, 38, 38)); ctx.rectangle(x + 6, 118, 108, 34); ctx.fill()
+                col((255, 255, 255) if on else (120, 120, 120)); font(14, True)
             w = ctx.text_extents(label).x_advance
-            say(x + max(8, (120 - w) / 2), 143, label, 104)
+            say(x + max(8, (120 - w) / 2), 140, label, 104)
+        if pr["question"]:
+            col((255, 255, 255)); font(15, True)
+            say(486, 130, pr["title"], 226)
+            col((170, 170, 170)); font(12)
+            say(486, 150, pr["info"], 226)
+        else:
+            n = len(pr["strip"])                                  # the draft on the rig: a bar per pad, brightness = level
+            if n:
+                bw = min(14.0, (214 - 2 * (n - 1)) / n)
+                for i, (role, lv) in enumerate(pr["strip"]):
+                    h = 40 if role == "D" else 26
+                    g = int(40 + 215 * max(0.0, min(1.0, lv)))
+                    col((g, g, g)); ctx.rectangle(486 + i * (bw + 2), 152 - h, bw, h); ctx.fill()
+            else:
+                col((110, 110, 110)); font(13)
+                say(486, 136, "no rig", 214)
+            col((255, 255, 255)); font(14, True)
+            say(708, 124, pr["title"], 242)
+            col((170, 170, 170)); font(11)
+            say(708, 141, pr["rig"], 242)
+            col((125, 125, 125))
+            say(708, 156, pr["info"], 242)
     elif snap["mode"].startswith("seq"):
         sq = snap["seq"]
         tcol = LAYER_RGB[sq["track"] % 8]

@@ -519,10 +519,10 @@ fire("on_pad_released", 60, (7, 3), 0); fire("on_button_released", "Delete")
 time.sleep(0.5)
 assert fxp()["Pad 4"]["value"] == "\u2014"
 
-# --- PRESETS (SEQ menu 3): the buttons below the display are presets, not tracks
+# --- PRESETS (SEQ menu 3): recipe grid on the top-left pads, Apply on button 1
 tap("Upper Row 3")
 time.sleep(0.3)
-assert last("Lower Row 1") == "black", "3 mapped pads: presets need 4"
+assert last("Lower Row 4") == "black", "3 mapped pads: presets need 4"
 tap("Upper Row 4")                                                                  # map pad 4 = L4F1 (a 2 m bar)
 fire("on_button_pressed", "Select")
 fire("on_pad_pressed", 60, (0, 4), 100); fire("on_pad_released", 60, (0, 4), 0)
@@ -530,22 +530,23 @@ fire("on_pad_pressed", 60, (7, 3), 100); fire("on_pad_released", 60, (7, 3), 0)
 fire("on_button_released", "Select")
 tap("Upper Row 3")
 time.sleep(0.3)
-assert last("Lower Row 1") == "dark_gray" and last("Upper Row 3") == "L6", "4 pads: presets ready"
+assert last("Lower Row 4") == "dark_gray" and last("Upper Row 3") == "L6", "4 pads: presets ready"
 n0 = len(calls)
-tap("Lower Row 1")                                                                  # pick R1 Pump
-time.sleep(0.6)
-assert ("pad", ((4, 5), "white")) in calls[n0:] and ("pad", ((4, 5), "black")) in calls[n0:], "pattern row blinks"
-fire("on_pad_pressed", 60, (4, 2), 100); fire("on_pad_released", 60, (4, 2), 0)     # P3 is empty: stored
-time.sleep(0.3)
+fire("on_pad_pressed", 60, (4, 2), 100); fire("on_pad_released", 60, (4, 2), 0)     # edit P3 (live stays P1)
+fire("on_pad_pressed", 60, (0, 0), 100); fire("on_pad_released", 60, (0, 0), 0)     # R1 Pump → draft
+time.sleep(0.4)
+assert ("pad", ((0, 0), "white")) in calls[n0:] and last("Lower Row 1") == "green", "draft: recipe lit, Apply green"
 pats = lambda: yaml.safe_load(open(cfg["chases_file"]).read())["patterns"]
+assert pats()[2]["name"] == "P3", "a draft is not saved"
+tap("Lower Row 1")                                                                  # Apply
+time.sleep(0.3)
 assert pats()[2]["name"] == "R1 Pump" and pats()[2]["source"]["rig"] == "1S 2D 3S 4D", pats()[2].get("source")
-tap("Lower Row 2")                                                                  # R2 3/16 onto the used P3
-fire("on_pad_pressed", 60, (4, 2), 100); fire("on_pad_released", 60, (4, 2), 0)
+fire("on_encoder_rotated", "Track1 Encoder", 10)                                    # Strobe 0.7 on the applied P3
+time.sleep(0.2)
+assert pats()[2]["source"]["macros"]["strobe"] == 0.5, "a knob makes a draft, the slot waits for Apply"
+tap("Lower Row 1")
 time.sleep(0.3)
-assert last("Lower Row 7") == "red" and last("Lower Row 8") == "green", "NO / YES"
-tap("Lower Row 8")
-time.sleep(0.3)
-assert pats()[2]["name"] == "R2 3/16"
+assert pats()[2]["source"]["macros"]["strobe"] == 0.7 and pats()[2]["source"]["seed"] == pats()[2]["source"]["seed"]
 tap("Upper Row 1")
 
 n1 = len(calls)

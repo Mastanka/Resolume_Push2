@@ -47,11 +47,15 @@ CLIP_MENUS = {"Upper Row 1": "clip_params", "Upper Row 2": "color", "Upper Row 3
 SEQ_MENUS = {"Upper Row 1": "seq_env", "Upper Row 2": "seq_settings", "Upper Row 3": "seq_presets",
              "Upper Row 4": "seq_mapping"}
 SEQ_PAGES = {"seq_env": ["Attack", "Decay", "Sustain", "Release", "Gate"],     # knobs per SEQ menu
-             "seq_settings": ["Direction", "Length", "Level"], "seq_presets": [], "seq_mapping": []}
+             "seq_settings": ["Direction", "Length", "Level"],
+             "seq_presets": ["Strobe", "Density", "Speed", "Spread", "Accent", "Seed", "Bank"], "seq_mapping": []}
 MAP_FIXTURES = 32     # MAPPING: fixtures on the top four pad rows (Octave ▲ ▼ = next 32)
 MAP_BLINK = 0.08      # s per phase of the double blink that confirms a stored mapping
 PRESET_BANK = "techno"   # banks.BANKS: the presets on the buttons below the display (Shift = 9-16)
 CONFIRM_NO, CONFIRM_YES = 6, 7   # PRESETS questions: buttons 7 (NO) and 8 (YES) below the display
+PRESET_ACTIONS = ["Apply", "Revert", "Re-fit", "Load bank"]   # PRESETS: buttons 1-4 below the display
+MACRO_STEP, MACRO_FINE = 0.02, 0.005   # macro change per knob tick (Shift = fine)
+LOAD_DOUBLE = 2.0     # s: Load bank must be pressed twice within this time
 PARAM_MODES = ("clip_params", "layer_params")
 FX_MODES = ("clip_fx", "layer_fx")
 MIX_MODES = ("mix", "mute", "solo")       # screens on top of either view (Mix / Mute / Solo button)

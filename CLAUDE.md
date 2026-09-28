@@ -18,7 +18,11 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 
 | File | Purpose |
 |---|---|
-| `push_resolume_bridge.py` | Entry point: constants, `Bridge` (state + input), `run()`, `--dump`, config |
+| `push_resolume_bridge.py` | Entry point: `Bridge` (state + input, clip view, overlays, blackout), `run()`, `--dump`, config |
+| `constants.py` | Control names (push2-python's), menus, knob tables, palette slots, tuning constants |
+| `seq_screen.py` | `SeqMixin`: SEQ view (steps, pattern row, pads, groups, SEQ knobs, `seq_loop`, `_seq_snapshot`), SEQ state in `_init_seq` |
+| `seq_mapping.py` | `MappingMixin`: the MAPPING menu |
+| `seq_presets.py` | `PresetsMixin`: rig detection, the PRESETS menu (recipe grid, macros, drafts, preview, Apply / Revert / Re-fit / Load bank) |
 | `resolume_api.py` | Resolume JSON helpers (`resolve_node`, `walk`, colour helpers), REST client, `Sender` |
 | `resolume_check.py` | `--check LAYER`: tries every Resolume call on a spare layer, undoes it, prints OK/FAIL |
 | `colors.yaml` | Own COLOR palette (Shift + BD saves), Štefan's show data |
@@ -26,7 +30,7 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 | `sequencer.py` | SEQ logic, pure: bars from the Advanced Output preset XML, `Envelope`, `Track` / `Pattern`, `Sequencer` (editing, `tick()`, `chases.yaml`) |
 | `chaser_engine.py` | `PluginEngine`: levels → `Level n` params of the Bar Chaser effect instances (grouped by their `Track`); one shared pad mapping (`sync_pads`, run by `Bridge.set_comp`; `set_pad`) |
 | `rig.py` | SEQ presets: the mapped pads in physical order with long (D) / short (S) roles, from the Advanced Output preset (`preset_rects` = Python twin of `plugin/src/Preset.cpp`) |
-| `banks.py` | SEQ presets: the 16 Techno recipes in role space, `realize()` onto a rig, `refit()`, `presets()` |
+| `banks.py` | SEQ presets: the 16 Techno recipes in role space with tiers, `Mulberry32` (same PRNG as `docs/preview/preview_page.html`), `realize()` with macros, `morph()` (Strobe), `refit()`, `set_macros()`, `presets()`. Keep it bit-identical to the page's engine |
 | `plugin/` | The **Bar Chaser** FFGL effect (C++, CMake, vendored FFGL SDK lib + pugixml). `plugin/build.sh` → `plugin/dist/Bar Chaser.bundle`; `ctest` runs the preset-parser test and an offscreen GL host test |
 | `chases.yaml` | Sequencer patterns, Štefan's show data |
 | `tests/test_sequencer.py` | Pure tests for `sequencer.py` (no mock) |
@@ -127,14 +131,21 @@ overlays. Parameter page is per menu (`Bridge.page` property over `_pages`).
   `Opacity` param, BD = `bypassed`. Page ◀▶ = `fx_page`. Composition effects are in no menu (Master
   button reaches the composition colour).
 - **seq_env / seq_settings / seq_presets / seq_mapping** (Note view, BU1–4): knobs from `SEQ_PAGES` (hold
-  step + Gate / Level knob = that step). **PRESETS** (`Bridge.presets_menu()`, spec
-  `docs/specs/2026-09-27-seq-presets-design.md`): BD1–8 = presets of `banks.presets()` (Shift 9–16)
-  instead of tracks; `preset_pick` blinks with the pattern row; a pattern pad stores it
-  (`_store_preset`: `banks.realize` on `current_rig()`, new seed, `Sequencer.store_pattern`, grid 1/16)
-  or asks (`confirm`, BD7 NO / BD8 YES). `Pattern.source` = {bank, recipe, seed, rig}; step edits
-  clear it (`mark_edited`, via `Sequencer.toggle_steps` / `remove_steps`, which `_seq_pad` uses). `check_rig()` after every composition / MAPPING change:
-  loaded composition → `Sequencer.refit` at once; otherwise `refit_offer` → PRESETS asks. Misfit
-  pattern pads orange in PRESETS. **MAPPING** (`Bridge.mapping()`,
+  step + Gate / Level knob = that step). **PRESETS** (`seq_presets.py`, `PresetsMixin`; spec
+  `docs/specs/2026-09-28-seq-banks-dramaturgy-macros-preview.md` + its "As built" section): rows 1–4 columns
+  1–4 = the 16 recipes (`banks.BANKS[PRESET_BANK]`, row = bank, column = energy) → `_preset_recipe_pad` makes
+  a **draft** `Bridge.drafts[slot] = {recipe, seed, macros}` for `Bridge.preset_slot` (row 5 selects it
+  without switching live: `_preset_pattern_pad`; the same pad again = normal switch). K1–K5 macros, K6 seed
+  (Shift ±1), K7 bank (`_preset_turn`; Select held = every preset slot). BD1 Apply (`_apply`: same recipe →
+  `banks.set_macros`, else `banks.realize`; `Sequencer.apply` = at the next bar when live and running
+  (`pending_apply`); an own pattern with steps → `confirm`, BD7 NO / BD8 YES), BD2 Revert, BD3 Re-fit
+  (`_refit_now`, blinks on `refit_offer`), BD4 Load bank twice within `LOAD_DOUBLE` (`Sequencer.load_bank`
+  keeps own patterns). **Preview:** `Bridge.preview` (a second `Sequencer`, no path) plays the draft;
+  `preview_tick(bt)` from `seq_loop` fills `preview_levels` for the display strip; nothing is sent.
+  `Pattern.source` = {bank, recipe, seed, macros, rig}; step edits clear it (`mark_edited`, via
+  `Sequencer.toggle_steps` / `remove_steps`, which `_seq_pad` uses). `check_rig()` after every composition /
+  MAPPING change: loaded composition → `Sequencer.refit` at once; otherwise `refit_offer` (BD3 blinks). Misfit
+  pattern pads pink, the edited slot white, slots with a draft light grey. **MAPPING** (`seq_mapping.py`,
   `_map_pad`, `_map_pad_colors`): rows 1–4 = the track's fixtures from the effect's Pad options
   (`chaser_engine.fixture_list`: "Screen / slice" entries grouped by screen → L#F#, a screen without
   fixture entries = one fixture), row 5 orange, rows 6–8 = pads. Select + fixture = `map_armed` (blinks),
@@ -294,6 +305,7 @@ python tests/mock_resolume.py &     # listens on 127.0.0.1:18080 (MOCK_PORT), ne
 python tests/test_sequencer.py      # pure logic, no mock needed
 python tests/test_states.py         # stuck-state regressions + random walk, no mock needed
 python tests/test_helpers.py        # JSON helpers, render per screen, retry / outbox, no mock needed
+python tests/test_presets.py        # PRESETS: drafts, macros, preview, Apply / Revert / Re-fit / Load bank, no mock needed
 python tests/test_banks.py          # presets: rigs × recipes, no mock needed
 plugin/build.sh                     # C++: builds the bundle and runs ctest (preset parser + GL host test)
 python tests/test_engine.py         # restart the mock before each script: they change its composition

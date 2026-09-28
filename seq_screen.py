@@ -97,6 +97,7 @@ class SeqMixin:
                                 self.seq.trigger(track, bar, 1.0, tr.gate * sb, bt)
                         self.last_grid_step = g
                         changed = self.seq.tick(bt)
+                        self.preview_tick(bt)                  # PRESETS draft, display only
                 for (track, bar), v in changed.items():
                     self.engine.set_level(track, bar, v)
                 self.engine.flush()                        # levels held back by the rate limit
@@ -171,6 +172,9 @@ class SeqMixin:
                 return
             if self.mapping() and self._map_pad(ij, True):
                 return
+            if i < 4 and self.presets_menu():                      # PRESETS: the recipe grid
+                self._preset_recipe_pad(i, j)
+                return
             if i < 4:                                              # steps, for every selected pad
                 step = i * 8 + j
                 if step >= seq.pattern.length:
@@ -183,8 +187,7 @@ class SeqMixin:
                 seq.toggle_steps(keys, step, 1.0 if self.accent else max(0.05, velocity / 127.0))
             elif i == 4:                                           # patterns
                 p = self.pattern_index(j)
-                if self.presets_menu() and self.preset_pick:
-                    self._preset_pattern_pad(p)
+                if self.presets_menu() and self._preset_pattern_pad(p):
                     return
                 if self.delete_held:
                     seq.clear_pattern(p)
@@ -308,6 +311,9 @@ class SeqMixin:
         if idx >= len(names):
             return
         name = names[idx]
+        if self.presets_menu():
+            self._preset_turn(name, inc)
+            return
         seq, tr = self.seq, self.seq.pattern.tracks[self.seq.track]
         fine = 0.2 if self.shift else 1.0
         if self.held_steps and name in ("Gate", "Level"):         # hold step + knob, all selected pads
@@ -370,7 +376,9 @@ class SeqMixin:
         for i in range(8):
             for j in range(8):
                 color = "black"
-                if i < 4:                                              # steps: shades of red
+                if i < 4 and presets:                                  # PRESETS: the recipe grid
+                    color = self._recipe_pad_color(i, j)
+                elif i < 4:                                            # steps: shades of red
                     step = i * 8 + j
                     if step < seq.pattern.length:
                         n_on = sum(1 for st in track_steps if step in st)
@@ -389,14 +397,10 @@ class SeqMixin:
                     t0 = self.map_blink.get(("pattern", p))
                     if t0 is not None and time.time() - t0 < 4 * MAP_BLINK:        # stored: blinks twice
                         color = "white" if int((time.time() - t0) / MAP_BLINK) in (0, 2) else "black"
-                    elif presets and self.confirm and self.confirm.get("slot") == p:
-                        color = "white"
-                    elif presets and self.preset_pick:
-                        color = "white" if blink else "black"                    # pick a slot
+                    elif presets and self._presets_pattern_color(p, misfit):
+                        color = self._presets_pattern_color(p, misfit)
                     elif seq.pending == p:
                         color = "S_orange" if blink else "S_orange_off"               # queued
-                    elif presets and p in misfit:
-                        color = "pink"                                           # made for another rig
                     else:
                         color = "S_orange" if p == seq.current else ("S_orange_dim" if has else "S_orange_off")
                 else:                                                  # pads: shades of yellow
@@ -429,7 +433,12 @@ class SeqMixin:
         self.map_focus = None      # MAPPING: pad last pressed (its fixture is shown)
         self.map_blink = {}        # MAPPING: ("fx", index) / ("pad", k) -> time of the confirming double blink
         self.map_page = 0          # MAPPING: which 32 fixtures are on the pads
-        self.preset_pick = None    # PRESETS: recipe id picked on the buttons below the display
+        self.preset_slot = 0       # PRESETS: the slot being edited and previewed (row 5 selects it)
+        self.drafts = {}           # PRESETS: slot -> {"recipe", "seed", "macros"} not applied yet (never saved)
+        self.load_armed = None     # PRESETS: time of the first Load-bank press (the second within LOAD_DOUBLE loads)
+        self.preview = Sequencer(n_tracks=int(sc.get("tracks", 4)))   # plays the draft for the display only
+        self.preview.grid = "1/16"
+        self.preview_levels = {}   # pad index -> level from the preview sequencer
         self.confirm = None        # PRESETS question: {"kind": "overwrite", "slot", "recipe"}
         self.refit_offer = False   # the rig changed during the show: PRESETS offers a re-fit
         self._rig_cache = (None, None, None)   # (inputs, Rig or None, error text)
@@ -461,7 +470,7 @@ class SeqMixin:
                  "Direction": (sq.pattern.direction, 0.0),
                  "Length": (f"{sq.pattern.length} steps", sq.pattern.length / 32),
                  "Level": pct(tr.level)}
-        knobs = [(n,) + every[n] for n in SEQ_PAGES.get(self.menus["seq"], [])]
+        knobs = [] if self.presets_menu() else [(n,) + every[n] for n in SEQ_PAGES.get(self.menus["seq"], [])]
         pads = [(k + 1, self.engine.short(sq.track, self.engine.pad_name(sq.track, k)) or "—")
                 for k in sorted(self.sel_pads)]
         mapping = self._mapping_snapshot() if self.mapping() else None

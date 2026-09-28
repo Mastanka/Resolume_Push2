@@ -211,8 +211,8 @@ def test_global_group_isolation():
 
 
 def test_presets():
-    """PRESETS: a preset fills one pattern slot on the current rig, a used slot asks first; a rig
-    change during the show is offered as a re-fit, a loaded composition re-fits at once."""
+    """PRESETS: a recipe pad drafts for the selected slot, Apply realises it on the current rig; an own
+    pattern asks first; a rig change during the show lights Re-fit, a loaded composition re-fits at once."""
     br = _bridge()
     if not br.engine.instances():
         n0 = len(comp()["layers"])
@@ -223,49 +223,44 @@ def test_presets():
     def press(name):
         br.button(name, True); br.button(name, False)
 
-    def pattern_pad(slot):
-        br.pad_pressed((4, slot)); br.pad_released((4, slot))
+    def pad(ij):
+        br.pad_pressed(ij); br.pad_released(ij)
 
     br.mode = "seq_presets"
     for k in range(3, 24):
         br.engine.set_pad(k, "\u2014")
     r, err = br.current_rig()                                            # pads 1-3 only
     assert r is None and "found 3" in err, err
-    press("Lower Row 1")
-    assert br.preset_pick is None and br.button_colors()["Lower Row 1"] == "black"
+    pad((0, 0))                                                          # R1 with 3 pads: refused
+    assert not br.drafts and br.button_colors()["Lower Row 1"] == "black"
     assert br.engine.set_pad(3, "Bar D / 1 - 855 h3 2m grb")            # pad 4 = a 2 m bar
     r, err = br.current_rig()
     assert r and r.signature() == "1S 2D 3S 4D" and r.source == "preset", (r and r.signature(), err)
-    assert br.button_colors()["Lower Row 1"] == "dark_gray"
-    press("Lower Row 1")                                                 # pick R1 Pump
-    assert br.preset_pick == "R1"
-    pattern_pad(2)                                                       # P3 is empty: stored at once
+    pad((4, 2)); pad((0, 0))                                             # edit P3, draft = R1 Pump
+    assert br.drafts[2]["recipe"] == "R1" and br.seq.is_empty(2) and br.button_colors()["Lower Row 1"] == "green"
+    press("Lower Row 1")                                                 # Apply
     p3 = br.seq.patterns[2]
-    assert p3.name == "R1 Pump" and p3.source["rig"] == "1S 2D 3S 4D" and br.preset_pick is None
+    assert p3.name == "R1 Pump" and p3.source["rig"] == "1S 2D 3S 4D" and 2 not in br.drafts
     assert set(p3.tracks[0].steps) <= {"pad 2", "pad 4"}, "the kick lands on the long bars"
-    press("Lower Row 2")                                                 # R2 3/16 onto the used P3: asks
-    pattern_pad(2)
-    assert br.confirm and br.seq.patterns[2].name == "R1 Pump"
+    br.seq.patterns[3].tracks[0].steps["pad 1"] = {0: [1.0, None]}       # an own pattern in P4
+    pad((4, 3)); pad((0, 1)); press("Lower Row 1")                       # R2 3/16 onto it: asks
+    assert br.confirm == {"kind": "overwrite", "slot": 3} and br.seq.patterns[3].source is None
     leds = br.button_colors()
-    assert leds["Lower Row 7"] == "red" and leds["Lower Row 8"] == "green" and leds["Lower Row 1"] == "black"
+    assert leds["Lower Row 7"] == "red" and leds["Lower Row 8"] == "green"
     snap = br.snapshot()["seq"]["presets"]
-    assert snap["labels"][6:] == ["NO", "YES"] and snap["title"].startswith("Overwrite P3 (R1 Pump)"), snap
-    press("Lower Row 7")                                                 # NO: still picked, choose another slot
-    assert br.confirm is None and br.seq.patterns[2].name == "R1 Pump" and br.preset_pick == "R2"
-    pattern_pad(2); press("Lower Row 8")                                 # YES
-    assert br.seq.patterns[2].name == "R2 3/16" and br.seq.patterns[2].source["recipe"] == "R2"
+    assert snap["labels"][6:] == ["NO", "YES"] and snap["title"].startswith("Overwrite P4"), snap
+    press("Lower Row 7")                                                 # NO: draft kept, pattern kept
+    assert br.confirm is None and br.seq.patterns[3].source is None and 3 in br.drafts
+    press("Lower Row 1"); press("Lower Row 8")                           # Apply, YES
+    assert br.seq.patterns[3].name == "R2 3/16" and br.seq.patterns[3].source["recipe"] == "R2"
     snap = br.snapshot()["seq"]["presets"]
-    assert snap["labels"][0] == "R1 Pump" and "Rig: 4 fixtures" in snap["rig"], snap
-    br.button("Shift", True)
-    assert br.snapshot()["seq"]["presets"]["labels"][0] == "G1 Ride"   # Shift: presets 9-16
-    br.button("Shift", False)
+    assert snap["labels"][:4] == ["Apply", "Revert", "Re-fit", "Load bank"] and "Rig: 4 fixtures" in snap["rig"], snap
     assert br.engine.set_pad(4, "Bar E / 1 - 423 141 RGB")              # the rig changes during the show
     br.check_rig()
-    assert br.refit_offer and br.question() == {"kind": "refit"} and br.seq.patterns[2].source["rig"] == "1S 2D 3S 4D"
-    assert br.button_colors()["Lower Row 8"] == "green"
-    press("Lower Row 8")                                                 # YES: re-fit
+    assert br.refit_offer and br.seq.patterns[2].source["rig"] == "1S 2D 3S 4D"
+    press("Lower Row 3")                                                 # Re-fit
     assert br.seq.patterns[2].source["rig"] == "1S 2D 3S 4D 5S" and not br.refit_offer
-    assert br.seq.patterns[2].name == "R2 3/16"
+    assert br.seq.patterns[2].name == "R1 Pump"
     assert br.engine.set_pad(4, "\u2014")
     br.check_rig(loaded=True)                                            # a loaded composition: at once
     assert br.seq.patterns[2].source["rig"] == "1S 2D 3S 4D" and not br.refit_offer

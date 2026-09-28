@@ -414,3 +414,35 @@ Add:
 - Preview level 3 (Arena, real textures), section 9.
 - Serving the web preview from the bridge with the detected rig (`--preview`).
 - More banks (house, breaks, ambient); recipes as YAML so Štefan can write his own without code.
+
+
+---
+
+## As built (2026-09-28, Štefan: "decide the best UX and go for it")
+
+Sections 5, 7, 8, 10 and 12 are implemented as written. Section 6 (the PRESETS menu) was built with
+these changes, because the buttons below the display could not hold both sixteen presets and the
+four actions, and Shift already means "fine step" on every knob of the bridge:
+
+- **The recipe grid is on the pads.** In PRESETS the top four pad rows show the sixteen recipes as
+  the table of section 1: row = bank (Rumble, Machine funk, Hard groove, Warehouse), column = energy
+  (Minimal, Groove, Peak, Kick out). Pressing one makes the draft of the selected slot (fresh seed, the
+  previous draft's macros carried over). Columns 5–8 are dark. Rows 6–8 stay the live pads.
+- **Row 5 selects the slot** to edit and preview without switching the live pattern; the same pad
+  again switches as usual. The edited slot is white, other slots with a draft light grey, a pattern
+  made for another rig pink (the row's own colour is orange now, see the views spec).
+- **Knobs:** K1–K5 macros, K6 seed (turn = reshuffle, Shift = ±1), K7 bank (one bank so far), K8
+  shows the BPM. **Select held + a macro knob** = the same macro on every preset slot (the handover's
+  Shift + knob). Shift = fine step, as everywhere.
+- **Buttons below:** 1 Apply, 2 Revert, 3 Re-fit, 4 Load bank. Apply onto an own (hand-made) pattern
+  with steps asks NO / YES on buttons 7 / 8; onto a preset pattern with the same recipe it keeps the
+  user's track Levels (`banks.set_macros`), with another recipe it realises fresh. Applying to the live,
+  running pattern happens at the next bar (`Sequencer.apply` / `pending_apply`). Load bank needs two
+  presses within 2 s and **keeps own patterns** (the handover overwrote P1–P16); the kept slots are named.
+  Re-fit blinks when the rig changed during the show (the earlier NO / YES question is gone; the
+  loaded-composition re-fit stays automatic).
+- **Preview** (section 8, level 2): the strip sits at the right of the buttons' labels, one bar per rig
+  pad (long bars taller), brightness = level, redrawn at 20 fps. The audition on the pads (optional in
+  section 8) and level 3 (Arena) are not built.
+- `source.rig` (the signature the placement was made for) is kept next to `macros`; the page's YAML
+  does not have it and `banks.refit` / `set_macros` write it.

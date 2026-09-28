@@ -7,7 +7,7 @@ after every event. Reports, does not assert: exit code 0. Every run is reproduci
 
 Invariants: no exception in a handler or in button_colors / pad_colors / snapshot / render; a
 *_held flag is only True while its button is physically down; pressed / col_pressed / flash /
-held_steps are empty when nothing is held; screen sub-state (preset_pick, confirm, map_armed,
+held_steps are empty when nothing is held; screen sub-state (confirm, load_armed, map_armed,
 move_src) only exists in its screen; sel and the grid offsets point inside the composition."""
 import sys, random, tempfile, pathlib, traceback, itertools, collections, time as _time
 ROOT = str(pathlib.Path(__file__).resolve().parent.parent)
@@ -110,8 +110,8 @@ def check(br, phys, problems, trace):
     if len(trace) % 20 == 0:
         display.render(snap)
     assert br.overlay in (None, "mix", "mute", "solo")
-    if (br.preset_pick is not None or br.confirm is not None) and not br.presets_menu():
-        bad("preset state outside PRESETS", f"pick={br.preset_pick} confirm={br.confirm} mode={br.mode}")
+    if (br.confirm is not None or br.load_armed is not None) and not br.presets_menu():
+        bad("PRESETS question / arming outside PRESETS", f"confirm={br.confirm} load_armed={br.load_armed} mode={br.mode}")
     if br.map_armed is not None and not br.mapping():
         bad("map_armed outside MAPPING", f"mode={br.mode}")
     if br.move_src is not None and br.mode not in B.PARAM_MODES:

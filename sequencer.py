@@ -156,6 +156,7 @@ class Sequencer:
         self.voices = {}           # (track, bar name) -> Voice
         self.levels = {}           # (track, bar name) -> last level returned by tick()
         self.dirty, self.dirty_t = False, 0.0   # a deferred save is waiting (save_later / flush)
+        self.pending_apply = None  # (slot, pattern dict) replacing the live pattern at the next bar
         if self.path and self.path.exists():
             self.load()
 
@@ -259,6 +260,29 @@ class Sequencer:
         self.patterns[p] = _pattern_from_dict(d)
         self.save()
 
+    def apply(self, p, d):
+        """Replace pattern p with a dict: the live, running pattern at the next bar boundary (the
+        outgoing voices finish their release), any other slot at once. Returns "bar" or "now"."""
+        if self.running and p == self.current:
+            self.pending_apply = (p, d)
+            return "bar"
+        self.store_pattern(p, d)
+        return "now"
+
+    def load_bank(self, dicts, keep_own=True):
+        """A whole bank into P1-P16. Own patterns (no preset source, with steps) are kept when
+        keep_own; returns their slots."""
+        kept = []
+        for i, d in enumerate(dicts[:N_PATTERNS]):
+            p = self.patterns[i]
+            if keep_own and p.source is None and any(st for t in p.tracks for st in t.steps.values()):
+                kept.append(i)
+                continue
+            self.patterns[i] = _pattern_from_dict(d)
+        self.pending_apply = None
+        self.save()
+        return kept
+
     def mismatched(self, signature):
         """Slots whose preset placement was made for a different rig than `signature`."""
         return [i for i, p in enumerate(self.patterns) if p.source and p.source.get("rig") != signature]
@@ -294,6 +318,10 @@ class Sequencer:
 
     def stop(self):
         self.running = False        # voices keep ticking so releases finish
+        if self.pending_apply:      # nothing to wait for any more
+            p, d = self.pending_apply
+            self.pending_apply = None
+            self.store_pattern(p, d)
 
     def switch_pattern(self, p, bt, now=False):
         if now or not self.running:
@@ -343,8 +371,13 @@ class Sequencer:
     def tick(self, bt):
         """Advance to beat time bt. Returns {(track, bar): level} for every level that changed."""
         if self.running:
-            if self.pending is not None and self.last_bt is not None \
-                    and math.floor(bt / BAR_BEATS) > math.floor(self.last_bt / BAR_BEATS):
+            new_bar = self.last_bt is not None and math.floor(bt / BAR_BEATS) > math.floor(self.last_bt / BAR_BEATS)
+            if self.pending_apply is not None and new_bar:
+                p, d = self.pending_apply
+                self.pending_apply = None
+                self.patterns[p] = _pattern_from_dict(d)
+                self.save_later()
+            if self.pending is not None and new_bar:
                 self.switch_pattern(self.pending, bt, now=True)
             k = self.abs_step(bt)
             if k != self.last_step:
