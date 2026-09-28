@@ -86,6 +86,31 @@ def preset_rects(path: str) -> Dict[str, Rect]:
     return out
 
 
+def parse_geometry(text: str) -> Optional[Tuple[float, float, Dict[str, Rect]]]:
+    """The Bar Chaser effect's `Geometry` parameter, "WxH|name:left,top,width,height|…" in composition
+    pixels (y from the top), the entries in the order of its Pad dropdowns → (width, height,
+    {name: rect}). None when empty or malformed (an older effect has no such parameter)."""
+    if not text or "|" not in text:
+        return None
+    head, *items = text.split("|")
+    try:
+        w, h = (float(v) for v in head.lower().split("x"))
+    except ValueError:
+        return None
+    out: Dict[str, Rect] = {}
+    for it in items:
+        if not it:
+            continue
+        name, _, nums = it.rpartition(":")
+        try:
+            left, top, bw, bh = (float(v) for v in nums.split(","))
+        except ValueError:
+            return None
+        if name:
+            out[name] = (left, top, left + bw, top + bh)
+    return (w, h, out) if out else None
+
+
 # --------------------------------------------------------------------------- #
 # Roles
 # --------------------------------------------------------------------------- #

@@ -95,7 +95,7 @@ int main( int argc, char** argv )
 	PluginInfoStruct* info = (PluginInfoStruct*)plugMain( FF_GET_INFO, arg, nullptr ).PointerValue;
 	CHECK( info && std::strncmp( (const char*)info->PluginName, "Bar Chaser", 10 ) == 0, "plugin name" );
 	unsigned int nparams = plugMain( FF_GET_NUM_PARAMETERS, arg, nullptr ).UIntValue;
-	CHECK( nparams == 55, "55 parameters expected" );
+	CHECK( nparams == 56, "56 parameters expected" );
 	FFGLViewportStruct vp = { 0, 0, (GLuint)W, (GLuint)H };
 	arg.PointerValue      = &vp;
 	FFInstanceID inst     = plugMain( FF_INSTANTIATE_GL, arg, nullptr ).PointerValue;
@@ -118,6 +118,16 @@ int main( int argc, char** argv )
 		return plugMain( FF_SET_PARAMETER, a, inst ).UIntValue;
 	};
 	CHECK( setText( 0, argv[ 2 ] ) == FF_SUCCESS, "set preset" );  // Pad 1 = first fixture, Bar B (x 345-375 of 1920, y 70-532)
+	auto getText = [&]( unsigned int index ) {
+		FFMixed a;
+		a.UIntValue = index;
+		return (const char*)plugMain( FF_GET_PARAMETER, a, inst ).PointerValue;
+	};
+	const char* geo = getText( 55 );
+	CHECK( geo && std::strncmp( geo, "1920x1080|", 10 ) == 0, "geometry starts with the composition size" );
+	CHECK( std::strstr( geo, "|Bar B / 1 - 423 141 RGB:345,70,30,462|" ), "geometry lists the first fixture with its rectangle" );
+	CHECK( std::strstr( geo, "|Bar C:545,70,55,939" ), "geometry lists the whole screens too" );
+	CHECK( setText( 55, "junk" ) == FF_SUCCESS && std::strncmp( getText( 55 ), "1920x1080|", 10 ) == 0, "geometry is read-only" );
 
 	FFGLTextureStruct texInfo  = { (FFUInt32)W, (FFUInt32)H, (FFUInt32)W, (FFUInt32)H, tex };
 	FFGLTextureStruct* texPtrs[ 1 ] = { &texInfo };

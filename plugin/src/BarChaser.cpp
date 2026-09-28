@@ -16,7 +16,8 @@ enum ParamIndex : unsigned int
 	P_MODE,
 	P_PAD0,                          // 24 pad assignments
 	P_LEVEL0 = P_PAD0 + BarChaser::NPADS,// 24 live levels
-	P_COUNT  = P_LEVEL0 + BarChaser::NPADS
+	P_GEOMETRY = P_LEVEL0 + BarChaser::NPADS,// read-only text: the bar rectangles, for the bridge (last, so older compositions keep their indices)
+	P_COUNT  = P_GEOMETRY + 1
 };
 
 static CFFGLPluginInfo PluginInfo(
@@ -176,12 +177,26 @@ BarChaser::BarChaser()
 		SetParamInfo( P_LEVEL0 + k, name.c_str(), FF_TYPE_STANDARD, 0.0f );
 		SetParamGroup( P_LEVEL0 + k, "Levels" );
 	}
+	SetParamInfo( P_GEOMETRY, "Geometry", FF_TYPE_TEXT, "" );
+	SetParamGroup( P_GEOMETRY, "Setup" );
 	loadPreset( false );
 	FFGLLog::LogToHost( "Bar Chaser created" );
 }
 
 BarChaser::~BarChaser()
 {
+}
+
+// "1920x1080|Bar B / 1 - 423 141 RGB:345,70,30,462|…": composition size, then every dropdown entry
+// with its rectangle in composition pixels (y from the top). Read by the bridge over Resolume's API,
+// so it needs no copy of the Advanced Output preset on its own machine.
+static std::string geometryText( const barchaser::Preset& p )
+{
+	auto n = []( float v ) { return std::to_string( int( v + 0.5f ) ); };
+	std::string s = n( p.width ) + "x" + n( p.height );
+	for( const auto& e : p.entries )
+		s += "|" + e.name + ":" + n( e.left ) + "," + n( e.top ) + "," + n( e.right - e.left ) + "," + n( e.bottom - e.top );
+	return s;
 }
 
 int BarChaser::entryIndex( const std::string& name ) const
@@ -201,12 +216,14 @@ void BarChaser::loadPreset( bool raiseEvents )
 	if( presetPath.empty() )
 	{
 		presetOk = false;
+		geometry.clear();
 		status   = "no preset in " + folder;
 	}
 	else if( barchaser::loadPreset( presetPath, loaded, err ) )
 	{
 		preset   = loaded;
 		presetOk = true;
+		geometry = geometryText( preset );
 		size_t slash = presetPath.rfind( '/' );
 		status = presetPath.substr( slash == std::string::npos ? 0 : slash + 1 ) + " (" + std::to_string( preset.entries.size() ) + ")";
 		// First load, or a preset in which none of the assigned names exist: pad k = k-th fixture.
@@ -220,10 +237,13 @@ void BarChaser::loadPreset( bool raiseEvents )
 	else
 	{
 		presetOk = false;
+		geometry.clear();
 		status   = err;
 	}
 	FFGLLog::LogToHost( ( "Bar Chaser: " + status ).c_str() );
 	refillPadElements( raiseEvents );
+	if( raiseEvents )
+		RaiseParamEvent( P_GEOMETRY, FF_EVENT_FLAG_VALUE );
 }
 
 void BarChaser::refillPadElements( bool raiseEvents )
@@ -359,7 +379,7 @@ FFResult BarChaser::DeInitGL()
 
 FFResult BarChaser::SetFloatParameter( unsigned int index, float value )
 {
-	if( index >= P_LEVEL0 && index < P_COUNT )
+	if( index >= P_LEVEL0 && index < P_GEOMETRY )
 	{
 		level[ index - P_LEVEL0 ] = value < 0.f ? 0.f : ( value > 1.f ? 1.f : value );
 		return FF_SUCCESS;
@@ -399,7 +419,7 @@ FFResult BarChaser::SetFloatParameter( unsigned int index, float value )
 
 float BarChaser::GetFloatParameter( unsigned int index )
 {
-	if( index >= P_LEVEL0 && index < P_COUNT )
+	if( index >= P_LEVEL0 && index < P_GEOMETRY )
 		return level[ index - P_LEVEL0 ];
 	if( index >= P_PAD0 && index < P_LEVEL0 )
 		return padValue[ index - P_PAD0 ];
@@ -421,6 +441,8 @@ float BarChaser::GetFloatParameter( unsigned int index )
 
 FFResult BarChaser::SetTextParameter( unsigned int index, const char* value )
 {
+	if( index == P_GEOMETRY )
+		return FF_SUCCESS;// read-only: the effect writes it
 	if( index != P_PRESET )
 		return FF_FAIL;
 	std::string text = value ? value : "";
@@ -434,6 +456,8 @@ FFResult BarChaser::SetTextParameter( unsigned int index, const char* value )
 
 char* BarChaser::GetTextParameter( unsigned int index )
 {
+	if( index == P_GEOMETRY )
+		return const_cast< char* >( geometry.c_str() );
 	if( index != P_PRESET )
 		return nullptr;
 	return const_cast< char* >( presetText.c_str() );
@@ -443,9 +467,11 @@ char* BarChaser::GetParameterDisplay( unsigned int index )
 {
 	if( index == P_PRESET )
 		displayBuffer = status;
+	else if( index == P_GEOMETRY )
+		displayBuffer = std::to_string( preset.entries.size() ) + " rectangles for the Push bridge";
 	else if( index == P_EDGE )
 		displayBuffer = std::to_string( int( edge + 0.5f ) ) + " px";
-	else if( index >= P_LEVEL0 && index < P_COUNT )
+	else if( index >= P_LEVEL0 && index < P_GEOMETRY )
 		displayBuffer = std::to_string( int( level[ index - P_LEVEL0 ] * 100.f + 0.5f ) ) + " %";
 	else if( index == P_MASTER )
 		displayBuffer = std::to_string( int( master * 100.f + 0.5f ) ) + " %";

@@ -5,7 +5,12 @@ Run:  python tests/mock_resolume.py
 import json, itertools, base64, hashlib, struct, threading, time
 from urllib.parse import unquote
 import os
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from rig import preset_rects  # noqa: E402
 
 PORT = int(os.environ.get("MOCK_PORT", "18080"))   # not 8080: on macOS a mock on 127.0.0.1:8080 would
 #                                                      # answer every loopback client of a running Arena
@@ -45,8 +50,12 @@ def file_clip(path):
     return c
 def choice(v, options):
     return {"id": next(ids), "valuetype": "ParamChoice", "value": v, "index": options.index(v), "options": list(options)}
+_RECTS = preset_rects(str(Path(__file__).resolve().parent / "fixtures" / "rig" / "mock_rig.xml"))
+GEOMETRY = "1920x1080|" + "|".join(f"{n}:{int(l)},{int(t)},{int(r - l)},{int(b - t)}" for n, (l, t, r, b) in _RECTS.items())
+
+
 def bar_chaser_effect():
-    """The Bar Chaser FFGL effect as Arena shows it: 55 params. The dropdowns list the fixtures
+    """The Bar Chaser FFGL effect as Arena shows it: 56 params. The dropdowns list the fixtures
     (Bar A has two), then the whole screens; pads 1-3 hold whole screens, as in an older show."""
     slices = ["\u2014", "Bar A / 1 - 423 141 RGB", "Bar A / 424 - 846 141 RGB 2", "Bar B / 1 - 855 h3 2m grb",
               "Bar C / 1 - 423 141 RGB", "Bar D / 1 - 855 h3 2m grb", "Bar E / 1 - 423 141 RGB",
@@ -59,6 +68,7 @@ def bar_chaser_effect():
         params[f"Pad {k + 1}"] = choice(["Bar A", "Bar B", "Bar C"][k] if k < 3 else slices[0], slices)
     for k in range(24):
         params[f"Level {k + 1}"] = rng(0.0)
+    params["Geometry"] = s(GEOMETRY)          # the effect publishes its rectangles (Bar Chaser 2026-09-28+)
     return {"name": "Bar Chaser", "display_name": "Bar Chaser", "id": next(ids), "bypassed": b_(False), "params": params}
 def crop_effect():
     return {"name": "Crop", "display_name": "Crop", "id": next(ids), "bypassed": b_(False),

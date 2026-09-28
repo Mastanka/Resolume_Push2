@@ -9,8 +9,8 @@ import threading
 import time
 import traceback
 
+import paths
 from chaser_engine import PluginEngine, pad_key
-from pathlib import Path
 from resolume_api import text
 from sequencer import DIRECTIONS, Sequencer
 from constants import (ACCENT_BUTTON, BLINK, BROWSE_BUTTON, DELETE_BUTTON, DOUBLE_LOOP_BUTTON, FIXED_LENGTH_BUTTON, LAYOUT_BUTTON, LOWER_ROW, MAP_BLINK, MAP_FIXTURES, OCTAVE_DOWN, OCTAVE_UP, PASTE_BUTTON, PLAY_BUTTON, REPEAT_BUTTON, SCALE_BUTTON, SCENE_BUTTONS, SELECT_BUTTON, SEQ_HZ, SEQ_PAGES)
@@ -420,7 +420,7 @@ class SeqMixin:
     def _init_seq(self, cfg, rest):
         """SEQ, MAPPING and PRESETS state, kept on the Bridge (called from Bridge.__init__)."""
         sc = cfg.get("sequencer") or {}
-        self.seq = Sequencer(cfg.get("chases_file") or Path(__file__).with_name("chases.yaml"),
+        self.seq = Sequencer(paths.data_file("chases.yaml", cfg.get("chases_file")),
                              n_tracks=int(sc.get("tracks", 4)))
         self.engine = PluginEngine(rest, lambda: self.comp, self.refresh_comp, self._send_level,
                                    store=self.seq, send_param=self.sender.param)

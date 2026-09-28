@@ -28,8 +28,9 @@ GRID_COLS = 4                       # recipes per bank row on the pads
 class PresetsMixin:
     # ---- rig -------------------------------------------------------------------- #
     def current_rig(self):
-        """(Rig, "") or (None, error) from the shared pad mapping and the Advanced Output preset the
-        effect reads. Rebuilt only when the mapping, the preset file or its time, or config change."""
+        """(Rig, "") or (None, error) from the shared pad mapping and the bar geometry: the effect's
+        `Geometry` parameter when it has one (then no file is read here, and a remote Arena works), else
+        the Advanced Output preset file. Rebuilt only when the mapping, the geometry or the config change."""
         sc = self.cfg.get("sequencer") or {}
         folder = sc.get("preset_folder") or rigmod.PRESET_FOLDER
         values = self.engine.mapping()
@@ -37,17 +38,20 @@ class PresetsMixin:
         if self._rig_checked[0] == values and now - self._rig_checked[1] < 1.0:
             return self._rig_cache[1], self._rig_cache[2]           # the preset file is looked at once a second
         self._rig_checked = (values, now)
-        path = rigmod.resolve_preset(self.engine.preset_text(), folder)
-        try:
-            mtime = os.path.getmtime(path) if path else None
-        except OSError:
-            mtime = None
+        geo = self.engine.geometry()                           # published by the effect (Bar Chaser 2026-09-28+)
+        path = mtime = None
+        if geo is None:                                        # older effect: read the preset file here
+            path = rigmod.resolve_preset(self.engine.preset_text(), folder)
+            try:
+                mtime = os.path.getmtime(path) if path else None
+            except OSError:
+                mtime = None
         override = sc.get("rig") or {}
-        key = (tuple(values), path, mtime, repr(override))
+        key = (tuple(values), path, mtime, repr(override), repr(sorted(geo[2].items())) if geo else None)
         if self._rig_cache[0] == key:
             return self._rig_cache[1], self._rig_cache[2]
-        rects = {}
-        if mtime is not None:
+        rects = dict(geo[2]) if geo else {}
+        if geo is None and mtime is not None:
             try:
                 rects = rigmod.preset_rects(path)
             except Exception as e:                                 # unreadable preset: roles by position

@@ -36,6 +36,7 @@ private:
 	std::string presetText;         // the Preset parameter (what the user typed)
 	std::string presetPath;         // resolved file
 	std::string status;             // shown in the Preset parameter's display text
+	std::string geometry;           // the Geometry parameter: "WxH|name:left,top,width,height|…" for the bridge
 	barchaser::Preset preset;
 	bool presetOk = false;
 

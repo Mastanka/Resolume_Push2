@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 from resolume_api import is_param, text
+from rig import parse_geometry
 
 MIN_DT = 0.02          # s between two sends of the same layer (50/s); 30/s when many change
 MANY = 16
@@ -132,6 +133,15 @@ class PluginEngine:
         p = ((inst["fx"].get("params") or {}).get("Preset") or {}) if inst else {}
         v = p.get("value", "")
         return text(v) if isinstance(v, dict) else str(v or "")
+
+    def geometry(self):
+        """(width, height, {name: rect}) from the reference instance's `Geometry` parameter, which the
+        Bar Chaser effect (2026-09-28 or later) fills from the Advanced Output preset *it* reads, on
+        Arena's machine. None with an older effect: the bridge then reads the preset file itself."""
+        inst = self._reference()
+        p = ((inst["fx"].get("params") or {}).get("Geometry") or {}) if inst else {}
+        v = p.get("value", "")
+        return parse_geometry(text(v) if isinstance(v, dict) else str(v or ""))
 
     def pad_name(self, track, k):
         """The fixture pad k lights ('' = none). The mapping is shared; the track's own instance is

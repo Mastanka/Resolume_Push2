@@ -249,6 +249,47 @@ def test_old_files_without_macros_still_load_and_apply():
     assert br.seq.patterns[2].source["macros"]["density"] == 0.4 and br.seq.patterns[2].source["macros"]["strobe"] == 0.5
 
 
+# ---- geometry from the plugin: no Advanced Output file needed on the bridge's machine ------------- #
+GEOMETRY = ("1920x1080|Bar A / 1 - 423 141 RGB:100,70,30,462|Bar A / 424 - 846 141 RGB 2:250,70,30,462"
+            "|Bar B / 1 - 855 h3 2m grb:400,70,30,939|Bar C / 1 - 423 141 RGB:550,70,30,462|Bar D / 1 - 855 h3 2m grb:700,70,30,939"
+            "|Bar E / 1 - 423 141 RGB:850,70,30,462|Bar A:100,70,180,462|Bar B:400,70,30,939|Bar C:550,70,30,462|Bar D:700,70,30,939|Bar E:850,70,30,462")
+
+
+def test_parse_geometry():
+    import rig
+    w, h, rects = rig.parse_geometry(GEOMETRY)
+    assert (w, h) == (1920.0, 1080.0) and len(rects) == 11
+    assert rects["Bar B / 1 - 855 h3 2m grb"] == (400.0, 70.0, 430.0, 1009.0) and rects["Bar A"] == (100.0, 70.0, 280.0, 532.0)
+    assert rig.parse_geometry("") is None and rig.parse_geometry("junk") is None and rig.parse_geometry("1920x1080|") is None
+
+
+def test_engine_reads_the_geometry_of_the_reference_instance():
+    import random as _r
+    comp = F.make_comp(_r.Random(1), 3, 4, {1: 1})
+    br = F.new_bridge(); br.set_comp(comp)
+    assert br.engine.geometry() is None, "older plugin: no Geometry parameter"
+    fx = [e for e in comp["layers"][0]["video"]["effects"] if e["name"] == "Bar Chaser"][0]
+    fx["params"]["Geometry"] = {"id": 999999, "valuetype": "ParamString", "value": GEOMETRY}
+    br.set_comp(comp)
+    w, h, rects = br.engine.geometry()
+    assert (w, h) == (1920.0, 1080.0) and "Bar D" in rects
+
+
+def test_rig_comes_from_the_plugin_when_it_publishes_geometry():
+    import random as _r
+    import tempfile
+    comp = F.make_comp(_r.Random(1), 3, 4, {1: 1})
+    fx = [e for e in comp["layers"][0]["video"]["effects"] if e["name"] == "Bar Chaser"][0]
+    fx["params"]["Geometry"] = {"id": 999998, "valuetype": "ParamString", "value": GEOMETRY}
+    br = F.new_bridge()
+    br.cfg["sequencer"]["preset_folder"] = tempfile.mkdtemp()      # no Advanced Output file anywhere
+    br.set_comp(comp)
+    r, err = br.current_rig()
+    assert r is not None, err
+    assert r.source == "preset" and not r.virtual, "roles from the published lengths"
+    assert r.D == [3, 5], "pads 3 (Bar B) and 5 (Bar D) are the 2 m bars"
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

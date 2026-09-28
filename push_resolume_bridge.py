@@ -70,6 +70,7 @@ from pathlib import Path
 import requests
 import yaml
 
+import paths
 from seq_mapping import MappingMixin
 from seq_presets import PresetsMixin
 from seq_screen import SeqMixin
@@ -102,9 +103,9 @@ DEFAULT_CONFIG = {
     "encoders": {"coarse": 0.01, "fine": 0.001},
     "display_fps": 20,
     "stop_column": None,   # None = stop via /clear; N = trigger column N instead
-    "pins_file": None,     # param order file; None = pins.yaml next to this script
-    "colors_file": None,   # own palette (Shift + Lower Row in COLOR); None = colors.yaml here
-    "chases_file": None,   # step sequencer patterns; None = chases.yaml next to this script
+    "pins_file": None,     # param order file; None = pins.yaml in the data folder (paths.py)
+    "colors_file": None,   # own palette (Shift + Lower Row in COLOR); None = colors.yaml there
+    "chases_file": None,   # step sequencer patterns; None = chases.yaml there
     "sequencer": {"tracks": 4,
                   "rig": {},             # optional: dominant: [pads], order: [pads] (see rig.build_rig)
                   "preset_folder": None},  # Advanced Output presets; None = Resolume's own folder
@@ -158,7 +159,7 @@ class Bridge(SeqMixin, MappingMixin, PresetsMixin):
         self.color_target = "clip"  # "clip" or "master" (composition colour effect)
         self.paste_held = False    # Duplicate
         self.note = ("", 0.0)      # short message on the display (text, time)
-        self.colors_path = Path(cfg.get("colors_file") or Path(__file__).with_name("colors.yaml"))
+        self.colors_path = paths.data_file("colors.yaml", cfg.get("colors_file"))
         self.own_palette = self._load_palette()
         self.hsv_cache = {}        # param id -> (rgb, [h, s, v]) keeps hue while saturation is 0
         self.fx_page = 0
@@ -182,7 +183,7 @@ class Bridge(SeqMixin, MappingMixin, PresetsMixin):
         self.tap_count = 0
         self.beat_anchor = (time.time(), 0)   # (time of a known beat, its index in the bar 0-3)
         self.pulse = True          # playing pads pulse on the beat (Metronome toggles)
-        self.pins_path = Path(cfg.get("pins_file") or Path(__file__).with_name("pins.yaml"))
+        self.pins_path = paths.data_file("pins.yaml", cfg.get("pins_file"))
         self.order = self._load_order()
         self.touched = None        # encoder slot index being touched
         self.pressed = {}          # pad (i, j) -> (layer, column) we sent a "down" for
@@ -1578,7 +1579,8 @@ def load_config(path):
 
 def main():
     ap = argparse.ArgumentParser(description="Ableton Push 2 → Resolume Arena bridge")
-    ap.add_argument("--config", default=str(Path(__file__).with_name("config.yaml")))
+    ap.add_argument("--config", default=None,
+                    help="settings file (default: config.yaml in ~/Documents/Resolume Arena/Push 2, seeded from the repo's)")
     ap.add_argument("--dump", type=int, metavar="LAYER", help="list parameter paths for a layer and exit")
     ap.add_argument("--clip", type=int, metavar="COLUMN", help="clip column to list with --dump")
     ap.add_argument("--sim", action="store_true", help="run push2-python's browser simulator")
@@ -1589,7 +1591,7 @@ def main():
                     help="copy the Bar Chaser effect into Resolume's Extra Effects folder (default: plugin/dist/Bar Chaser.bundle)")
     args = ap.parse_args()
 
-    cfg = load_config(args.config)
+    cfg = load_config(paths.config_path(args.config))
     rest = Resolume(cfg["resolume"]["host"], cfg["resolume"]["port"])
     if args.install_plugin is not None:
         install_plugin(args.install_plugin or str(Path(__file__).with_name("plugin") / "dist" / "Bar Chaser.bundle"))
