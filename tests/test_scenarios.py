@@ -108,6 +108,16 @@ def test_a3_layers_reordered_levels_follow_the_effect():
     assert level(a, fx) == 1.0
 
 
+def test_a4_layer_params_hide_what_the_bridge_manages_on_bar_chaser():
+    a = S.Arena(layers=3, chasers={2: 1})
+    br = S.make_bridge(a)
+    br.sel = (2, 1)
+    tap(br, "Upper Row 6")                                    # LAYER PARAMS
+    labels = [sl.label for sl in br.slots("layer")]
+    assert not [l_ for l_ in labels if l_.startswith(("Level ", "Pad ")) or l_ in ("Track", "Preset", "Geometry")], labels
+    assert {"Master", "Edge", "Outside", "Mode"} <= set(labels), labels
+
+
 # ---- B: Bar Chaser effects ------------------------------------------------------------------- #
 def test_b1_bar_chaser_removed_while_playing():
     a = S.Arena(layers=3, chasers={2: 1, 3: 3})

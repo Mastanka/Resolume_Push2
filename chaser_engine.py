@@ -117,6 +117,18 @@ class PluginEngine:
             out.append({"track": int(t) - 1 if t.isdigit() else 0, "layer": L, "clip": C, "fx": fx})
         return out
 
+    MANAGED = ("Track", "Preset", "Reload", "Geometry")
+
+    def managed_ids(self):
+        """Ids of the Bar Chaser params the bridge drives (Level n, Pad n, Track, Preset, Reload, Geometry):
+        kept off the knobs, where a turn would fight the sequencer and bury Master / Edge / Outside / Mode."""
+        out = set()
+        for i in self.instances():
+            for name, p in (i["fx"].get("params") or {}).items():
+                if is_param(p) and (name in self.MANAGED or name.startswith(("Level ", "Pad "))):
+                    out.add(p["id"])
+        return out
+
     @staticmethod
     def has_fixtures(inst):
         """False when the effect could not read its Advanced Output preset: only "—" on offer."""

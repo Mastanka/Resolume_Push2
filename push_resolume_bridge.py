@@ -485,7 +485,7 @@ class Bridge(SeqMixin, MappingMixin, PresetsMixin):
         spec = self.layer_spec(L)
         out = []
         if spec == "auto":
-            seen = set()
+            seen = set(self.engine.managed_ids())       # Bar Chaser params the bridge drives itself: no knob
             for scope, path in AUTO_SOURCES:
                 if scope != scope_wanted:
                     continue
