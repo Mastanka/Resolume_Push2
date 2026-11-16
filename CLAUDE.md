@@ -52,7 +52,7 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 | `.github/ISSUE_TEMPLATE/` | Idea + bug templates |
 | `tests/mock_resolume.py` | Fake Resolume REST + WebSocket server (port 18080, `MOCK_PORT`) with a small composition; test-control endpoints `_new_composition`, `_delete_layer`, `_options`, `_drop_puts` |
 | `tests/sim_arena.py` | In-process Arena simulator (Arena's id behaviour, the REST calls, `user_*` edits, WebSocket-style delivery, virtual clock); `make_bridge`, `settle` |
-| `tests/test_scenarios.py` | 34 scenario tests on the simulator: layers, Bar Chaser add / remove / Track / fold, composition switch / new / empty, blackout, held controls, fixtures, broken preset, presets, tempo, subscriptions, plus a structural random walk |
+| `tests/test_scenarios.py` | 35 scenario tests on the simulator: layers, Bar Chaser add / remove / Track / fold, composition switch / new / empty, blackout, held controls, fixtures, broken preset, presets, tempo, subscriptions, plus a structural random walk |
 | `tests/fuzz_arena.py` | Structural fuzzer: random Push input + random Arena edits; checkpoints check nothing stays lit, the mapping is consistent, no writes to ids that are gone. `python tests/fuzz_arena.py 16 2000` ≈ 20 s |
 | `tests/soak_mock.py` | Every thread running (real `run()`, fake Push) against the mock over HTTP + WebSocket while a driver changes the composition; `python tests/soak_mock.py 60` |
 | `tests/test_fake_push.py` | Runs the real `run()` loop with a fake Push object; asserts it works |
