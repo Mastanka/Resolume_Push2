@@ -80,31 +80,36 @@ class SeqMixin:
             self.note_msg(f"T{track + 1} = {name}" if ok else f"can't set track on {name}")
         threading.Thread(target=work, daemon=True).start()
 
+    def seq_step(self):
+        """One clock tick: feed beat time to the sequencer, send changed levels, handle Repeat, write a
+        due chases.yaml save. seq_loop calls it 100 times a second; tests call it directly."""
+        bt = self.beat_time()
+        changed = {}
+        if bt is not None:
+            with self.lock:
+                sb = self.seq.step_beats()
+                g = math.floor(bt / sb)
+                if self.repeat and self.held_bars and g != self.last_grid_step:
+                    for bar, track in list(self.held_bars.items()):
+                        tr = self.seq.pattern.tracks[track]
+                        self.seq.trigger(track, bar, 1.0, tr.gate * sb, bt)
+                self.last_grid_step = g
+                changed = self.seq.tick(bt)
+                self.preview_tick(bt)                      # PRESETS draft, display only
+        for (track, bar), v in changed.items():
+            self.engine.set_level(track, bar, v)
+        self.engine.flush()                                # held-back levels, routing changes
+        with self.lock:
+            data = self.seq.take_dirty()                   # a deferred chases.yaml save that is due
+        if data is not None:
+            self.seq.write(data)                           # the file write stays outside the lock
+
     def seq_loop(self):
-        """100 Hz: feed beat time to the sequencer, send changed levels, handle Repeat."""
+        """100 Hz clock thread."""
         last_err = 0.0
         while True:
             try:
-                bt = self.beat_time()
-                changed = {}
-                if bt is not None:
-                    with self.lock:
-                        sb = self.seq.step_beats()
-                        g = math.floor(bt / sb)
-                        if self.repeat and self.held_bars and g != self.last_grid_step:
-                            for bar, track in list(self.held_bars.items()):
-                                tr = self.seq.pattern.tracks[track]
-                                self.seq.trigger(track, bar, 1.0, tr.gate * sb, bt)
-                        self.last_grid_step = g
-                        changed = self.seq.tick(bt)
-                        self.preview_tick(bt)                  # PRESETS draft, display only
-                for (track, bar), v in changed.items():
-                    self.engine.set_level(track, bar, v)
-                self.engine.flush()                        # levels held back by the rate limit
-                with self.lock:
-                    data = self.seq.take_dirty()           # a deferred chases.yaml save that is due
-                if data is not None:
-                    self.seq.write(data)                   # the file write stays outside the lock
+                self.seq_step()
             except Exception:                              # never let a bug stop the clock
                 if time.time() - last_err > 5:
                     traceback.print_exc()

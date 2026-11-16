@@ -85,6 +85,7 @@ def test_plugin_engine():
     eng.set_level(0, 0, 0.0); assert len(sent) == 2 and sent[-1][1] == 0.0    # edge always sent
     eng.set_level(1, "pad 3", 1.0)
     assert sent[-1] == (fx2["params"]["Level 3"]["id"], 1.0)
+    eng.fold = False
     eng.set_level(3, "pad 1", 1.0); eng.set_level(0, "pad 99", 1.0)          # no instance / bad pad → nothing
     assert len(sent) == 3
     eng.all_dark()

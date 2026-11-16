@@ -304,13 +304,31 @@ class Bridge(SeqMixin, MappingMixin, PresetsMixin):
             print(f"[resolume] connected — {len(comp.get('layers') or [])} layers")
         with self.lock:
             self.comp, self.index, self.online = comp, index, True
+            loaded = False
+            try:
+                loaded = self.engine.sync_pads(comp)    # one pad mapping on every Bar Chaser
+            except Exception:
+                traceback.print_exc()
+            if loaded:
+                self._composition_opened()
             self._revalidate()
             self._check_blackout()
             try:
-                loaded = self.engine.sync_pads(comp)    # one pad mapping on every Bar Chaser
                 self.check_rig(loaded)                  # presets still fit the Advanced Output?
             except Exception:
                 traceback.print_exc()
+
+    def _composition_opened(self):
+        """Another composition is open (new ids everywhere). Momentary actions started in the old one end
+        without writing into the new one; a blackout stays: the new composition's master goes to 0 too."""
+        self.flash.clear()
+        self.pressed.clear()
+        self.col_pressed.clear()
+        self.move_src = None
+        self._pages.clear()
+        self.restore = None
+        if self.blackout is not None:
+            self.blackout_seen, self.bo_sent, self.bo_tries = False, 0.0, 0
 
     def on_param(self, pid, value):
         """WebSocket parameter_update: patch the value in place."""
@@ -360,7 +378,9 @@ class Bridge(SeqMixin, MappingMixin, PresetsMixin):
             if layer:
                 add_all(layer.get("video"))
             add_all(resolve_node(comp, "video/effects"))
-        return ids
+            own = {p["id"] for i in self.engine.instances()             # our own Level writes: no echo
+                   for name, p in (i["fx"].get("params") or {}).items() if name.startswith("Level ") and is_param(p)}
+        return [pid for pid in ids if pid not in own]
 
     def poll_loop(self):
         session = requests.Session()
