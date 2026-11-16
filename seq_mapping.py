@@ -35,6 +35,9 @@ class MappingMixin:
         k = self.bar_index(i, j)
         if not down:
             return False
+        if self.shift:                                             # Shift + pad = kick bar on / off
+            self._toggle_kick(k)
+            return True
         if self.delete_held:
             if eng.set_pad(k, UNASSIGNED):
                 self.map_blink = {("pad", k): time.time()}
@@ -57,6 +60,26 @@ class MappingMixin:
         self.map_focus = k
         return False                                               # select + flash as usual
 
+    def _toggle_kick(self, k):
+        """Pad k (0-based) becomes a kick bar for the bank recipes, or stops being one. The first
+        choice replaces the automatic one; removing the last returns to automatic."""
+        if not self.engine.pad_name(self.seq.track, k):
+            self.note_msg(f"Pad {k + 1} has no fixture")
+            return
+        kick = set(self.seq.kick_pads)
+        kick ^= {k + 1}
+        self.seq.kick_pads = sorted(kick)
+        self.seq.save()
+        self._rig_checked = (None, 0.0)                            # look at the rig again now
+        r, _ = self.current_rig()
+        if not kick:
+            self.note_msg("Kick bars: automatic again")
+        elif r is not None and r.shared:
+            self.note_msg("Kick bars: every bar")
+        else:
+            self.note_msg("Kick bars: " + ", ".join(str(p) for p in self.seq.kick_pads))
+        self.check_rig()
+
     def _map_pad_colors(self):
         """MAPPING lights: fixtures dim white, mapped ones in the track colour, the picked one blinking;
         row 5 red; pads with a fixture in the track colour; a stored mapping blinks twice."""
@@ -72,6 +95,10 @@ class MappingMixin:
                       if self.map_armed is not None and self.map_armed in eng.fixtures_of_value(seq.track, v)}
         lit = {key for (t, key), v in seq.levels.items() if t == seq.track and v > 0.02}
         blink = int(now / BLINK) % 2 == 0
+        kick = set()
+        if self.shift:
+            r, _ = self.current_rig()
+            kick = set(r.D) if r is not None else set(self.seq.kick_pads)
 
         def double(key):
             t0 = self.map_blink.get(key)
@@ -97,6 +124,9 @@ class MappingMixin:
                                 color = f"L{tc}_dim" if f in used else "dark_gray"
                 elif i == 4:
                     color = "S_orange"                                 # the middle row is orange in every SEQ menu
+                elif self.shift:                                       # Shift: the roles the recipes see
+                    k = self.bar_index(i, j)
+                    color = "black" if not values[k] else ("S_red" if kick and k + 1 in kick else "S_yellow_dim")
                 else:
                     k = self.bar_index(i, j)
                     color = double(("pad", k))

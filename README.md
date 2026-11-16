@@ -179,7 +179,11 @@ made for another rig are re-fitted at once.
 **4 MAPPING** = which DMX fixture each pad lights, shared by all tracks: the top four pad rows show the
 fixtures (L1F1, L1F2, L2F1 … = lumiverse / fixture, in Arena's order), row 5 is orange, rows 6–8 are pads
 1–24. Hold **Select** and press a fixture (it blinks), then press a pad to store it there (both blink
-twice). **Delete** + pad = no fixture. **Octave** ▲ ▼ = more fixtures.
+twice). **Delete** + pad = no fixture. **Octave** ▲ ▼ = more fixtures. Hold **Shift** to see which bars the
+presets use for the kick (red) and press pads to choose them yourself; choose every bar to let the kick roam
+the whole rig; remove them all to go back to automatic (long bars, or on alike bars a choice by position).
+A track without its own Bar Chaser layer plays on its partner's layer (T2 on T1, T4 on T3), so a preset's hats
+and rumble still show with two layers (`sequencer.fold_tracks: false` turns that off).
 
 It needs the **Bar Chaser** effect (in `plugin/`, built with `plugin/build.sh`, installed with
 `python push_resolume_bridge.py --install-plugin`, then restart Arena). Save your Advanced Output as a

@@ -74,6 +74,8 @@ class PluginEngine:
         self.send_param = send_param   # (param id, body) -> None
         self._last = {}            # level param id -> (time, quantised value)
         self._pending = {}         # level param id -> value held back by the rate limit, sent by flush()
+        self._src = {}             # level param id -> {track: level}: folded tracks share a param, the maximum is sent
+        self.fold = True           # a track without a Bar Chaser layer plays on its partner's (config sequencer.fold_tracks)
         self._cache_comp = None
         self._cache = []
         self._known = {}           # effect id -> (pads we expect, our writes pending until)
@@ -235,6 +237,17 @@ class PluginEngine:
         return True
 
     # ---- levels ------------------------------------------------------------ #
+    def route(self, track):
+        """The track whose layers show `track`: its own when it has a Bar Chaser, else (fold on) its
+        partner (T1 ↔ T2, T3 ↔ T4), else the lowest track that has one. None = nowhere."""
+        have = {i["track"] for i in self.instances()}
+        if track in have:
+            return track
+        if not self.fold or not have:
+            return None
+        partner = track ^ 1
+        return partner if partner in have else min(have)
+
     def _pids(self, track, k):
         return [p["id"] for i in self.instances() if i["track"] == track
                 for p in [((i["fx"].get("params") or {}).get(f"Level {k + 1}") or {})] if is_param(p)]
@@ -243,20 +256,29 @@ class PluginEngine:
         k = pad_from_key(pad)
         if k is None or not 0 <= k < NPADS:
             return
+        target = self.route(track)
+        if target is None:
+            return
         now = now or time.time()
         q = round(max(0.0, min(1.0, float(value))) * 255) / 255
         window = self._window(now)
-        for pid in self._pids(track, k):
+        for pid in self._pids(target, k):
+            src = self._src.setdefault(pid, {})
+            if q > 0:
+                src[track] = q
+            else:
+                src.pop(track, None)
+            out = max(src.values(), default=0.0)           # folded tracks on one layer: the brightest wins
             last = self._last.get(pid)
-            if last and last[1] == q:
+            if last and last[1] == out:
                 self._pending.pop(pid, None)
                 continue
-            if last and q != 0.0 and now - last[0] < window:
-                self._pending[pid] = q                     # too soon: kept for flush(), never dropped
+            if last and out != 0.0 and now - last[0] < window:
+                self._pending[pid] = out                   # too soon: kept for flush(), never dropped
                 continue
             self._pending.pop(pid, None)
-            self._last[pid] = (now, q)
-            self.send_level(pid, q)
+            self._last[pid] = (now, out)
+            self.send_level(pid, out)
 
     def _window(self, now):
         busy = sum(1 for t, _ in self._last.values() if now - t < 0.1) > MANY
@@ -353,5 +375,6 @@ class PluginEngine:
                 if is_param(p):
                     self._last.pop(p["id"], None)
                     self._pending.pop(p["id"], None)
+                    self._src.pop(p["id"], None)
                     self.send_level(p["id"], 0.0)
                     self._last[p["id"]] = (time.time(), 0.0)

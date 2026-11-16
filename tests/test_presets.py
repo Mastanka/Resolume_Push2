@@ -290,6 +290,72 @@ def test_rig_comes_from_the_plugin_when_it_publishes_geometry():
     assert r.D == [3, 5], "pads 3 (Bar B) and 5 (Bar D) are the 2 m bars"
 
 
+# ---- kick bars: shown honestly, chosen on the Push ------------------------------------------------ #
+def uniform():
+    """PRESETS on 4 alike bars (the short fixtures of the rig fixture: pads 1, 2, 4, 6)."""
+    br = presets()
+    br.engine.set_pad(2, "\u2014"); br.engine.set_pad(4, "\u2014")       # drop the 2 m bars (pads 3, 5)
+    br._rig_checked = (None, 0.0)
+    r, err = br.current_rig()
+    assert r is not None and r.virtual and len(r.pads) == 4, (err, r and r.signature())
+    return br
+
+
+def test_rig_line_says_kick_bars_are_chosen_by_position_on_alike_bars():
+    br = uniform()
+    line = br.snapshot()["seq"]["presets"]["rig"]
+    assert "long / short" not in line and "4 alike bars" in line and "kick bars by position: 2, 4" in line, line
+
+
+def test_rig_line_names_long_and_short_when_measured():
+    br = presets()
+    line = br.snapshot()["seq"]["presets"]["rig"]
+    assert "2 long, 4 short" in line and "from the Advanced Output" in line, line
+
+
+def test_shift_pad_in_mapping_chooses_the_kick_bars():
+    br = uniform()
+    tap(br, "Upper Row 4")                                    # MAPPING
+    br.button("Shift", True)
+    g = br.pad_colors()
+    assert g[(7, 1)] == "S_red" and g[(7, 0)] == "S_yellow_dim" and g[(7, 2)] == "black", "Shift shows the roles"
+    pad(br, (7, 0))                                           # pad 1 → kick bar
+    br.button("Shift", False)
+    assert br.seq.kick_pads == [1] and br.sel_pads == {0}, "no select / flash side effect needed"
+    r, _ = br.current_rig()
+    assert r.D == [1] and not r.virtual and r.source == "push", r.signature()
+    tap(br, "Upper Row 3")
+    assert "kick bars you chose: 1" in br.snapshot()["seq"]["presets"]["rig"]
+    assert Sequencer(br.seq.path).kick_pads == [1], "saved in chases.yaml"
+    tap(br, "Upper Row 4")
+    br.button("Shift", True); pad(br, (7, 0)); br.button("Shift", False)   # again: back to automatic
+    assert br.seq.kick_pads == [] and br.current_rig()[0].virtual
+
+
+def test_every_bar_a_kick_bar_lets_the_kick_roam():
+    br = uniform()
+    tap(br, "Upper Row 4")
+    br.button("Shift", True)
+    for ij in ((7, 0), (7, 1), (7, 3), (7, 5)):
+        pad(br, ij)
+    br.button("Shift", False)
+    r, _ = br.current_rig()
+    assert r.shared and r.D == r.S == r.ALL == [1, 2, 4, 6], r.signature()
+    tap(br, "Upper Row 3")
+    assert "every bar" in br.snapshot()["seq"]["presets"]["rig"]
+    p = banks.realize("R1", r, 71)
+    assert len(p["tracks"][0]["steps"]) >= 3, "the kick uses more than two bars"
+    assert r.sat(2) == [1, 4], "rumble beside the kick, on both neighbours"
+
+
+def test_a_kick_bar_choice_changes_the_signature_and_offers_a_refit():
+    br = uniform()
+    pad(br, (4, 2)); pad(br, PAD["R1"]); tap(br, "Lower Row 1")
+    tap(br, "Upper Row 4")
+    br.button("Shift", True); pad(br, (7, 5)); br.button("Shift", False)
+    assert br.refit_offer and 2 in br.seq.mismatched(br.current_rig()[0].signature())
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

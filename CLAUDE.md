@@ -150,7 +150,11 @@ overlays. Parameter page is per menu (`Bridge.page` property over `_pages`).
   (`chaser_engine.fixture_list`: "Screen / slice" entries grouped by screen → L#F#, a screen without
   fixture entries = one fixture), row 5 orange, rows 6–8 = pads. Select + fixture = `map_armed` (blinks),
   then pad = `PluginEngine.set_pad` on every instance, all tracks (shared mapping), double blink
-  (`map_blink`); Delete + pad = "—"; Octave = `map_page` (32 fixtures per page). Otherwise rows 1–4 steps, row 5 patterns 1–8 (Shift 9–16), rows 6–8 pads 1–24
+  (`map_blink`); Delete + pad = "—"; Octave = `map_page` (32 fixtures per page). Shift held: rows 6–8 show the
+  rig roles (kick bars `S_red`), Shift + pad = `_toggle_kick` → `Sequencer.kick_pads` (chases.yaml) → `build_rig`
+  override `kick` (source "push"; all used pads = `Rig.shared`, D = S = every bar). **Track folding:**
+  `PluginEngine.route(t)` = own track, else partner (T1↔T2, T3↔T4), else the lowest track with an instance;
+  folded tracks share `Level n`, `_src` sends the maximum (`sequencer.fold_tracks`, default on). Otherwise rows 1–4 steps, row 5 patterns 1–8 (Shift 9–16), rows 6–8 pads 1–24
   (bottom-left = 1). `Bridge.sel_pads` = multi-selection (`Bridge.multi`: Select latch, or Select held →
   pad toggles); steps act on all selected pads. Buttons right of the pads: `Bridge.side` = "groups"
   (Layout, default) → pad groups: `Sequencer.track_groups[track]` (G, Select + button, track colour)

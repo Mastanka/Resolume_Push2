@@ -153,6 +153,7 @@ class Sequencer:
         self.groups = [None] * N_GROUPS   # global pad groups GG1-8: sorted pad indices (0-based) or None
         self.track_groups = {}     # track -> [8] pad groups G1-8 of that track (shown before the global one)
         self.pad_config = None     # 24 fixture names shared by every track: the last Bar Chaser pad mapping
+        self.kick_pads = []        # pad numbers (1-based) chosen as kick bars on the Push; [] = automatic
         self.voices = {}           # (track, bar name) -> Voice
         self.levels = {}           # (track, bar name) -> last level returned by tick()
         self.dirty, self.dirty_t = False, 0.0   # a deferred save is waiting (save_later / flush)
@@ -436,6 +437,7 @@ class Sequencer:
         return {"groups": groups(self.groups),
                 "track_groups": {t + 1: groups(gs) for t, gs in sorted(self.track_groups.items()) if any(gs)},
                 "pads": list(self.pad_config) if self.pad_config else None,
+                "kick_pads": list(self.kick_pads),
                 "patterns": [_pattern_to_dict(p) for p in self.patterns]}
 
     def from_dict(self, d):
@@ -448,6 +450,7 @@ class Sequencer:
         if isinstance(pads, dict):                                  # older file: one list per track, take T1's
             pads = pads.get(min(pads, key=lambda t: int(t))) if pads else None
         self.pad_config = [str(n) for n in pads] if pads else None
+        self.kick_pads = sorted(int(k) for k in (d.get("kick_pads") or []))
         pats = [_pattern_from_dict(x) for x in (d.get("patterns") or [])][:N_PATTERNS]
         while len(pats) < N_PATTERNS:
             pats.append(Pattern(name=f"P{len(pats) + 1}"))

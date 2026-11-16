@@ -424,6 +424,7 @@ class SeqMixin:
                              n_tracks=int(sc.get("tracks", 4)))
         self.engine = PluginEngine(rest, lambda: self.comp, self.refresh_comp, self._send_level,
                                    store=self.seq, send_param=self.sender.param)
+        self.engine.fold = bool(sc.get("fold_tracks", True))
         self.sel_pads = {0}        # selected pads (0-based); steps edit all of them
         self.multi = False         # Select latched: pad press adds / removes instead of replacing
         self.select_held = self.select_used = False
@@ -453,6 +454,12 @@ class SeqMixin:
         self.dup_src = None        # Duplicate + pattern: source pattern
         self.seq_note = ""         # last setup / load message (shown on the display)
         self.last_grid_step = None
+
+    def _track_warning(self, t):
+        r = self.engine.route(t)
+        if r is not None:
+            return f"T{t + 1} plays on T{r + 1}'s layer (no own Bar Chaser) · Shift + Note adds one"
+        return f"T{t + 1}: no Bar Chaser — Shift + Note on a layer"
 
     def _seq_snapshot(self):
         """The display's SEQ part: knobs, pattern, pads, envelope, menu sub-state."""
@@ -486,4 +493,4 @@ class SeqMixin:
                "group": self.group_label(*self.current_group()) if self.current_group() else None,
                "multi": self.multi or self.select_held,
                "select_held": self.select_held, "side": self.side,
-               "warning": "" if ready else f"T{sq.track + 1}: no Bar Chaser — Shift + Note on a layer"}
+               "warning": "" if ready else self._track_warning(sq.track)}

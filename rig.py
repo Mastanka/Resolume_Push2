@@ -160,13 +160,18 @@ class Rig:
     pads: List[int]                    # pad numbers, left → right
     roles: List[str]                   # "D" / "S", parallel to pads
     virtual: bool = False              # True = all bars alike, roles chosen by position
-    source: str = ""                   # "config" / "preset" / "pad order"
+    source: str = ""                   # "push" (kick bars chosen on the Push) / "config" / "preset" / "pad order"
+    shared: bool = False               # True = every bar plays both roles (kick bars and the rest)
     D: List[int] = field(init=False)
     S: List[int] = field(init=False)
 
     def __post_init__(self):
         if not MIN_PADS <= len(self.pads) <= MAX_PADS:
             raise RigError(f"SEQ banks need {MIN_PADS}–{MAX_PADS} pads, found {len(self.pads)}")
+        if self.shared:
+            self.roles = ["D"] * len(self.pads)
+            self.D, self.S = list(self.pads), list(self.pads)
+            return
         self.D = [p for p, r in zip(self.pads, self.roles) if r == "D"]
         self.S = [p for p, r in zip(self.pads, self.roles) if r == "S"]
         if not self.D or not self.S:
@@ -185,7 +190,7 @@ class Rig:
         both neighbours are D (or the rig edge), the nearest S pad anywhere (ties: left)."""
         i, out = self.pos(d), []
         for j in (i - 1, i + 1):
-            if 0 <= j < len(self.pads) and self.roles[j] == "S":
+            if 0 <= j < len(self.pads) and (self.shared or self.roles[j] == "S"):
                 out.append(self.pads[j])
         if not out:
             out = [min(self.S, key=lambda s: (abs(self.pos(s) - i), self.pos(s)))]
@@ -221,18 +226,22 @@ class Rig:
 
     def signature(self) -> str:
         """Pads and roles in physical order, e.g. "1S 2D 3S 4S 5D 6S 7S 8D 9S". Changes = re-fit."""
-        return " ".join(f"{p}{r}" for p, r in zip(self.pads, self.roles)) + (" v" if self.virtual else "")
+        tail = " all" if self.shared else " v" if self.virtual else ""
+        return " ".join(f"{p}{r}" for p, r in zip(self.pads, self.roles)) + tail
 
     def describe(self) -> str:
-        how = "all bars alike, D chosen by position" if self.virtual else f"roles from {self.source}"
+        how = ("every bar plays both roles" if self.shared else
+               "all bars alike, D chosen by position" if self.virtual else f"roles from {self.source}")
         return f"{len(self.pads)} pads: {len(self.D)} D / {len(self.S)} S ({how})"
 
 
 def build_rig(pads: Sequence[PadInfo], override: Optional[dict] = None) -> Rig:
     """Rig from the assigned pads.
 
-    override (config.yaml → sequencer.rig), optional:
-      dominant: [2, 5, 8]      pad numbers that play the D role
+    override, optional:
+      kick:     [2, 5, 8]      kick bars chosen on the Push (MAPPING, Shift + pad; chases.yaml). Wins over
+                               everything below. Every used pad listed = every bar plays both roles (shared)
+      dominant: [2, 5, 8]      pad numbers that play the D role (config.yaml → sequencer.rig)
       order:    [3, 1, 2, …]   pad numbers left → right, when the preset can't tell
     Without an override the preset rectangles decide order (centre x, then y) and roles (length).
     """
@@ -251,6 +260,11 @@ def build_rig(pads: Sequence[PadInfo], override: Optional[dict] = None) -> Rig:
     order = [p.pad for p in used]
 
     roles, virtual, source = None, False, "pad order"
+    kick = set(override.get("kick") or []) & set(order)
+    if kick:
+        if kick == set(order):
+            return Rig(order, ["D"] * n, False, "push", shared=True)
+        return Rig(order, ["D" if p in kick else "S" for p in order], False, "push")
     if override.get("dominant"):
         dom = set(override["dominant"])
         roles, source = ["D" if p in dom else "S" for p in order], "config"

@@ -46,7 +46,9 @@ class PresetsMixin:
                 mtime = os.path.getmtime(path) if path else None
             except OSError:
                 mtime = None
-        override = sc.get("rig") or {}
+        override = dict(sc.get("rig") or {})
+        if self.seq.kick_pads:
+            override["kick"] = list(self.seq.kick_pads)
         key = (tuple(values), path, mtime, repr(override), repr(sorted(geo[2].items())) if geo else None)
         if self._rig_cache[0] == key:
             return self._rig_cache[1], self._rig_cache[2]
@@ -362,6 +364,20 @@ class PresetsMixin:
             return "dark_gray" if rig_ok else "black"
         return "black"
 
+    @staticmethod
+    def _rig_line(r):
+        """What the recipes see: which bars carry the kick, and why."""
+        n, nums = len(r.pads), ", ".join(str(p) for p in r.D)
+        if r.shared:
+            return f"Rig: {n} bars · every bar takes the kick (your choice)"
+        if r.source == "push":
+            return f"Rig: {n} bars · kick bars you chose: {nums}"
+        if r.virtual:
+            return f"Rig: {n} alike bars · kick bars by position: {nums} · Shift + pad in MAPPING to choose"
+        if r.source == "preset":
+            return f"Rig: {n} fixtures · {len(r.D)} long, {len(r.S)} short · from the Advanced Output"
+        return f"Rig: {n} bars · kick bars from config.yaml: {nums}"
+
     # ---- display ---------------------------------------------------------------------- #
     def _presets_snapshot(self):
         sq, slot = self.seq, self.preset_slot
@@ -396,9 +412,7 @@ class PresetsMixin:
         if r is None:
             rig_line = err
         else:
-            geo = "long / short from the Advanced Output" if r.source == "preset" else \
-                "all bars alike, long ones chosen by position" if r.virtual else f"roles from {r.source}"
-            rig_line = f"Rig: {len(r.pads)} fixtures · {len(r.D)} long, {len(r.S)} short · {geo}"
+            rig_line = self._rig_line(r)
             misfit = set(sq.mismatched(r.signature()))
             if misfit:
                 rig_line += "  ·  made for another rig: " + ", ".join(f"P{i + 1}" for i in sorted(misfit))
@@ -407,8 +421,12 @@ class PresetsMixin:
         elif self.refit_offer:
             info = "Rig changed: Re-fit (button 3) moves every preset hit onto the new bars"
         else:
-            missing = [t + 1 for t in range(sq.n_tracks) if not self.engine.ready(t)]
-            info = ("no Bar Chaser layer for " + ", ".join(f"T{t}" for t in missing)) if missing else \
+            missing = [t for t in range(sq.n_tracks) if not self.engine.ready(t)]
+            parts = []
+            for t in missing:
+                r_t = self.engine.route(t)
+                parts.append(f"T{t + 1} plays on T{r_t + 1}'s layer" if r_t is not None else f"T{t + 1} has no layer")
+            info = ("no own Bar Chaser: " + ", ".join(parts)) if missing else \
                 f"live: {self._slot_name(sq.current)}" + ("  ·  RUN" if sq.running else "")
         if q:
             labels = [""] * 8

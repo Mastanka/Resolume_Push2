@@ -240,7 +240,7 @@ def render(snap, bgr=True):
         if sq["warning"]:
             bottom = sq["warning"]
         elif sq.get("mapping"):
-            bottom = "Select + fixture, then a pad  ·  Delete + pad = clear"
+            bottom = "Select + fixture, then a pad  ·  Delete + pad = clear  ·  Shift + pad = kick bar"
         elif sq.get("select_held"):
             bottom = "pad = add / remove  ·  group button = store (Shift = all tracks)"
         elif sq.get("multi"):

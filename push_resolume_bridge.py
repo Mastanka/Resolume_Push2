@@ -107,6 +107,7 @@ DEFAULT_CONFIG = {
     "colors_file": None,   # own palette (Shift + Lower Row in COLOR); None = colors.yaml there
     "chases_file": None,   # step sequencer patterns; None = chases.yaml there
     "sequencer": {"tracks": 4,
+                  "fold_tracks": True,   # a track without a Bar Chaser layer plays on its partner's (T1/T2, T3/T4)
                   "rig": {},             # optional: dominant: [pads], order: [pads] (see rig.build_rig)
                   "preset_folder": None},  # Advanced Output presets; None = Resolume's own folder
     "layers": {"default": "auto"},

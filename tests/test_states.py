@@ -213,6 +213,59 @@ def test_engine_pending_keeps_only_the_newest_value():
     assert sent == [1.0, round(0.6 * 255) / 255], sent
 
 
+# ---- a track without a Bar Chaser layer plays on its partner's layer --------------------------- #
+def fold_engine(tracks):
+    comp = F.make_comp(random.Random(4), len(tracks), 1, {L: t for L, t in enumerate(tracks, 1)})
+    sent = []
+    eng = PluginEngine(None, lambda: comp, lambda: None, lambda pid, v: sent.append((pid, v)))
+    lvl = {}
+    for i in eng.instances():
+        lvl[i["track"]] = i["fx"]["params"]["Level 1"]["id"]
+    return eng, sent, lvl
+
+
+def test_route_folds_to_the_partner_track_then_any():
+    eng, _, _ = fold_engine([1, 3])                           # layers on T1 and T3, as on the real rig
+    assert [eng.route(t) for t in range(4)] == [0, 0, 2, 2]
+    eng, _, _ = fold_engine([2])
+    assert [eng.route(t) for t in range(4)] == [1, 1, 1, 1]
+    eng.fold = False
+    assert [eng.route(t) for t in range(4)] == [None, 1, None, None]
+
+
+def test_folded_levels_combine_by_maximum():
+    eng, sent, lvl = fold_engine([1, 3])
+    eng.set_level(1, "pad 1", 1.0, now=10.0)                 # T2 hat → T1's layer
+    assert sent[-1] == (lvl[0], 1.0)
+    eng.set_level(0, "pad 1", 0.4, now=10.1)                 # T1's own level below the hat: still 1.0
+    assert sent[-1] == (lvl[0], 1.0) and len(sent) == 1
+    eng.set_level(1, "pad 1", 0.0, now=10.2)                 # hat released: T1's own 0.4 shows
+    assert sent[-1] == (lvl[0], round(0.4 * 255) / 255), sent
+    eng.set_level(3, "pad 1", 0.8, now=10.3)                 # T4 → T3's layer, T1 untouched
+    assert sent[-1] == (lvl[2], round(0.8 * 255) / 255)
+
+
+def test_no_fold_when_the_track_has_its_own_layer_or_fold_is_off():
+    eng, sent, lvl = fold_engine([1, 2])
+    eng.set_level(1, "pad 1", 1.0, now=10.0)
+    assert sent == [(lvl[1], 1.0)]
+    eng, sent, _ = fold_engine([1, 3])
+    eng.fold = False
+    eng.set_level(1, "pad 1", 1.0, now=10.0)
+    assert sent == []
+
+
+def test_display_says_where_a_track_without_a_layer_plays():
+    br = fresh()                                              # Bar Chaser on T1 and T2
+    tap(br, "Note")
+    tap(br, "Lower Row 3")                                    # select T3: no own layer
+    w = br.snapshot()["seq"]["warning"]
+    assert "T3 plays on T1" in w or "T3 plays on T2" in w, w
+    tap(br, "Upper Row 3")
+    info = br.snapshot()["seq"]["presets"]["info"]
+    assert "T3" in info and "T4" in info and "plays on" in info, info
+
+
 # ---- B2 chases.yaml is not written on every knob tick / step press ----------------------------- #
 def test_knob_ticks_and_step_presses_write_the_file_later():
     br = fresh()
