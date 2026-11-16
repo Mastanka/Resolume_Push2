@@ -183,6 +183,7 @@ class Bridge(SeqMixin, MappingMixin, PresetsMixin):
         self.tap_flash = 0.0
         self.tap_count = 0
         self.clock = None          # (time, beat, bpm) at the last rebase: beat time never jumps back far
+        self.quitting = False      # shutdown() ran: the clock thread stops sending
         self.pulse = True          # playing pads pulse on the beat (Metronome toggles)
         self.pins_path = paths.data_file("pins.yaml", cfg.get("pins_file"))
         self.order = self._load_order()
@@ -193,6 +194,8 @@ class Bridge(SeqMixin, MappingMixin, PresetsMixin):
         self.choice_acc = {}
         self.midi_reset = False
         self._init_seq(cfg, rest)             # SEQ / MAPPING / PRESETS state (seq_screen.py)
+        if self.seq.load_error:
+            self.note = (self.seq.load_error, time.time() + 10)   # shown for ~12 s
 
     # ---- screens: view (pads) + menu (display, knobs, buttons below) + MIX / MUTE / SOLO ---- #
     @property
@@ -307,6 +310,7 @@ class Bridge(SeqMixin, MappingMixin, PresetsMixin):
             loaded = False
             try:
                 loaded = self.engine.sync_pads(comp)    # one pad mapping on every Bar Chaser
+                self.engine.observe(comp)               # what Arena shows on the Level params
             except Exception:
                 traceback.print_exc()
             if loaded:
@@ -317,6 +321,18 @@ class Bridge(SeqMixin, MappingMixin, PresetsMixin):
                 self.check_rig(loaded)                  # presets still fit the Advanced Output?
             except Exception:
                 traceback.print_exc()
+
+    def shutdown(self):
+        """Quit: let go of everything, stop the sequencer (an Apply waiting for the bar lands), set every
+        Bar Chaser level to 0 so no bar stays lit after the bridge is gone, and write chases.yaml."""
+        self.quitting = True                            # seq_step does nothing from now on
+        self.release_all()
+        with self.lock:
+            self.seq.stop()
+            self.seq.voices.clear()
+            self.seq.levels.clear()
+            self.engine.all_dark()
+            self.seq.flush(force=True)
 
     def _composition_opened(self):
         """Another composition is open (new ids everywhere). Momentary actions started in the old one end
@@ -1498,6 +1514,7 @@ def run(cfg, rest, sim=False):
         print("Simulator: http://localhost:6128")
 
     pad_cache, btn_cache, palette_ok, display_warned = {}, {}, False, False
+    led_warned = 0.0
     swatch_cache = None
     started, midi_warned = time.time(), False
     dt = 1.0 / float(cfg.get("display_fps", 20))
@@ -1531,14 +1548,19 @@ def run(cfg, rest, sim=False):
                     swatch_cache = swatches
                     for b in LOWER_ROW:
                         btn_cache.pop(b, None)
-                for name, color in bridge.button_colors().items():
-                    if btn_cache.get(name) != color:
-                        push.buttons.set_button_color(name, color)
-                        btn_cache[name] = color
-                for ij, color in bridge.pad_colors().items():
-                    if pad_cache.get(ij) != color:
-                        push.pads.set_pad_color(ij, color)
-                        pad_cache[ij] = color
+                try:                                       # a bug here must not stop the loop (and the display)
+                    for name, color in bridge.button_colors().items():
+                        if btn_cache.get(name) != color:
+                            push.buttons.set_button_color(name, color)
+                            btn_cache[name] = color
+                    for ij, color in bridge.pad_colors().items():
+                        if pad_cache.get(ij) != color:
+                            push.pads.set_pad_color(ij, color)
+                            pad_cache[ij] = color
+                except Exception:
+                    if time.time() - led_warned > 5:
+                        traceback.print_exc()
+                        led_warned = time.time()
             bridge.blackout_watchdog()
             if t0 >= next_frame:
                 next_frame = t0 + dt
@@ -1553,9 +1575,8 @@ def run(cfg, rest, sim=False):
     except KeyboardInterrupt:
         print("\nBye.")
         try:
-            bridge.release_all()                           # flashes back, held clips and columns released
-            time.sleep(0.3)                                # let the sender deliver that
-            bridge.seq.flush(force=True)                   # a deferred chases.yaml save
+            bridge.shutdown()                              # held controls released, levels 0, chases.yaml written
+            time.sleep(0.4)                                # let the Sender and the WebSocket deliver that
             push.pads.set_all_pads_to_color("black")
         finally:
             push.stop_active_sensing_thread()

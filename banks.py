@@ -552,7 +552,7 @@ def refit(pattern: dict, rig: Rig) -> dict:
     length, direction, swing and every track's envelope, gate and level. Patterns without a
     `source` (edited by hand) come back unchanged."""
     src = pattern.get("source")
-    if not src:
+    if not src or src.get("recipe") not in RECIPES:              # own pattern, or a recipe this version lacks
         return pattern
     fresh = realize(src["recipe"], rig, src["seed"], src.get("bank", "techno"), src.get("macros"))
     out = copy.deepcopy(pattern)
@@ -568,7 +568,7 @@ def set_macros(pattern: dict, rig: Rig, macros: dict, seed: Optional[int] = None
     ENVELOPE-knob edits are replaced). Name, length, direction, swing and track Level are kept.
     Patterns without a `source` come back unchanged."""
     src = pattern.get("source")
-    if not src:
+    if not src or src.get("recipe") not in RECIPES:              # own pattern, or a recipe this version lacks
         return pattern
     m = clean_macros(dict(src.get("macros") or {}, **macros))
     fresh = realize(src["recipe"], rig, src["seed"] if seed is None else seed, src.get("bank", "techno"), m)

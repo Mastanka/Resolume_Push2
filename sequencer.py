@@ -6,8 +6,11 @@ it returns."""
 from __future__ import annotations
 
 import math
+import os
 import random
+import shutil
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -157,7 +160,11 @@ class Sequencer:
         self.voices = {}           # (track, bar name) -> Voice
         self.levels = {}           # (track, bar name) -> last level returned by tick()
         self.dirty, self.dirty_t = False, 0.0   # a deferred save is waiting (save_later / flush)
-        self.pending_apply = None  # (slot, pattern dict) replacing the live pattern at the next bar
+        self.pending_apply = None  # (slot, Pattern) replacing the live pattern at the next bar
+        self.landed = None         # slot whose waiting pattern just landed (the bridge reloads its preview)
+        self.load_error = None     # why chases.yaml could not be read (the file was kept aside)
+        self._wlock = threading.Lock()
+        self._version = self._written = 0   # snapshot counter: an older snapshot never overwrites a newer
         if self.path and self.path.exists():
             self.load()
 
@@ -231,14 +238,27 @@ class Sequencer:
 
     def clear_pattern(self, p=None):
         p = self.current if p is None else p
+        self._drop_pending(p)
         self.patterns[p] = Pattern(name=f"P{p + 1}")
         self.save()
 
     def copy_pattern(self, src, dst):
-        d = _pattern_from_dict(_pattern_to_dict(self.patterns[src]))
+        d = _pattern_from_dict(_pattern_to_dict(self.slot_pattern(src)))
         d.name = f"P{dst + 1}"
+        self._drop_pending(dst)
         self.patterns[dst] = d
         self.save()
+
+    def slot_pattern(self, p):
+        """What slot p holds, counting an Apply that waits for the bar: what the PRESETS menu edits."""
+        if self.pending_apply is not None and self.pending_apply[0] == p:
+            return self.pending_apply[1]
+        return self.patterns[p]
+
+    def _drop_pending(self, p):
+        """A direct write to slot p wins over an older Apply still waiting for the bar."""
+        if self.pending_apply is not None and self.pending_apply[0] == p:
+            self.pending_apply = None
 
     def double_loop(self):
         p = self.pattern
@@ -258,6 +278,7 @@ class Sequencer:
 
     def store_pattern(self, p, d):
         """Put a pattern dict (a realised preset) into slot p. A running pattern plays on with it."""
+        self._drop_pending(p)
         self.patterns[p] = _pattern_from_dict(d)
         self.save()
 
@@ -265,7 +286,7 @@ class Sequencer:
         """Replace pattern p with a dict: the live, running pattern at the next bar boundary (the
         outgoing voices finish their release), any other slot at once. Returns "bar" or "now"."""
         if self.running and p == self.current:
-            self.pending_apply = (p, d)
+            self.pending_apply = (p, _pattern_from_dict(d))
             return "bar"
         self.store_pattern(p, d)
         return "now"
@@ -285,15 +306,22 @@ class Sequencer:
         return kept
 
     def mismatched(self, signature):
-        """Slots whose preset placement was made for a different rig than `signature`."""
-        return [i for i, p in enumerate(self.patterns) if p.source and p.source.get("rig") != signature]
+        """Slots whose preset placement (or the Apply waiting for the bar) was made for another rig."""
+        return [i for i in range(len(self.patterns))
+                if self.slot_pattern(i).source and self.slot_pattern(i).source.get("rig") != signature]
 
     def refit(self, signature, refit_fn):
-        """Re-place every preset pattern made for another rig; knobs, length and swing stay.
-        refit_fn(pattern dict) -> pattern dict (banks.refit with the current rig). Returns the slots."""
+        """Re-place every preset pattern made for another rig; knobs, length and swing stay. An Apply
+        waiting for the bar is re-placed too. refit_fn(pattern dict) -> pattern dict (banks.refit with
+        the current rig). Returns the slots."""
         done = self.mismatched(signature)
         for i in done:
-            self.patterns[i] = _pattern_from_dict(refit_fn(_pattern_to_dict(self.patterns[i])))
+            pa = self.pending_apply
+            if pa is not None and pa[0] == i:
+                self.pending_apply = (i, _pattern_from_dict(refit_fn(_pattern_to_dict(pa[1]))))
+            p = self.patterns[i]
+            if p.source and p.source.get("rig") != signature:
+                self.patterns[i] = _pattern_from_dict(refit_fn(_pattern_to_dict(p)))
         if done:
             self.save()
         return done
@@ -320,9 +348,11 @@ class Sequencer:
     def stop(self):
         self.running = False        # voices keep ticking so releases finish
         if self.pending_apply:      # nothing to wait for any more
-            p, d = self.pending_apply
+            p, pat = self.pending_apply
             self.pending_apply = None
-            self.store_pattern(p, d)
+            self.patterns[p] = pat
+            self.landed = p
+            self.save()
 
     def switch_pattern(self, p, bt, now=False):
         if now or not self.running:
@@ -383,9 +413,10 @@ class Sequencer:
         if self.running:
             new_bar = self.last_bt is not None and math.floor(bt / BAR_BEATS) > math.floor(self.last_bt / BAR_BEATS)
             if self.pending_apply is not None and new_bar:
-                p, d = self.pending_apply
+                p, pat = self.pending_apply
                 self.pending_apply = None
-                self.patterns[p] = _pattern_from_dict(d)
+                self.patterns[p] = pat
+                self.landed = p
                 self.save_later()
             if self.pending is not None and new_bar:
                 self.switch_pattern(self.pending, bt, now=True)
@@ -468,37 +499,67 @@ class Sequencer:
     def save(self):
         """Write the file now (single actions: a stored preset, a group, the pad mapping)."""
         self.dirty = False
-        self.write(self.to_dict())
+        self.write(self._snapshot())
 
     def save_later(self, now=None):
         """Write the file SAVE_DELAY after the last change. Knob ticks and step presses come many
         times a second and a full write takes tens of ms on the MIDI thread."""
         self.dirty, self.dirty_t = True, (now or time.time())
 
+    def _snapshot(self):
+        self._version += 1
+        return self._version, self.to_dict()
+
     def take_dirty(self, now=None, force=False):
-        """The data of a due deferred save (None when nothing is due). Take it under the bridge lock,
-        then write() outside it."""
+        """The snapshot of a due deferred save (None when nothing is due). Take it under the bridge
+        lock, then write() it outside."""
         if not self.dirty or (not force and (now or time.time()) - self.dirty_t < SAVE_DELAY):
             return None
         self.dirty = False
-        return self.to_dict()
+        return self._snapshot()
 
     def flush(self, now=None, force=False):
-        data = self.take_dirty(now, force)
-        if data is not None:
-            self.write(data)
+        snap = self.take_dirty(now, force)
+        if snap is not None:
+            self.write(snap)
 
-    def write(self, data):
+    def write(self, snap):
+        """Write a snapshot. Two threads may write; a snapshot older than the one on disk is skipped,
+        and the file is replaced in one step (a temporary file, then a rename), so it is never torn."""
         if not self.path:
             return
-        try:
-            self.path.write_text("# Step sequencer patterns, written by the bridge. Safe to edit or delete.\n"
-                                 + yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-        except Exception as e:
-            print(f"[seq] can't write {self.path}: {e}", file=sys.stderr)
+        version, data = snap
+        text = "# Step sequencer patterns, written by the bridge. Safe to edit or delete.\n" \
+               + yaml.safe_dump(data, sort_keys=False)
+        with self._wlock:
+            if version < self._written:
+                return
+            tmp = self.path.with_name(self.path.name + ".tmp")
+            try:
+                tmp.write_text(text, encoding="utf-8")
+                os.replace(tmp, self.path)
+                self._written = version
+            except Exception as e:
+                print(f"[seq] can't write {self.path}: {e}", file=sys.stderr)
 
     def load(self):
+        """Read chases.yaml. A file that can't be read is copied aside (chases.yaml.bad-<time>) before
+        anything can overwrite it, and the sequencer starts empty; load_error says where it went."""
         try:
             self.from_dict(yaml.safe_load(self.path.read_text(encoding="utf-8")) or {})
         except Exception as e:
-            print(f"[seq] can't read {self.path}: {e}", file=sys.stderr)
+            backup = self.path.with_name(f"{self.path.name}.bad-{time.strftime('%Y%m%d-%H%M%S')}")
+            n = 1
+            while backup.exists():
+                backup = self.path.with_name(f"{self.path.name}.bad-{time.strftime('%Y%m%d-%H%M%S')}-{n}")
+                n += 1
+            try:
+                shutil.copy2(self.path, backup)
+            except OSError:
+                backup = None
+            fresh = Sequencer(n_tracks=self.n_tracks)               # nothing half-read stays
+            self.patterns, self.groups, self.track_groups = fresh.patterns, fresh.groups, fresh.track_groups
+            self.pad_config, self.kick_pads = None, []
+            self.load_error = (f"chases.yaml could not be read ({type(e).__name__}); "
+                               + (f"kept as {backup.name}" if backup else "and could not be copied"))
+            print(f"[seq] {self.load_error}: {e}", file=sys.stderr)

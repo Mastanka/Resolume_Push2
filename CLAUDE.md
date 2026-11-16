@@ -52,7 +52,7 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 | `.github/ISSUE_TEMPLATE/` | Idea + bug templates |
 | `tests/mock_resolume.py` | Fake Resolume REST + WebSocket server (port 18080, `MOCK_PORT`) with a small composition; test-control endpoints `_new_composition`, `_delete_layer`, `_options`, `_drop_puts` |
 | `tests/sim_arena.py` | In-process Arena simulator (Arena's id behaviour, the REST calls, `user_*` edits, WebSocket-style delivery, virtual clock); `make_bridge`, `settle` |
-| `tests/test_scenarios.py` | 35 scenario tests on the simulator: layers, Bar Chaser add / remove / Track / fold, composition switch / new / empty, blackout, held controls, fixtures, broken preset, presets, tempo, subscriptions, plus a structural random walk |
+| `tests/test_scenarios.py` | 45 scenario tests on the simulator: layers, Bar Chaser add / remove / Track / fold, composition switch / new / empty, blackout, held controls, fixtures, broken preset, presets, tempo, subscriptions, plus a structural random walk |
 | `tests/fuzz_arena.py` | Structural fuzzer: random Push input + random Arena edits; checkpoints check nothing stays lit, the mapping is consistent, no writes to ids that are gone. `python tests/fuzz_arena.py 16 2000` ≈ 20 s |
 | `tests/soak_mock.py` | Every thread running (real `run()`, fake Push) against the mock over HTTP + WebSocket while a driver changes the composition; `python tests/soak_mock.py 60` |
 | `tests/test_fake_push.py` | Runs the real `run()` loop with a fake Push object; asserts it works |
@@ -221,7 +221,15 @@ main thread (run loop)   ──► LEDs at 50 Hz (diffed vs cache, beat edges) +
   (an instance added / removed, a Track changed, fold) by `_sync_routing`, which re-pushes every Level param: no bar
   stays lit on a layer that no longer plays it and ids that are gone are never written. `instances()` caches where
   the effects are per composition and reads Track live. An instance whose dropdown only offers "—" (preset not
-  readable) never becomes or donates the mapping (`has_fixtures`).
+  readable) never becomes or donates the mapping (`has_fixtures`); a pad edit merges only the pads that changed.
+  Every full composition goes to `PluginEngine.observe`: the next `flush` resends where Arena shows something
+  else than the desired level (a lost set, a bar lit before the start or saved lit). `Bridge.shutdown()` (quit)
+  stops the sequencer, sets every level to 0 and writes chases.yaml. `ResolumeWS` keeps one waiting value per
+  parameter and clears it when the socket drops.
+- **chases.yaml writes** are versioned snapshots through a temporary file + rename (two threads write; an older
+  snapshot never wins); a file that can't be read is copied to `chases.yaml.bad-<time>` first (`load_error`).
+  An Apply waiting for the bar is `Sequencer.pending_apply = (slot, Pattern)`; `slot_pattern()` is what PRESETS
+  edits; `landed` makes seq_step reload the preview.
 - **Deferred saves**: knob ticks and step presses call `Sequencer.save_later()`; `seq_loop` writes `chases.yaml`
   `SAVE_DELAY` (0.2 s) after the last change, outside the lock (`take_dirty()` + `write()`); single actions (`store_pattern`,
   groups, pad mapping) still `save()` at once; quit flushes. `PluginEngine.flush()` (each `seq_loop` tick) sends the

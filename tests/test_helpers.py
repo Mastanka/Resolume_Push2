@@ -114,17 +114,18 @@ def test_req_retries_only_a_connection_closed_without_answer():
     assert s.calls == 1
 
 
-# ---- ResolumeWS.set: the outbox is bounded and keeps the newest values ------------------------- #
-def test_ws_outbox_is_bounded():
+# ---- ResolumeWS.set: latest value per parameter, nothing stale after a drop --------------------- #
+def test_ws_outbox_keeps_the_latest_value_per_param_and_clears_on_a_drop():
     ws = ResolumeWS("127.0.0.1", 1, None, None, lambda: [])
     ws.live = True
     for i in range(1000):
-        ws.set(i, i / 1000)
-    assert ws.outbox.qsize() <= 256, ws.outbox.qsize()
-    items = []
-    while not ws.outbox.empty():
-        items.append(ws.outbox.get_nowait())
-    assert items[-1]["parameter"].endswith("/999"), items[-1]
+        ws.set(7, i / 1000)
+        ws.set(i % 50, 0.5)
+    batch = ws.take_outbox()
+    assert len(batch) == 50 and batch[7] == 0.999, (len(batch), batch.get(7))
+    ws.set(7, 1.0)
+    ws.dropped()
+    assert ws.take_outbox() == {}, "a reconnect must not replay old values"
 
 
 if __name__ == "__main__":

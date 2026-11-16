@@ -63,11 +63,14 @@ class MappingMixin:
     def _toggle_kick(self, k):
         """Pad k (0-based) becomes a kick bar for the bank recipes, or stops being one. The first
         choice replaces the automatic one; removing the last returns to automatic."""
+        valid = {p for p in self.seq.kick_pads if self.engine.pad_name(self.seq.track, p - 1)}
         if not self.engine.pad_name(self.seq.track, k):
+            if valid != set(self.seq.kick_pads):                   # forget kick bars that lost their fixture
+                self.seq.kick_pads = sorted(valid)
+                self.seq.save()
             self.note_msg(f"Pad {k + 1} has no fixture")
             return
-        kick = set(self.seq.kick_pads)
-        kick ^= {k + 1}
+        kick = valid ^ {k + 1}
         self.seq.kick_pads = sorted(kick)
         self.seq.save()
         self._rig_checked = (None, 0.0)                            # look at the rig again now

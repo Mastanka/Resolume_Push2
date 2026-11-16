@@ -41,11 +41,12 @@ class PresetsMixin:
         geo = self.engine.geometry()                           # published by the effect (Bar Chaser 2026-09-28+)
         path = mtime = None
         if geo is None:                                        # older effect: read the preset file here
-            path = rigmod.resolve_preset(self.engine.preset_text(), folder)
             try:
+                path = rigmod.resolve_preset(self.engine.preset_text(), folder)
                 mtime = os.path.getmtime(path) if path else None
-            except OSError:
-                mtime = None
+            except OSError as e:                               # a preset file vanished between listing and reading
+                self._rig_cache = (None, None, f"Advanced Output preset not readable: {e}")
+                return None, self._rig_cache[2]
         override = dict(sc.get("rig") or {})
         if self.seq.kick_pads:
             override["kick"] = list(self.seq.kick_pads)
@@ -82,6 +83,7 @@ class PresetsMixin:
             return
         if loaded:
             done = self.seq.refit(sig, lambda d: banks.refit(d, r))
+            self.refit_offer = False
             self.note_msg(f"Rig changed: {len(done)} preset pattern{'s' * (len(done) != 1)} re-fitted")
         else:
             self.refit_offer = True
@@ -105,7 +107,7 @@ class PresetsMixin:
         d = self.drafts.get(slot)
         if d:
             return d
-        src = self.seq.patterns[slot].source
+        src = self.seq.slot_pattern(slot).source
         if not src or "recipe" not in src:
             return None
         d = {"recipe": src["recipe"], "seed": int(src.get("seed", 1)), "macros": banks.clean_macros(src.get("macros"))}
@@ -113,7 +115,7 @@ class PresetsMixin:
         return d
 
     def _slot_name(self, i):
-        n = self.seq.patterns[i].name
+        n = self.seq.slot_pattern(i).name
         return f"P{i + 1}" + ("" if n == f"P{i + 1}" else f" ({n})")
 
     # ---- pads ----------------------------------------------------------------------- #
@@ -132,7 +134,7 @@ class PresetsMixin:
             self.note_msg(err)
             return
         slot = self.preset_slot
-        prev, src = self.drafts.get(slot), self.seq.patterns[slot].source
+        prev, src = self.drafts.get(slot), self.seq.slot_pattern(slot).source
         macros = dict(prev["macros"]) if prev else banks.clean_macros(src.get("macros") if src else None)
         self.drafts[slot] = {"recipe": recipes[n], "seed": self._new_seed(), "macros": macros}
         self.confirm = self.load_armed = None
@@ -161,7 +163,7 @@ class PresetsMixin:
             return
         if self.select_held and name in MACRO_LABELS:
             self.select_used = True
-            targets = [i for i in range(N_PATTERNS) if i in self.drafts or self.seq.patterns[i].source]
+            targets = [i for i in range(N_PATTERNS) if i in self.drafts or self.seq.slot_pattern(i).source]
         else:
             targets = [slot]
         done = []
@@ -219,7 +221,7 @@ class PresetsMixin:
         if r is None:
             self.note_msg(err)
             return
-        pat = self.seq.patterns[slot]
+        pat = self.seq.slot_pattern(slot)                       # counting an Apply that waits for the bar
         if not force and pat.source is None and not self.seq.is_empty(slot):
             self.confirm = {"kind": "overwrite", "slot": slot}
             return
@@ -281,7 +283,7 @@ class PresetsMixin:
             r, _ = self.current_rig()
             if r is not None:
                 return banks.realize(d["recipe"], r, d["seed"], PRESET_BANK, d["macros"])
-        return _pattern_to_dict(self.seq.patterns[self.preset_slot])
+        return _pattern_to_dict(self.seq.slot_pattern(self.preset_slot))
 
     def _preview_reload(self):
         if not self.presets_menu():
@@ -328,7 +330,7 @@ class PresetsMixin:
         n = i * GRID_COLS + j
         if j >= GRID_COLS or n >= len(recipes):
             return "black"
-        d, src = self.drafts.get(self.preset_slot), self.seq.patterns[self.preset_slot].source
+        d, src = self.drafts.get(self.preset_slot), self.seq.slot_pattern(self.preset_slot).source
         if d and d["recipe"] == recipes[n]:
             return "white"
         if not d and src and src.get("recipe") == recipes[n]:
@@ -382,7 +384,7 @@ class PresetsMixin:
     # ---- display ---------------------------------------------------------------------- #
     def _presets_snapshot(self):
         sq, slot = self.seq, self.preset_slot
-        pat = sq.patterns[slot]
+        pat = sq.slot_pattern(slot)
         r, err = self.current_rig()
         d, src = self.drafts.get(slot), pat.source
         macros = d["macros"] if d else (banks.clean_macros(src.get("macros")) if src else None)

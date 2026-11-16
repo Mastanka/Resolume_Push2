@@ -14,6 +14,7 @@ from rig import parse_geometry
 MIN_DT = 0.02          # s between two sends of the same layer (50/s); 30/s when many change
 MANY = 16
 ROUTING_DT = 0.005     # s: set_level re-checks the routing at most this often (flush checks every tick)
+IN_FLIGHT = 0.3        # s: a write younger than this may not show in a composition yet (no resend)
 N_TRACKS = 4           # tracks a level can come from (the sequencer's T1-T4)
 
 
@@ -84,6 +85,7 @@ class PluginEngine:
         self._routing_t = -1.0     # when routing was last checked (set_level checks at most every ROUTING_DT)
         self._by_source = {}       # (track, pad index) -> [level param ids it reaches]
         self._sends = deque()      # times of recent sends, for the rate limit's "busy" test
+        self._reported = None      # {level param id: value} from the newest full composition, checked in flush
         self.fold = True           # a track without a Bar Chaser layer plays on its partner's (config sequencer.fold_tracks)
         self._cache = (None, [])   # (composition, [(layer, clip, effect)]): one tuple, so threads see a matching pair
         self._known = {}           # effect id -> (pads we expect, our writes pending until)
@@ -232,7 +234,10 @@ class PluginEngine:
                 self._known[inst["fx"]["id"]] = (self.pads_of(inst), now + PENDING)
             done = True
         if done and self.store is not None:
-            self.store.pad_config = self.pads_of(self._reference())
+            cfg = list(self.store.pad_config or self.pads_of(self._reference()))
+            cfg = (cfg + [UNASSIGNED] * NPADS)[:NPADS]
+            cfg[k] = name                                       # even when the reference effect lacks it
+            self.store.pad_config = cfg
             self.store.save()
         return done
 
@@ -352,11 +357,43 @@ class PluginEngine:
             self._sends.popleft()
         return 0.033 if len(self._sends) > MANY else MIN_DT
 
+    def observe(self, comp):
+        """A full composition arrived (connect, refresh, another composition): note what Arena shows for
+        every Level param. The next flush sends again where that differs from what it should show: a
+        set lost with a dropped socket, a bar left lit by a crash or saved lit in the composition."""
+        rep = {}
+        for inst in self.instances(comp):
+            for name, p in (inst["fx"].get("params") or {}).items():
+                if name.startswith("Level ") and is_param(p):
+                    rep[p["id"]] = p.get("value")
+        self._reported = rep
+
+    def _reconcile(self, now):
+        rep, self._reported = self._reported, None
+        if not rep:
+            return
+        for pid, v in rep.items():
+            if pid not in self._feeds:
+                continue
+            k, tracks = self._feeds[pid]
+            out = max((self._levels.get((t, k), 0.0) for t in tracks), default=0.0)
+            try:
+                v = float(v or 0.0)
+            except (TypeError, ValueError):
+                v = 0.0
+            last = self._last.get(pid)
+            if abs(v - out) <= 0.5 / 255 or (last is not None and now - last[0] < IN_FLIGHT):
+                continue
+            self._pending.pop(pid, None)
+            self._send(pid, out, now)
+
     def flush(self, now=None):
-        """Every clock tick: follow routing changes, and send the levels set_level held back because
-        their parameter was written too recently (a flash 13 ms after the last one is delayed, not lost)."""
+        """Every clock tick: follow routing changes, repair what a full composition showed wrong, and
+        send the levels set_level held back because their parameter was written too recently (a flash
+        13 ms after the last one is delayed, not lost)."""
         now = now or time.time()
         self._sync_routing(now)
+        self._reconcile(now)
         if not self._pending:
             return
         window = self._window(now)
@@ -414,10 +451,16 @@ class PluginEngine:
         if loaded and sources:
             new = self.pads_of(self._reference(comp))
         elif not loaded:
-            for inst in sources:                                   # a pad changed in Arena on any instance
-                prev = self._known.get(inst["fx"]["id"])
-                if prev is not None and now >= prev[1] and self.pads_of(inst) != prev[0]:
-                    new = self.pads_of(inst)
+            for inst in sources:                                   # a pad changed in Arena on any instance:
+                prev = self._known.get(inst["fx"]["id"])           # only the pads that changed are taken
+                if prev is None or now < prev[1]:
+                    continue
+                pads = self.pads_of(inst)
+                changed = [k for k in range(NPADS) if pads[k] != prev[0][k]]
+                if changed:
+                    new = list(want) if want else list(pads)
+                    for k in changed:
+                        new[k] = pads[k]
                     break
             if new is None and want is None and sources:
                 new = self.pads_of(sources[0])

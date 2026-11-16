@@ -8,7 +8,7 @@ between layers, remove effect, add effect, switch composition, create new one, c
 | Tool | What it does | Run |
 |---|---|---|
 | `tests/sim_arena.py` | In-process Arena: a composition with Arena's id behaviour (new ids for a new or re-opened composition), the REST calls the bridge makes, what a user does in Arena (`user_*`), delivery like the WebSocket (`deliver_comp`, `deliver_params` for subscribed ids), the Sender queue drained into it (`process`), a virtual clock | library |
-| `tests/test_scenarios.py` | 35 deterministic scenarios on the simulator, plus the structural fuzzer as a regression test | `python tests/test_scenarios.py` |
+| `tests/test_scenarios.py` | 45 deterministic scenarios on the simulator, plus the structural fuzzer as a regression test | `python tests/test_scenarios.py` |
 | `tests/fuzz_arena.py` | Structural fuzzer: random Push input mixed with random Arena edits; checkpoints every ~150 events stop everything and check what reached Arena | `python tests/fuzz_arena.py 16 2000` |
 | `tests/soak_mock.py` | Every thread running (real `run()`, fake Push) against the HTTP + WebSocket mock while a driver changes the composition | `python tests/soak_mock.py 60` |
 | `tests/fuzz_states.py` | UI state fuzzer (held buttons, overlays, selections) from the earlier pass | `python tests/fuzz_states.py 16 2500` |
@@ -56,7 +56,19 @@ remembered mapping (where its dropdown offers the fixture), no write to an id th
 | G2 | Resync | the beat moves at most two beats and lands on beat 1 |
 | G3 | BPM halved in Arena | the beat clock stays continuous, nothing stays lit |
 | G4 | A clock that goes backwards | a flash still ends |
+| H1 | Quit while a bar is lit | every Bar Chaser level 0 after `shutdown()` |
+| H2 | A bar lit before the bridge started (a crash, or saved lit in the composition) | it goes dark on the first composition |
+| H3 | A 0 lost on the way (socket hiccup) | the next composition shows the difference and the 0 goes out again |
+| H4 | Knob + Apply while an earlier Apply waits for the bar | the waiting pattern is what the knob edits; it lands with the new macros; the preview follows |
+| H5 | A direct write to a slot whose older Apply still waits | the newer write wins |
+| H6 | A composition loads while an Apply waits | the waiting pattern is re-fitted too; Re-fit stops blinking |
+| H7 | A fixture only one Bar Chaser offers, then an edit on the other | the mapping keeps it; only the edited pad changes |
+| H8 | Kick bars that lost their fixture | dropped at the next kick-bar change |
+| H9 | The preset file vanishes between listing and reading | no crash in the LED pass |
+| H10 | Hand-edited chases.yaml: unknown recipe, unknown direction | no crash |
 | Z | Structural random walk, 4 seeds × 600 events | 0 crashes, 0 violations |
+| (test_sequencer) | A broken chases.yaml | copied aside to `chases.yaml.bad-<time>` before anything can overwrite it |
+| (test_sequencer) | An older save snapshot written after a newer save | skipped; files are written through a temporary file and a rename |
 
 ## Bugs found and fixed
 
@@ -73,6 +85,20 @@ remembered mapping (where its dropdown offers the fixture), no write to an id th
 | soak | Play + a button below a missing column sent a launch | a failed request | ignored |
 | fuzz_arena | LAYER PARAMS offered Bar Chaser's 50 internal params as knobs | a knob fights the sequencer, useful knobs on page 7 | hidden |
 | profile | The rate limiter summed over every parameter on every send | clock ticks up to 50 ms under heavy patterns | O(1) busy test, routing checked at most every 5 ms in a tick: worst tick 0.6 ms |
+
+## Found by the independent review (agent, reproduced, then fixed with H1–H10)
+
+| Bug | Effect on stage | Fix |
+|---|---|---|
+| Quit did not stop the sequencer or darken anything; a level never written this session was never set to 0 | bars stay lit after quitting, after a restart, or in a composition saved lit | `Bridge.shutdown()` stops, sets every level to 0 and writes chases.yaml; every full composition is compared with what each Level should show (`PluginEngine.observe` / `_reconcile`) |
+| The WebSocket outbox dropped the oldest set when full and replayed stale sets after a reconnect | a lost 0 leaves a bar lit until that pad plays again | one waiting value per parameter, cleared on a drop; the reconnect's full composition repairs the rest |
+| PRESETS read the slot, not the Apply waiting for the bar; nothing reloaded the preview when it landed; an older waiting Apply could overwrite a newer write | a knob + Apply in that bar brought the old recipe back | `Sequencer.slot_pattern`, `landed` → preview reload, direct writes cancel a waiting Apply, re-fit includes it |
+| A broken chases.yaml was replaced by empty patterns on the next save | the show's patterns are gone | the file is copied aside first; the display says where |
+| Two threads could write chases.yaml at once, the older snapshot last; `write_text` is not atomic | a newer change undone, or a torn file (then: the line above) | versioned snapshots, temporary file + rename |
+| A pad edit on one Bar Chaser took all 24 of its pads; `set_pad` stored the reference effect's pads | a fixture only one effect offers was undone | edits merge pad by pad; `set_pad` stores the chosen fixture |
+| Re-fit kept blinking after the automatic re-fit of a loaded composition | a false alarm | cleared |
+| Kick bars that lost their fixture could not be removed | they came back with the fixtures | dropped at the next kick-bar change |
+| Preset lookup outside its guard; LED pass without one | one vanished file could stop the run loop | guarded; the LED pass logs and continues |
 
 ## Not covered
 

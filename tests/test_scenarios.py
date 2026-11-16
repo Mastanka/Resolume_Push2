@@ -521,6 +521,157 @@ def test_f2_a_stale_composition_after_our_own_pad_write_does_not_undo_it():
     mapping_consistent(a, br)
 
 
+# ---- H: findings of the independent review (2026-11-16) -------------------------------------------- #
+def lit_pad(br, track=0, pad="pad 2", release=1.5):
+    with br.lock:
+        br.seq.pattern.tracks[track].envelope.release = release
+    hold_pad(br, track, pad)
+
+
+def test_h1_quitting_leaves_no_bar_lit():
+    a = S.Arena(layers=3, chasers={2: 1})
+    br = S.make_bridge(a)
+    lit_pad(br); run(a, br, 0.3)
+    assert a.lit()
+    br.shutdown()
+    a.process(br)
+    assert not a.lit(), a.lit()
+
+
+def test_h2_a_bar_lit_before_the_bridge_started_goes_dark():
+    a = S.Arena(layers=3, chasers={2: 1})
+    fx_on(a, 2)["params"]["Level 3"]["value"] = 0.7         # left lit by a crash, or saved like that
+    br = S.make_bridge(a)
+    run(a, br, 1.0)
+    assert not a.lit(), a.lit()
+
+
+def test_h3_a_lost_zero_is_sent_again():
+    a = S.Arena(layers=3, chasers={2: 1})
+    br = S.make_bridge(a)
+    fx = fx_on(a, 2)
+    hold_pad(br, 0); run(a, br, 0.3)
+    release_pad(br, 0); run(a, br, 1.0)
+    assert level(a, fx) == 0.0
+    fx["params"]["Level 2"]["value"] = 1.0                   # the 0 never arrived (socket hiccup)
+    a.deliver_comp(br); run(a, br, 1.0)
+    assert level(a, fx) == 0.0, "the next composition shows the difference and the 0 goes out again"
+
+
+def test_h4_knob_and_apply_while_an_apply_waits_for_the_bar():
+    a = S.Arena(layers=3, chasers={2: 1})
+    br = S.make_bridge(a)
+    tap(br, "Note"); tap(br, "Upper Row 3")
+    br.pad_pressed((0, 0)); br.pad_released((0, 0)); tap(br, "Lower Row 1")   # P1 = R1
+    with br.lock:
+        br.seq.start(br.beat_time())
+    run(a, br, 0.2)
+    br.pad_pressed((3, 3)); br.pad_released((3, 3)); tap(br, "Lower Row 1")   # W4: waits for the bar
+    assert br.seq.pending_apply is not None and br.seq.patterns[0].name == "R1 Pump"
+    br.turn(0, 10)                                            # Strobe on what is coming: W4
+    assert br.drafts[0]["recipe"] == "W4", br.drafts[0]
+    tap(br, "Lower Row 1")
+    run(a, br, 2.5)
+    p = br.seq.patterns[0]
+    assert p.name == "W4 Tension" and abs(p.source["macros"]["strobe"] - 0.7) < 1e-9, (p.name, p.source)
+    assert br.preview.patterns[0].name == "W4 Tension", "the preview follows the landed pattern"
+
+
+def test_h5_a_direct_write_cancels_an_older_waiting_apply():
+    import banks
+    from rig import rig_from_roles
+    from sequencer import Sequencer
+    r = rig_from_roles("S D S S D S")
+    seq = Sequencer()
+    seq.start(0.0); seq.tick(0.1)
+    assert seq.apply(0, banks.realize("W4", r, 1)) == "bar"
+    seq.switch_pattern(1, 0.2, now=True)
+    assert seq.apply(0, banks.realize("R1", r, 2)) == "now"
+    seq.tick(4.1)
+    assert seq.patterns[0].name == "R1 Pump", seq.patterns[0].name
+
+
+def test_h6_a_waiting_apply_is_refitted_when_a_composition_loads():
+    a = S.Arena(layers=3, chasers={2: 1})
+    br = S.make_bridge(a)
+    tap(br, "Note"); tap(br, "Upper Row 3")
+    with br.lock:
+        br.seq.start(br.beat_time())
+    run(a, br, 0.2)
+    br.pad_pressed((3, 0)); br.pad_released((3, 0)); tap(br, "Lower Row 1")   # W1 waits for the bar
+    a.user_new_composition(layers=2, chasers={1: 1})
+    a.user_set_fixtures(S.fixtures(4)); a.write_preset(br.preset_folder); S.advance(1.1)
+    a.deliver_comp(br)
+    run(a, br, 2.5)
+    r = br.current_rig()[0]
+    assert br.seq.patterns[0].source["rig"] == r.signature(), (br.seq.patterns[0].source["rig"], r.signature())
+    assert not br.refit_offer, "an automatic re-fit leaves nothing to offer"
+
+
+def test_h7_mapping_keeps_a_fixture_only_one_bar_chaser_offers():
+    a = S.Arena(layers=3, chasers={2: 1, 3: 3})
+    br = S.make_bridge(a)
+    extra = "Lumiverse 9 / 1 - 423 141 RGB"
+    for k in range(24):
+        fx_on(a, 3)["params"][f"Pad {k + 1}"]["options"].append(extra)   # only the T3 effect offers it
+    a.deliver_comp(br)
+    tap(br, "Note"); tap(br, "Upper Row 4")
+    assert br.engine.set_pad(0, extra)
+    run(a, br, 3.0)
+    assert br.seq.pad_config[0] == extra, br.seq.pad_config[0]
+    a.user_set_pad(fx_on(a, 2), 2, S.fixtures(6)[5])          # an edit of pad 3 on the other effect
+    a.deliver_comp(br); run(a, br, 3.0)
+    assert br.seq.pad_config[0] == extra and br.seq.pad_config[2] == S.fixtures(6)[5], br.seq.pad_config[:3]
+    assert a.pads(fx_on(a, 3))[0] == extra
+
+
+def test_h8_kick_bars_that_lost_their_fixture_go_away():
+    a = S.Arena(layers=3, chasers={2: 1})
+    br = S.make_bridge(a)
+    tap(br, "Note"); tap(br, "Upper Row 4")
+    br.button("Shift", True)
+    for ij in ((7, 4), (7, 5)):
+        br.pad_pressed(ij); br.pad_released(ij)
+    br.button("Shift", False)
+    a.user_set_fixtures(S.fixtures(4)); a.write_preset(br.preset_folder); S.advance(1.1)
+    a.deliver_comp(br); run(a, br, 3.0)
+    br.button("Shift", True); br.pad_pressed((7, 1)); br.pad_released((7, 1)); br.button("Shift", False)
+    assert br.seq.kick_pads == [2], br.seq.kick_pads
+
+
+def test_h9_led_pass_survives_a_failing_preset_lookup():
+    import rig
+    a = S.Arena(layers=3, chasers={2: 1})
+    br = S.make_bridge(a)
+    tap(br, "Note"); tap(br, "Upper Row 3")
+    real = rig.resolve_preset
+    rig.resolve_preset = lambda *a_, **k: (_ for _ in ()).throw(FileNotFoundError("gone"))
+    try:
+        br._rig_checked = (None, 0.0)
+        r, err = br.current_rig()
+        assert r is None and "gone" in err
+        br.button_colors(); br.pad_colors(); render(br.snapshot())
+    finally:
+        rig.resolve_preset = real
+
+
+def test_h10_hand_edited_chases_values_do_not_crash():
+    import banks
+    from rig import rig_from_roles
+    p = banks.realize("R1", rig_from_roles("S D S S D S"), 3)
+    p["source"]["recipe"] = "XX"
+    assert banks.refit(p, rig_from_roles("S D S D")) is p
+    assert banks.set_macros(p, rig_from_roles("S D S D"), {"strobe": 1}) is p
+    a = S.Arena(layers=2, chasers={1: 1})
+    br = S.make_bridge(a)
+    with br.lock:
+        br.seq.pattern.direction = "sideways"
+    tap(br, "Note"); tap(br, "Upper Row 2")
+    for _ in range(6):
+        br.turn(0, 1)                                         # Direction knob
+    assert br.seq.pattern.direction in ("forward", "reverse", "bounce", "random")
+
+
 # ---- Z: the structural fuzzer as a regression test --------------------------------------------- #
 def test_z_structural_random_walk():
     import fuzz_arena

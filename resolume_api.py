@@ -152,7 +152,6 @@ def color_label(path):
 # --------------------------------------------------------------------------- #
 
 RETRIES = 2           # extra attempts when Resolume drops a connection without answering
-OUTBOX = 256          # WebSocket sets waiting for the socket; older ones make room for newer ones
 
 
 def _dropped(e):
@@ -311,23 +310,27 @@ class ResolumeWS(threading.Thread):
         self.on_comp, self.on_param, self.desired = on_comp, on_param, desired
         self.live = False
         self._warned = False
-        self.outbox = queue.Queue(maxsize=OUTBOX)
+        self._out = {}             # param id -> latest value to set (a stalled socket keeps only the newest)
+        self._out_lock = threading.Lock()
 
     def set(self, pid, value):
-        """Set a parameter over the socket (cheaper than a PUT). Dropped when not live; when the
-        socket stalls, the oldest waiting set gives way to the newest (the levels are 100/s)."""
+        """Set a parameter over the socket (cheaper than a PUT). Dropped when not live. Per parameter
+        only the newest value waits, so a stalled socket can't push a level's final 0 out of the queue."""
         if not self.live:
             return
-        msg = {"action": "set", "parameter": f"/parameter/by-id/{pid}", "value": value}
-        while True:
-            try:
-                self.outbox.put_nowait(msg)
-                return
-            except queue.Full:
-                try:
-                    self.outbox.get_nowait()
-                except queue.Empty:
-                    pass
+        with self._out_lock:
+            self._out[pid] = value
+
+    def take_outbox(self):
+        with self._out_lock:
+            batch, self._out = self._out, {}
+        return batch
+
+    def dropped(self):
+        """The socket is gone: what waits is stale (the bridge sends by REST meanwhile)."""
+        self.live = False
+        with self._out_lock:
+            self._out.clear()
 
     def run(self):
         import websocket   # websocket-client; only needed when the bridge runs
@@ -348,11 +351,8 @@ class ResolumeWS(threading.Thread):
                             self.on_param(msg.get("id"), msg.get("value"))
                     except websocket.WebSocketTimeoutException:
                         pass
-                    while True:                                   # parameter sets from the bridge
-                        try:
-                            ws.send(json.dumps(self.outbox.get_nowait()))
-                        except queue.Empty:
-                            break
+                    for pid, value in self.take_outbox().items():  # parameter sets from the bridge
+                        ws.send(json.dumps({"action": "set", "parameter": f"/parameter/by-id/{pid}", "value": value}))
                     if time.time() >= next_sync:
                         next_sync = time.time() + 0.5
                         want = set(self.desired())
@@ -367,7 +367,7 @@ class ResolumeWS(threading.Thread):
                     if not isinstance(e, (OSError, websocket.WebSocketException)):
                         traceback.print_exc()            # a bug, not a network problem
                     self._warned = True
-                self.live = False
+                self.dropped()
                 try:
                     ws and ws.close()
                 except Exception:

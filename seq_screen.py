@@ -74,6 +74,8 @@ class SeqMixin:
     def seq_step(self):
         """One clock tick: feed beat time to the sequencer, send changed levels, handle Repeat, write a
         due chases.yaml save. seq_loop calls it 100 times a second; tests call it directly."""
+        if self.quitting:
+            return
         bt = self.beat_time()
         changed = {}
         if bt is not None:
@@ -86,6 +88,9 @@ class SeqMixin:
                         self.seq.trigger(track, bar, 1.0, tr.gate * sb, bt)
                 self.last_grid_step = g
                 changed = self.seq.tick(bt)
+                if self.seq.landed is not None:            # an Apply landed at the bar: preview it
+                    self.seq.landed = None
+                    self._preview_reload()
                 self.preview_tick(bt)                      # PRESETS draft, display only
         for (track, bar), v in changed.items():
             self.engine.set_level(track, bar, v)
@@ -337,7 +342,8 @@ class SeqMixin:
         elif name == "Direction":
             acc = self.choice_acc.get("seqdir", 0) + inc
             if abs(acc) >= 4:
-                i = (DIRECTIONS.index(seq.pattern.direction) + (1 if acc > 0 else -1)) % len(DIRECTIONS)
+                cur = DIRECTIONS.index(seq.pattern.direction) if seq.pattern.direction in DIRECTIONS else 0
+                i = (cur + (1 if acc > 0 else -1)) % len(DIRECTIONS)
                 seq.set_direction(DIRECTIONS[i])
                 acc = 0
             self.choice_acc["seqdir"] = acc

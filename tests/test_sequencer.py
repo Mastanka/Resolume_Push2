@@ -176,6 +176,32 @@ def test_presets():
     assert S.Sequencer(path).pad_config == ["Bar B"]
 
 
+def test_a_broken_file_is_kept_aside_not_overwritten():
+    import tempfile
+    d = Path(tempfile.mkdtemp())
+    path = d / "chases.yaml"
+    path.write_text("patterns: :\n  - name: MY SHOW\n")
+    seq = S.Sequencer(path)
+    assert seq.load_error and "MY SHOW" not in [p.name for p in seq.patterns]
+    backups = list(d.glob("chases.yaml.bad-*"))
+    assert len(backups) == 1 and "MY SHOW" in backups[0].read_text(), backups
+    seq.save()
+    assert "MY SHOW" in backups[0].read_text(), "the backup survives the next save"
+
+
+def test_an_older_snapshot_never_overwrites_a_newer_save():
+    import tempfile
+    path = Path(tempfile.mkdtemp()) / "chases.yaml"
+    seq = S.Sequencer(path)
+    seq.set_length(12)
+    seq.save_later(now=100.0)
+    old = seq.take_dirty(now=101.0)                          # the clock thread took a snapshot ...
+    seq.store_group(0, [0, 1, 2])                            # ... the MIDI thread saved a newer state ...
+    seq.write(old)                                           # ... and the old snapshot is written last
+    assert S.Sequencer(path).groups[0] == [0, 1, 2]
+    assert not list(path.parent.glob("*.tmp")), "written through a temporary file"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):
