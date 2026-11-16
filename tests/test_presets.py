@@ -134,15 +134,17 @@ def test_apply_on_an_own_pattern_asks_first():
     assert br.seq.patterns[3].name == "G3 Rolling" and 3 not in br.drafts
 
 
-def test_apply_on_the_live_running_pattern_waits_for_the_bar():
+def test_apply_on_the_live_running_pattern_waits_for_its_phrase():
     br = presets()
     br.seq.start(0.0)                                        # P1 is live and running
     pad(br, PAD["W4"])                                       # draft for the selected slot = P1
     tap(br, "Lower Row 1")
     assert br.seq.patterns[0].name == "P1" and br.seq.pending_apply is not None, "not before the bar"
-    br.seq.tick(3.9)
-    assert br.seq.patterns[0].name == "P1"
-    br.seq.tick(4.0)
+    assert "2-bar phrase" in br.note[0], br.note
+    for bt in (3.9, 4.0, 7.9):                               # a preset is 2 bars: not at bar 2
+        br.seq.tick(bt)
+        assert br.seq.patterns[0].name == "P1", bt
+    br.seq.tick(8.0)
     assert br.seq.patterns[0].name == "W4 Tension" and br.seq.pending_apply is None
 
 

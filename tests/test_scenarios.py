@@ -206,14 +206,23 @@ def test_b7_fold_off_track_without_layer_sends_nothing_and_leaves_nothing_lit():
     assert not a.lit(), a.lit()
 
 
-def test_b8_bar_chaser_on_a_clip_counts():
-    a = S.Arena(layers=2)
+def test_b8_bar_chaser_on_a_clip_counts_only_while_the_clip_plays():
+    a = S.Arena(layers=2, chasers={2: 2})
     br = S.make_bridge(a)
-    fx = a.user_add_chaser(1, track=1, clip=1)
+    fx = a.user_add_chaser(1, track=1, clip=1)             # T1 on a clip that is not playing
     a.deliver_comp(br)
-    assert br.engine.ready(0)
+    t2 = fx_on(a, 2)
+    assert not br.engine.ready(0) and br.engine.parked(0) and br.engine.route(0) == 1
+    assert "not playing" in br._track_warning(0)
     hold_pad(br, 0); run(a, br, 0.3)
-    assert level(a, fx) == 1.0
+    assert level(a, fx) == 0 and level(a, t2) == 1.0, "T1 folds onto T2's layer"
+    a.user_launch(1, 1); run(a, br, 0.3)                   # launched in Arena: only a parameter update
+    assert br.engine.ready(0) and not br.engine.parked(0)
+    assert level(a, fx) == 1.0 and level(a, t2) == 0.0, "T1 on its own clip, T2's layer dark"
+    a.user_clear(1); run(a, br, 0.3)                       # stopped: dark, folded again
+    assert level(a, fx) == 0.0 and level(a, t2) == 1.0
+    release_pad(br, 0); run(a, br, 0.5)
+    assert not a.lit()
 
 
 # ---- C: compositions -------------------------------------------------------------------------- #
@@ -571,7 +580,7 @@ def test_h4_knob_and_apply_while_an_apply_waits_for_the_bar():
     br.turn(0, 10)                                            # Strobe on what is coming: W4
     assert br.drafts[0]["recipe"] == "W4", br.drafts[0]
     tap(br, "Lower Row 1")
-    run(a, br, 2.5)
+    run(a, br, 4.5)                                           # a 2-bar preset lands on its phrase
     p = br.seq.patterns[0]
     assert p.name == "W4 Tension" and abs(p.source["macros"]["strobe"] - 0.7) < 1e-9, (p.name, p.source)
     assert br.preview.patterns[0].name == "W4 Tension", "the preview follows the landed pattern"
@@ -602,7 +611,7 @@ def test_h6_a_waiting_apply_is_refitted_when_a_composition_loads():
     a.user_new_composition(layers=2, chasers={1: 1})
     a.user_set_fixtures(S.fixtures(4)); a.write_preset(br.preset_folder); S.advance(1.1)
     a.deliver_comp(br)
-    run(a, br, 2.5)
+    run(a, br, 4.5)
     r = br.current_rig()[0]
     assert br.seq.patterns[0].source["rig"] == r.signature(), (br.seq.patterns[0].source["rig"], r.signature())
     assert not br.refit_offer, "an automatic re-fit leaves nothing to offer"

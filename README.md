@@ -170,7 +170,7 @@ playing; the same pad again switches to it as usual), press a recipe: it becomes
 slot, shown on the display as a small preview of your bars while nothing changes on stage. Knobs
 1–5 = **Strobe, Density, Speed, Spread, Accent** (Shift = fine; hold **Select** + knob = the same
 value on every preset slot), knob 6 = seed (turn = reshuffle, Shift = next / previous), knob 7 = bank.
-Buttons below the display: **1 Apply** (the live pattern changes at the next bar; a hand-made pattern
+Buttons below the display: **1 Apply** (the live pattern changes when its phrase starts: a 2-bar preset on every other bar counted from Play; a hand-made pattern
 asks with 7 = NO, 8 = YES), **2 Revert** (drop the draft), **3 Re-fit** (move every preset pattern onto
 the current bars; it blinks when the rig changed during the show), **4 Load bank** (press twice: the
 whole bank into P1–P16, your own patterns are kept). A recipe places kicks on the long bars and hats on
@@ -191,7 +191,8 @@ preset once (Arena → Output → Advanced → Presets → Save): the effect rea
 fixture ("Lumiverse 1 / 1 - 423 141 RGB"), then every whole lumiverse, in its **Pad 1 … Pad 24**
 dropdowns. New pads start on fixture 1, 2, 3 … Put one Bar Chaser on each layer whose clip you want to flash,
 as the **last** effect on the layer (or press **Shift + Note** with a clip of that layer selected),
-and set its **Track** (1–4) — or hold **Browse** and press track button 1–4 on the Push.
+and set its **Track** (1–4) — or hold **Browse** and press track button 1–4 on the Push. A Bar Chaser on a
+clip counts only while that clip plays; until then its track plays on its partner's layer.
 
 ```
 rows 1–4   32 steps of the selected track on the selected pads — red: bright = on, mid = on at a low level
@@ -209,10 +210,10 @@ rows 6–8   pads 1–24, bottom-left = pad 1, each = a fixture chosen in the ef
 | Hold a step + Gate knob (ENVELOPE) / Level knob (SETTINGS) | That step's gate / level on the selected pads |
 | **Repeat** on + hold a pad | Strobe at the grid rate |
 | Buttons below the display 1–4 | Select the texture track; **Browse** + button = the selected clip's layer joins that track |
-| Pattern pad (row 5) | Switch at the next bar; press it again to switch now |
-| **Play** | Run / stop |
+| Pattern pad (row 5) | Switch when its phrase starts (a 2-bar pattern: every other bar, counted from Play); press it again to switch now, at the step its phrase has reached |
+| **Play** | Run / stop (stop drops a queued pattern) |
 | **Layout** → buttons right of the pads | Pad groups 1–8. **Select** + button = store the selection for this track; **Select** + **Shift** + button = store it for all tracks (global). Tap = select that group's pads. **Delete** (+ **Shift**) + button = clear. Track group = track colour, global group = white; dim = stored, bright = current, off = empty. A track's own group hides the global one on that button |
-| **Scale** → buttons right of the pads | Grid 1/4 … 1/32t (white = current) |
+| **Scale** → buttons right of the pads | Grid 1/4 … 1/32t of the current pattern; every pattern keeps its own (white = current) |
 | **Delete** + step / pad / track / pattern / group | Clear |
 | **Duplicate** + pattern → pattern | Copy |
 | **Double Loop** / **Fixed Length** + button 1–8 | Double the pattern / length 4–32 |

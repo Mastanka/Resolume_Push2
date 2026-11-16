@@ -21,7 +21,7 @@ GRIDS = {"1/4": 1.0, "1/4t": 2 / 3, "1/8": 0.5, "1/8t": 1 / 3,
          "1/16": 0.25, "1/16t": 1 / 6, "1/32": 0.125, "1/32t": 1 / 12}   # beats per step
 DIRECTIONS = ["forward", "reverse", "bounce", "random"]
 MAX_STEPS = 32
-BAR_BEATS = 4          # pattern switches happen on this boundary
+BAR_BEATS = 4          # pattern switches happen on a bar boundary (a phrase boundary for longer patterns)
 N_PATTERNS = 16
 N_TRACKS = 4
 N_GROUPS = 8           # pad groups on the 8 buttons right of the pads
@@ -97,6 +97,15 @@ class Pattern:
     swing: float = 0.0
     tracks: list = field(default_factory=lambda: [Track() for _ in range(N_TRACKS)])
     source: dict = None        # made by a preset: {bank, recipe, seed, rig}; None = own or hand-edited
+    grid: str = "1/16"         # step length (GRIDS); every pattern keeps its own
+
+
+def phrase_beats(p):
+    """Beats between the places pattern p may start: its length when that is a whole number of bars
+    (a 2-bar pattern starts on every other bar, counted from Play), else one bar."""
+    bars = p.length * GRIDS.get(p.grid, 0.25) / BAR_BEATS
+    n = round(bars)
+    return n * BAR_BEATS if n >= 1 and abs(bars - n) < 1e-6 else BAR_BEATS
 
 
 def _track_to_dict(t):
@@ -119,7 +128,7 @@ def _track_from_dict(d):
 
 
 def _pattern_to_dict(p):
-    d = {"name": p.name, "length": p.length, "direction": p.direction, "swing": p.swing}
+    d = {"name": p.name, "length": p.length, "direction": p.direction, "swing": p.swing, "grid": p.grid}
     if p.source:
         d["source"] = dict(p.source)
     d["tracks"] = [_track_to_dict(t) for t in p.tracks]
@@ -131,9 +140,10 @@ def _pattern_from_dict(d):
     while len(tracks) < N_TRACKS:
         tracks.append(Track())
     src = d.get("source")
+    grid = str(d.get("grid", "1/16"))                  # older files and preset dicts: 1/16
     return Pattern(name=str(d.get("name", "P?")), length=int(d.get("length", 16)),
                    direction=d.get("direction", "forward"), swing=float(d.get("swing", 0.0)), tracks=tracks,
-                   source=dict(src) if isinstance(src, dict) else None)
+                   source=dict(src) if isinstance(src, dict) else None, grid=grid if grid in GRIDS else "1/16")
 
 
 class Sequencer:
@@ -146,9 +156,9 @@ class Sequencer:
         self.track = 0             # selected track
         self.bar = 0               # selected bar index (into the bridge's bar list)
         self.bank = 0              # bars 16*bank .. on the pads
-        self.grid = "1/16"
         self.running = False
-        self.start_beat = 0.0
+        self.start_beat = 0.0      # where the playing pattern started (its step 0)
+        self.origin = 0.0          # where Play started: phrases are counted from here
         self.last_bt = None
         self.last_step = None
         self.last_pattern_step = None
@@ -172,6 +182,17 @@ class Sequencer:
     @property
     def pattern(self):
         return self.patterns[self.current]
+
+    @property
+    def grid(self):
+        """The playing pattern's step length (every pattern keeps its own)."""
+        return self.pattern.grid
+
+    @grid.setter
+    def grid(self, g):
+        if g in GRIDS and g != self.pattern.grid:
+            self.pattern.grid = g
+            self.save_later()
 
     def _steps(self, bar, track=None):
         t = self.pattern.tracks[self.track if track is None else track]
@@ -341,12 +362,13 @@ class Sequencer:
 
     def start(self, bt):
         self.running = True
-        self.start_beat = math.floor(bt / BAR_BEATS) * BAR_BEATS
+        self.start_beat = self.origin = math.floor(bt / BAR_BEATS) * BAR_BEATS
         self.last_step = None
         self.last_bt = bt
 
     def stop(self):
         self.running = False        # voices keep ticking so releases finish
+        self.pending = None         # a queued pattern is dropped: Play starts what is shown as current
         if self.pending_apply:      # nothing to wait for any more
             p, pat = self.pending_apply
             self.pending_apply = None
@@ -355,12 +377,28 @@ class Sequencer:
             self.save()
 
     def switch_pattern(self, p, bt, now=False):
-        if now or not self.running:
-            self.current, self.pending = p, None
-            self.start_beat = math.floor(bt / BAR_BEATS) * BAR_BEATS
-            self.last_step = None
+        """Running: queued until its phrase boundary (see phrase_beats); now = at once, joining at the
+        step its phrase has reached. Not running: at once."""
+        if not self.running:
+            self._begin(p, math.floor(bt / BAR_BEATS) * BAR_BEATS)
+        elif now:
+            P = phrase_beats(self.patterns[p])
+            self._begin(p, self.origin + math.floor((bt - self.origin) / P) * P)
         else:
             self.pending = p
+
+    def _begin(self, p, at):
+        self.current, self.pending = p, None
+        self.start_beat = at
+        self.last_step = None
+
+    def _boundary(self, pat, bt):
+        """The phrase boundary of pattern pat (counted from Play) passed since the last tick, else None."""
+        if self.last_bt is None:
+            return None
+        P = phrase_beats(pat)
+        b = self.origin + (math.floor((self.last_bt - self.origin) / P) + 1) * P
+        return b if b <= bt else None
 
     def abs_step(self, bt):
         """Grid steps since the pattern start, with swing (steps 2, 4, 6 … start later)."""
@@ -410,16 +448,22 @@ class Sequencer:
             if self.start_beat > bt:
                 self.start_beat = math.floor(bt / BAR_BEATS) * BAR_BEATS
                 self.last_step = None
+            self.origin = min(self.origin, self.start_beat)
         if self.running:
-            new_bar = self.last_bt is not None and math.floor(bt / BAR_BEATS) > math.floor(self.last_bt / BAR_BEATS)
-            if self.pending_apply is not None and new_bar:
-                p, pat = self.pending_apply
-                self.pending_apply = None
-                self.patterns[p] = pat
-                self.landed = p
-                self.save_later()
-            if self.pending is not None and new_bar:
-                self.switch_pattern(self.pending, bt, now=True)
+            if self.pending_apply is not None:                 # lands on the new pattern's phrase
+                b = self._boundary(self.pending_apply[1], bt)
+                if b is not None:
+                    p, pat = self.pending_apply
+                    self.pending_apply = None
+                    self.patterns[p] = pat
+                    self.landed = p
+                    self.save_later()
+                    if p == self.current:
+                        self._begin(p, b)
+            if self.pending is not None:
+                b = self._boundary(self.patterns[self.pending], bt)
+                if b is not None:
+                    self._begin(self.pending, b)
             k = self.abs_step(bt)
             if k != self.last_step:
                 self.last_step = k

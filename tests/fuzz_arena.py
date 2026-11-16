@@ -1,5 +1,6 @@
 """Structural fuzzer: random Push input mixed with random edits in Arena (tests/sim_arena.py), against a
-real Bridge. Arena edits: layers added / removed / moved, Bar Chaser added (layer or clip) / removed,
+real Bridge. Arena edits: layers added / removed / moved, Bar Chaser added (layer or clip) / removed, clips
+launched and layers cleared (a clip's Bar Chaser renders only while it plays),
 Track and Pad changes, fixtures reloaded (fewer, more, long / short), a broken preset, new compositions
 (0-6 layers), master changes, Arena offline. Delivery lags like the real WebSocket: parameter updates
 for subscribed ids, the whole composition now and then.
@@ -77,7 +78,8 @@ def arena_event(rng, a, br):
     n_layers = len(a.comp["layers"])
     ch = a.chasers()
     ops += [("add layer", 2)] if n_layers < 8 else []
-    ops += [("remove layer", 1), ("move layer", 1), ("add chaser", 3), ("add clip chaser", 1)] if n_layers else []
+    ops += [("remove layer", 1), ("move layer", 1), ("add chaser", 3), ("add clip chaser", 1.5),
+            ("launch clip", 2), ("clear layer", 1)] if n_layers else []
     ops += [("remove chaser", 2), ("set track", 3), ("set pad", 3)] if ch else []
     ops += [("fixtures", 1), ("break preset", 0.4), ("new composition", 0.8), ("master", 1), ("offline", 0.3)]
     names, weights = zip(*ops)
@@ -95,6 +97,13 @@ def arena_event(rng, a, br):
         C = rng.randrange(1, len(a.comp["layers"][L - 1]["clips"]) + 1) if a.comp["layers"][L - 1]["clips"] else None
         if C:
             a.user_add_chaser(L, rng.randrange(1, 5), clip=C)
+    elif op == "launch clip":
+        L = rng.randrange(1, n_layers + 1)
+        n = len(a.comp["layers"][L - 1]["clips"])
+        if n:
+            a.user_launch(L, rng.randrange(1, n + 1))
+    elif op == "clear layer":
+        a.user_clear(rng.randrange(1, n_layers + 1))
     elif op == "remove chaser":
         layers = sorted({L for L, C, _ in ch if C is None})
         if layers:

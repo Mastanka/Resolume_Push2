@@ -142,7 +142,7 @@ overlays. Parameter page is per menu (`Bridge.page` property over `_pages`).
   a **draft** `Bridge.drafts[slot] = {recipe, seed, macros}` for `Bridge.preset_slot` (row 5 selects it
   without switching live: `_preset_pattern_pad`; the same pad again = normal switch). K1–K5 macros, K6 seed
   (Shift ±1), K7 bank (`_preset_turn`; Select held = every preset slot). BD1 Apply (`_apply`: same recipe →
-  `banks.set_macros`, else `banks.realize`; `Sequencer.apply` = at the next bar when live and running
+  `banks.set_macros`, else `banks.realize`; `Sequencer.apply` = at the pattern's next phrase boundary when live and running
   (`pending_apply`); an own pattern with steps → `confirm`, BD7 NO / BD8 YES), BD2 Revert, BD3 Re-fit
   (`_refit_now`, blinks on `refit_offer`), BD4 Load bank twice within `LOAD_DOUBLE` (`Sequencer.load_bank`
   keeps own patterns). **Preview:** `Bridge.preview` (a second `Sequencer`, no path) plays the draft;
@@ -174,6 +174,13 @@ overlays. Parameter page is per menu (`Bridge.page` property over `_pages`).
   Arena on any instance becomes the mapping (own writes pending `PENDING` s), new instances get it, a
   new composition master id = a loaded composition → T1's mapping (else the first instance's) is
   written to the others. Returns True for a loaded composition. BD1–4 = texture tracks = layers carrying a **Bar Chaser** effect with that `Track`.
+  A Bar Chaser on a clip counts only while that clip plays (`instances()` → `live`; `engine.parked(t)` = the
+  track's only effects sit on stopped clips: it folds, the display says so; its Level params get 0).
+  **Patterns and phrases:** every pattern keeps its own grid (`Pattern.grid`; `Sequencer.grid` is a property
+  over the current pattern; preset dicts and old files = 1/16). A queued pattern or a waiting Apply starts on its
+  own phrase: `phrase_beats(p)` = its length when that is whole bars, else one bar, counted from Play
+  (`Sequencer.origin`); a 2-bar preset therefore lands on every other bar. "Now" (same pattern pad again) joins
+  at the step its phrase has reached. Stop drops a queued pattern (a waiting Apply lands).
   Knobs = the selected track's ADSR + Gate + Level and the pattern's Direction + Length. `Bridge.seq`
   (`Sequencer`, bars named `pad 1`…`pad 24`), `Bridge.engine` (`PluginEngine`), `seq_loop` thread at
   100 Hz → `engine.set_level` → WebSocket `set` of the instance's `Level n`. Shift + Note = add the

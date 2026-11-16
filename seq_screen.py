@@ -440,7 +440,6 @@ class SeqMixin:
         self.drafts = {}           # PRESETS: slot -> {"recipe", "seed", "macros"} not applied yet (never saved)
         self.load_armed = None     # PRESETS: time of the first Load-bank press (the second within LOAD_DOUBLE loads)
         self.preview = Sequencer(n_tracks=int(sc.get("tracks", 4)))   # plays the draft for the display only
-        self.preview.grid = "1/16"
         self.preview_levels = {}   # pad index -> level from the preview sequencer
         self.confirm = None        # PRESETS question: {"kind": "overwrite", "slot", "recipe"}
         self.refit_offer = False   # the rig changed during the show: PRESETS offers a re-fit
@@ -459,6 +458,8 @@ class SeqMixin:
 
     def _track_warning(self, t):
         r = self.engine.route(t)
+        if self.engine.parked(t):                       # its Bar Chaser sits on a clip that is not playing
+            return f"T{t + 1}'s Bar Chaser clip is not playing" + (f" · plays on T{r + 1}'s layer" if r is not None else "")
         if r is not None:
             return f"T{t + 1} plays on T{r + 1}'s layer (no own Bar Chaser) · Shift + Note adds one"
         return f"T{t + 1}: no Bar Chaser — Shift + Note on a layer"

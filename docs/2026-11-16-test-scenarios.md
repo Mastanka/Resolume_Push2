@@ -33,7 +33,7 @@ remembered mapping (where its dropdown offers the fixture), no write to an id th
 | B5 | Track changed while a pad is lit | the old layer goes dark, the fold takes over |
 | B6 | A folded track gets its own layer while lit | the partner layer goes dark, the new one lights |
 | B7 | Fold off, Track changed while lit | nothing stays lit |
-| B8 | Bar Chaser on a clip | counts as an instance, gets levels |
+| B8 | Bar Chaser on a clip that is not playing, then launched, then cleared in Arena | counts only while the clip plays: folds onto the partner's layer before and after, own levels while it plays, nothing left lit |
 | C1 | Another composition opened while playing | its T1 mapping is taken, the others follow, no writes to the old ids, levels reach the new effects |
 | C2 | New empty composition (0 layers), then a layer and a Bar Chaser | every screen works, the mapping is kept and given to the new effect |
 | C3 | Composition without Bar Chaser | warning, nothing written |
@@ -69,6 +69,9 @@ remembered mapping (where its dropdown offers the fixture), no write to an id th
 | Z | Structural random walk, 4 seeds × 600 events | 0 crashes, 0 violations |
 | (test_sequencer) | A broken chases.yaml | copied aside to `chases.yaml.bad-<time>` before anything can overwrite it |
 | (test_sequencer) | An older save snapshot written after a newer save | skipped; files are written through a temporary file and a rename |
+| (test_sequencer) | Stop with a pattern queued | the queue is dropped; Play starts the current pattern |
+| (test_sequencer) | 2-bar patterns queued, switched now, Applied while running; a 1/8 pattern; a tick that jumps a bar | each starts on its own phrase counted from Play; "now" joins at the phrase's step |
+| (test_sequencer) | Grid changed on one pattern; save, copy, preset dict, old file | every pattern keeps its own grid; presets and old files 1/16 |
 
 ## Bugs found and fixed
 
@@ -99,6 +102,13 @@ remembered mapping (where its dropdown offers the fixture), no write to an id th
 | Re-fit kept blinking after the automatic re-fit of a loaded composition | a false alarm | cleared |
 | Kick bars that lost their fixture could not be removed | they came back with the fixtures | dropped at the next kick-bar change |
 | Preset lookup outside its guard; LED pass without one | one vanished file could stop the run loop | guarded; the LED pass logs and continues |
+
+## Decisions after the pass (Štefan, 2026-11-16)
+
+Blackout stays on across a composition switch (kept). Stop drops a queued pattern. Patterns (and a waiting
+Apply) start on their own phrase: a 2-bar preset on every other bar counted from Play. A Bar Chaser on a clip
+counts only while that clip plays. Every pattern keeps its own grid. The fuzzer now also launches clips and
+clears layers in Arena.
 
 ## Not covered
 

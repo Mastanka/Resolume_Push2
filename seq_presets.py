@@ -16,7 +16,7 @@ import traceback
 import banks
 import rig as rigmod
 from chaser_engine import pad_from_key
-from sequencer import N_PATTERNS, _pattern_from_dict, _pattern_to_dict
+from sequencer import BAR_BEATS, N_PATTERNS, _pattern_from_dict, _pattern_to_dict, phrase_beats
 from constants import (CONFIRM_NO, CONFIRM_YES, LOAD_DOUBLE, MACRO_FINE, MACRO_STEP, PRESET_ACTIONS,
                        PRESET_BANK, SEQ_PAGES)
 
@@ -225,17 +225,24 @@ class PresetsMixin:
         if not force and pat.source is None and not self.seq.is_empty(slot):
             self.confirm = {"kind": "overwrite", "slot": slot}
             return
-        src = pat.source
-        if src and src.get("recipe") == d["recipe"]:
-            new = banks.set_macros(_pattern_to_dict(pat), r, d["macros"], seed=d["seed"])
-        else:
-            new = banks.realize(d["recipe"], r, d["seed"], PRESET_BANK, d["macros"])
+        new = self._draft_pattern(slot, d, r)
         when = self.seq.apply(slot, new)
         self.drafts.pop(slot, None)
-        self.seq.grid = "1/16"                                     # presets are written for 1/16
         self.map_blink = {("pattern", slot): time.time()}
-        self.note_msg(f"P{slot + 1} = {new['name']}" + ("  ·  at the next bar" if when == "bar" else ""))
+        bars = phrase_beats(self.seq.slot_pattern(slot)) // BAR_BEATS
+        wait = "  ·  at the next bar" if bars == 1 else f"  ·  at the next {bars}-bar phrase"
+        self.note_msg(f"P{slot + 1} = {new['name']}" + (wait if when == "bar" else ""))
         self._preview_reload()
+
+    def _draft_pattern(self, slot, d, r):
+        """What applying draft d to the slot gives (the preview plays the same): the slot's own recipe
+        keeps its track Levels, length and grid (banks.set_macros); another recipe is realised fresh
+        (1/16, 32 steps)."""
+        pat = self.seq.slot_pattern(slot)
+        src = pat.source
+        if src and src.get("recipe") == d["recipe"]:
+            return banks.set_macros(_pattern_to_dict(pat), r, d["macros"], seed=d["seed"])
+        return banks.realize(d["recipe"], r, d["seed"], PRESET_BANK, d["macros"])
 
     def _revert(self):
         if self.drafts.pop(self.preset_slot, None) is None:
@@ -269,7 +276,6 @@ class PresetsMixin:
             return
         kept = self.seq.load_bank(banks.realize_bank(r, PRESET_BANK))
         self.drafts.clear()
-        self.seq.grid = "1/16"
         msg = f"{PRESET_BANK.capitalize()} bank loaded into P1–P16"
         if kept:
             msg += "  ·  kept: " + ", ".join(f"P{i + 1}" for i in kept)
@@ -282,7 +288,7 @@ class PresetsMixin:
         if d:
             r, _ = self.current_rig()
             if r is not None:
-                return banks.realize(d["recipe"], r, d["seed"], PRESET_BANK, d["macros"])
+                return self._draft_pattern(self.preset_slot, d, r)
         return _pattern_to_dict(self.seq.slot_pattern(self.preset_slot))
 
     def _preview_reload(self):

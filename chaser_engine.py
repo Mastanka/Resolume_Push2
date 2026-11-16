@@ -95,28 +95,36 @@ class PluginEngine:
     # ---- finding instances ------------------------------------------------ #
     @staticmethod
     def _effects_of(comp):
-        """(layer index, clip index or None, effect json) for every effect in the composition."""
+        """(layer index, clip index or None, effect json, clip json or None) for every effect."""
         for L, layer in enumerate(comp.get("layers") or [], 1):
             for fx in (layer.get("video") or {}).get("effects") or []:
-                yield L, None, fx
+                yield L, None, fx, None
             for C, clip in enumerate(layer.get("clips") or [], 1):
                 for fx in ((clip or {}).get("video") or {}).get("effects") or []:
-                    yield L, C, fx
+                    yield L, C, fx, clip
+
+    @staticmethod
+    def _playing(clip):
+        """A Bar Chaser on a clip only renders while that clip plays."""
+        v = (clip.get("connected") or {}).get("value") if isinstance(clip, dict) else None
+        return str(text(v) if isinstance(v, dict) else v or "").startswith("Connected")
 
     def instances(self, comp=None):
-        """[{'track': 0-based, 'layer': L, 'clip': C or None, 'fx': effect json}] for every Bar Chaser.
-        Where the effects are is cached per composition; the Track is read live, because Arena reports
-        a Track change as a parameter update patched into the same composition."""
+        """[{'track': 0-based, 'layer': L, 'clip': C or None, 'fx': effect json, 'live': bool}] for every
+        Bar Chaser. live = it renders: on a layer, or on a clip that plays. Where the effects are is
+        cached per composition; Track and the clip state are read live, because Arena reports their
+        changes as parameter updates patched into the same composition."""
         comp = comp or self.get_comp() or {}
         cached, found = self._cache
         if cached is not comp:
-            found = [(L, C, fx) for L, C, fx in self._effects_of(comp) if fx.get("name") == EFFECT]
+            found = [(L, C, fx, clip) for L, C, fx, clip in self._effects_of(comp) if fx.get("name") == EFFECT]
             self._cache = (comp, found)
         out = []
-        for L, C, fx in found:
+        for L, C, fx, clip in found:
             v = ((fx.get("params") or {}).get("Track") or {}).get("value", "1")
             t = str(text(v) if isinstance(v, dict) else v)
-            out.append({"track": int(t) - 1 if t.isdigit() else 0, "layer": L, "clip": C, "fx": fx})
+            out.append({"track": int(t) - 1 if t.isdigit() else 0, "layer": L, "clip": C, "fx": fx,
+                        "live": C is None or self._playing(clip)})
         return out
 
     MANAGED = ("Track", "Preset", "Reload", "Geometry")
@@ -138,13 +146,20 @@ class PluginEngine:
         return any(o != UNASSIGNED for o in opts)
 
     def ready(self, track):
-        return any(i["track"] == track for i in self.instances())
+        """The track has a Bar Chaser that renders (a clip's only while the clip plays)."""
+        return any(i["track"] == track and i["live"] for i in self.instances())
+
+    def parked(self, track):
+        """The track's only Bar Chasers sit on clips that are not playing."""
+        insts = [i for i in self.instances() if i["track"] == track]
+        return bool(insts) and not any(i["live"] for i in insts)
 
     def layers_of(self, track):
-        return sorted({i["layer"] for i in self.instances() if i["track"] == track})
+        return sorted({i["layer"] for i in self.instances() if i["track"] == track and i["live"]})
 
     def _first(self, track):
-        return next((i for i in self.instances() if i["track"] == track), None)
+        mine = [i for i in self.instances() if i["track"] == track]
+        return next((i for i in mine if i["live"]), mine[0] if mine else None)
 
     def _reference(self, comp=None):
         """The instance whose mapping counts when instances disagree: T1's first, else the first;
@@ -279,7 +294,7 @@ class PluginEngine:
     def route(self, track):
         """The track whose layers show `track`: its own when it has a Bar Chaser, else (fold on) its
         partner (T1 ↔ T2, T3 ↔ T4), else the lowest track that has one. None = nowhere."""
-        return self._route(track, {i["track"] for i in self.instances()})
+        return self._route(track, {i["track"] for i in self.instances() if i["live"]})
 
     def _route(self, track, have):
         if track in have:
@@ -292,19 +307,20 @@ class PluginEngine:
     def _sync_routing(self, now):
         self._routing_t = now
         insts = self.instances()
-        key = (tuple((i["fx"].get("id"), i["track"]) for i in insts), self.fold)
+        key = (tuple((i["fx"].get("id"), i["track"], i["live"]) for i in insts), self.fold)
         if key == self._routing:
             return False
-        have = {i["track"] for i in insts}
+        have = {i["track"] for i in insts if i["live"]}
         tracks = set(range(N_TRACKS)) | {t for t, _ in self._levels}
         feeds_of = {t: [s for s in tracks if self._route(s, have) == t] for t in have}
         feeds = {}
         for inst in insts:
             params = inst["fx"].get("params") or {}
+            srcs = feeds_of[inst["track"]] if inst["live"] else []     # a clip that does not play: dark
             for k in range(NPADS):
                 p = params.get(f"Level {k + 1}")
                 if is_param(p):
-                    feeds[p["id"]] = (k, feeds_of[inst["track"]])
+                    feeds[p["id"]] = (k, srcs)
         for pid in [p for p in self._last if p not in feeds]:     # gone with its effect or composition
             self._last.pop(pid, None)
             self._pending.pop(pid, None)

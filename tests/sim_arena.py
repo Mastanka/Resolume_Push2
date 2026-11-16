@@ -193,7 +193,9 @@ class Arena:
             for c in self.comp["layers"][layer - 1]["clips"]:
                 if c["connected"]["value"].startswith("Connected"):
                     c["connected"]["value"] = "Disconnected"
+                    self.changed.add(c["connected"]["id"])
             clip["connected"]["value"] = "Connected"
+            self.changed.add(clip["connected"]["id"])
 
     def select_clip(self, layer, column):
         self.triggers.append(("select", layer, column))
@@ -203,6 +205,11 @@ class Arena:
 
     def clear_layer(self, layer):
         self.triggers.append(("clear", layer))
+        if 1 <= layer <= len(self.comp["layers"]):
+            for c in self.comp["layers"][layer - 1]["clips"]:
+                if c["connected"]["value"].startswith("Connected"):
+                    c["connected"]["value"] = "Disconnected"
+                    self.changed.add(c["connected"]["id"])
 
     def add_effect(self, layer, name):
         if name != EFFECT or not 1 <= layer <= len(self.comp["layers"]):
@@ -230,6 +237,15 @@ class Arena:
         return clips[C - 1] if 1 <= C <= len(clips) else None
 
     # ---- what a user does in Arena ---------------------------------------------------------- #
+    def user_launch(self, L, C):
+        """A clip launched in Arena (or by another controller)."""
+        self.connect_clip(L, C, True)
+        self.triggers.pop()
+
+    def user_clear(self, L):
+        self.clear_layer(L)
+        self.triggers.pop()
+
     def user_add_layer(self, at=None):
         cols = len(self.comp["columns"])
         layer = self._layer(len(self.comp["layers"]) + 1, cols)
