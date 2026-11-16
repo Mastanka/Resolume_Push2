@@ -115,7 +115,7 @@ def clean(out):
 
 def smoke_test(out, mods, ver):
     """The release runs on its own: every module imports from Release/ alone, --version answers."""
-    env = dict(os.environ, PUSH2_DATA_DIR=tempfile.mkdtemp(prefix="push2-release-"))
+    env = dict(os.environ, PUSH2_DATA_DIR=tempfile.mkdtemp(prefix="push2-release-"), PYTHONDONTWRITEBYTECODE="1")
     env.pop("PYTHONPATH", None)
     code = "import sys; sys.path[:0] = [sys.argv[1]]; import " + ", ".join(mods) + "; " \
            "import paths; assert paths.REPO == __import__('pathlib').Path(sys.argv[1]).resolve(), paths.REPO"
