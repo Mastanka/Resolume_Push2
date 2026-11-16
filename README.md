@@ -55,6 +55,11 @@ python push_resolume_bridge.py
 Before you run it: in Resolume, **Preferences → Webserver → Enable Webserver & REST API**
 (port 8080).
 
+**Release folder:** [`Release/`](Release) holds the current version (see [CHANGELOG.md](CHANGELOG.md)):
+only the files needed to run the bridge, a prebuilt Bar Chaser effect, `setup.sh` and `start.command`.
+You can copy it to another Mac and follow the README inside it. `python push_resolume_bridge.py --version`
+prints the version.
+
 ## Detailed installation (macOS)
 
 Tested on macOS (Apple Silicon) with Resolume Arena 7.23. macOS only for now: the Push display

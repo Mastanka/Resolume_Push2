@@ -48,6 +48,7 @@ Usage
     python push_resolume_bridge.py --dump 3 --clip 2
     python push_resolume_bridge.py --check 8       test every Resolume call on layer 8 (undone after)
     python push_resolume_bridge.py --install-plugin  copy the Bar Chaser effect into Resolume's Extra Effects
+    python push_resolume_bridge.py --version         print the version
 """
 
 from __future__ import annotations
@@ -69,6 +70,8 @@ from pathlib import Path
 
 import requests
 import yaml
+
+__version__ = "1.0.0"      # MAJOR.MINOR.PATCH; bump it with CHANGELOG.md, then python tools/make_release.py
 
 import paths
 from seq_mapping import MappingMixin
@@ -1509,7 +1512,7 @@ def run(cfg, rest, sim=False):
     bridge.sender.start()
     threading.Thread(target=bridge.seq_loop, daemon=True).start()
 
-    print(f"Bridge running → {rest.url}   (Ctrl+C to quit)")
+    print(f"Bridge {__version__} running → {rest.url}   (Ctrl+C to quit)")
     if sim:
         print("Simulator: http://localhost:6128")
 
@@ -1614,6 +1617,15 @@ def dump(rest, layer_no, col_no=None):
     print("\nCopy a path into config.yaml, e.g.  - {label: Scale, path: <path>, scope: clip}\n")
 
 
+def plugin_bundle():
+    """The Bar Chaser bundle to install: next to the script in a release folder, else the build's."""
+    here = Path(__file__).resolve().parent
+    for p in (here / "Bar Chaser.bundle", here / "plugin" / "dist" / "Bar Chaser.bundle"):
+        if p.is_dir():
+            return p
+    return here / "plugin" / "dist" / "Bar Chaser.bundle"
+
+
 def install_plugin(bundle):
     """Copy the built Bar Chaser bundle into ~/Documents/Resolume Arena/Extra Effects."""
     import shutil
@@ -1656,14 +1668,16 @@ def main():
                     help="try every Resolume call on this (spare) layer, undo each, report OK/FAIL")
     ap.add_argument("--check-columns", action="store_true", help="with --check: also launch a column")
     ap.add_argument("--install-plugin", nargs="?", const="", metavar="BUNDLE",
-                    help="copy the Bar Chaser effect into Resolume's Extra Effects folder (default: plugin/dist/Bar Chaser.bundle)")
+                    help="copy the Bar Chaser effect into Resolume's Extra Effects folder "
+                         "(default: Bar Chaser.bundle next to this script, else plugin/dist/)")
+    ap.add_argument("--version", action="version", version=f"Push 2 → Resolume bridge {__version__}")
     args = ap.parse_args()
 
+    if args.install_plugin is not None:
+        install_plugin(args.install_plugin or str(plugin_bundle()))
+        return
     cfg = load_config(paths.config_path(args.config))
     rest = Resolume(cfg["resolume"]["host"], cfg["resolume"]["port"])
-    if args.install_plugin is not None:
-        install_plugin(args.install_plugin or str(Path(__file__).with_name("plugin") / "dist" / "Bar Chaser.bundle"))
-        return
     if args.check:
         from resolume_check import Checker
         ok = Checker(cfg["resolume"]["host"], cfg["resolume"]["port"], args.check).run(args.check_columns)

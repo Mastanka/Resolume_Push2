@@ -2,7 +2,8 @@
 
 Python app that turns an **Ableton Push 2** (without Ableton Live) into a clip launcher and
 parameter controller for **Resolume Arena**, with a custom UI on the Push display.
-Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now in iterative development.
+Status: **1.0.0** (`__version__` in `push_resolume_bridge.py`, `CHANGELOG.md`, `Release/`). Earlier versions
+confirmed on real hardware by the owner, Štefan. Now in iterative development.
 
 ## Owner & rig context
 
@@ -48,6 +49,9 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 | `requirements.txt` | push2-python (from git), pycairo, numpy, requests, PyYAML |
 | `README.md` | User-facing setup and controls |
 | `LICENSE` | MIT |
+| `CHANGELOG.md` | One entry per version (MAJOR.MINOR.PATCH) |
+| `Release/` | **Generated, never edit.** The current version: the modules `push_resolume_bridge.py` imports, config.yaml + pins.yaml seeds, requirements, README (with an install header), the prebuilt `Bar Chaser.bundle`, `setup.sh`, `start.command`, `VERSION` |
+| `tools/make_release.py` | Rebuilds `Release/` (runs `plugin/build.sh` unless `--skip-plugin`; keeps `Release/.venv`; smoke-tests that the folder imports on its own) |
 | `docs/promo/` | 5 presentation PNGs + `make_promo.py` (needs `pip install segno`) |
 | `.github/ISSUE_TEMPLATE/` | Idea + bug templates |
 | `tests/mock_resolume.py` | Fake Resolume REST + WebSocket server (port 18080, `MOCK_PORT`) with a small composition; test-control endpoints `_new_composition`, `_delete_layer`, `_options`, `_drop_puts` |
@@ -360,6 +364,10 @@ Extend `tests/mock_resolume.py` when touching new parts of the JSON. The test sc
 unless `GET /product` says "Mock Resolume". **The mock and the tests use port 18080** (`MOCK_PORT` overrides): a mock
 on 127.0.0.1:8080 would answer every loopback client of a running Arena, including a live bridge. Final check is always on the
 real Push + Arena, done by Štefan.
+
+**Releases:** bump `__version__` (PATCH = fixes, MINOR = features, MAJOR = show files / Arena setup must be
+redone), add a `CHANGELOG.md` entry, commit, run `python tools/make_release.py`, commit `Release/` separately
+(its README names the source commit). Never edit `Release/` by hand; a new module is picked up through the imports.
 
 ## Backlog (ideas, not commitments)
 
