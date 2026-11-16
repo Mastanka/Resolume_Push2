@@ -406,13 +406,87 @@ def test_e3_preview_follows_a_rig_change():
     tap(br, "Note"); tap(br, "Upper Row 3")
     br.pad_pressed((0, 0)); br.pad_released((0, 0))
     run(a, br, 1.0)
-    a.user_set_fixtures(S.fixtures(8))
+    a.user_set_fixtures(S.fixtures(4))                         # pads 5 and 6 lose their fixture
     a.write_preset(br.preset_folder)
     S.advance(2.0)
     a.deliver_comp(br); run(a, br, 2.0)
     pr = br.snapshot()["seq"]["presets"]
-    assert len(pr["strip"]) == len(br.current_rig()[0].pads)
-    assert any(lv > 0 for _, lv in pr["strip"]) or True
+    r = br.current_rig()[0]
+    assert len(pr["strip"]) == len(r.pads) == 4
+    assert br.preview.patterns[0].source["rig"] == r.signature(), "the draft is previewed on the new rig"
+
+
+# ---- G: tempo while playing ---------------------------------------------------------------------- #
+def playing(seconds=30.0):
+    """A pattern on T1 that has played for a while: the beat clock is far from 0."""
+    a = S.Arena(layers=3, chasers={2: 1})
+    br = S.make_bridge(a)
+    run(a, br, seconds)                                       # the show has been on for a while
+    with br.lock:
+        br.seq.patterns[0].tracks[0].steps["pad 2"] = {s: [1.0, None] for s in range(32)}
+        br.seq.start(br.beat_time())                          # then the pattern starts
+    run(a, br, 2.0)
+    return a, br
+
+
+def positions(a, br, seconds):
+    seen = []
+    for _ in range(int(seconds * 100)):
+        S.advance(0.01); br.seq_step(); a.process(br)
+        seen.append(br.seq.position(br.beat_time()))
+    return seen
+
+
+def test_g1_tap_tempo_while_playing_keeps_the_sequencer_moving():
+    a, br = playing()
+    tap(br, "Tap Tempo")
+    seen = positions(a, br, 2.0)
+    assert len(set(seen)) > 8, f"the pattern must keep stepping after a tap: {sorted(set(seen))}"
+    bt0 = br.beat_time()
+    with br.lock:
+        assert all(v.start <= bt0 + 1e-6 for v in br.seq.voices.values()), "no voice may start in the future"
+
+
+def test_g2_resync_moves_the_beat_by_at_most_two_beats_and_lands_on_beat_one():
+    a, br = playing()
+    before = br.beat_time()
+    br.button("Shift", True); tap(br, "Tap Tempo"); br.button("Shift", False)
+    after = br.beat_time()
+    assert abs(after - before) <= 2.0 + 1e-6, (before, after)
+    assert abs(after % 4) < 1e-6, "resync = beat 1 now"
+    assert len(set(positions(a, br, 2.0))) > 8
+
+
+def test_g3_bpm_change_keeps_the_beat_clock_continuous():
+    a, br = playing()
+    before = br.beat_time()
+    a.comp["tempocontroller"]["tempo"]["value"] = 60.0          # half the tempo in Arena
+    a.changed.add(a.comp["tempocontroller"]["tempo"]["id"]); a.deliver_params(br)
+    assert abs(br.beat_time() - before) < 0.05, (before, br.beat_time())
+    assert len(set(positions(a, br, 3.0))) > 8
+    with br.lock:
+        br.seq.stop()
+    run(a, br, 4.0)
+    assert not a.lit(), a.lit()
+
+
+def test_g4_a_backwards_clock_never_freezes_voices():
+    from sequencer import Sequencer
+    seq = Sequencer()
+    seq.trigger(0, "pad 1", 1.0, 0.5, 100.0)
+    seq.tick(100.1)
+    out = {}
+    for bt in [10.0 + i * 0.05 for i in range(100)]:          # the clock jumped back 90 beats
+        out.update(seq.tick(bt))
+    assert out.get((0, "pad 1")) == 0.0 and not seq.voices, "the flash must end"
+
+
+def test_c7_play_plus_a_button_below_an_empty_column_sends_nothing():
+    a = S.Arena(layers=2, cols=4)
+    br = S.make_bridge(a)
+    br.button("Play", True); tap(br, "Lower Row 6"); br.button("Play", False)   # column 6 of 4
+    a.process(br)
+    assert not [t for t in a.triggers if t[0] == "column"], a.triggers
 
 
 # ---- F: network and subscriptions --------------------------------------------------------------- #
@@ -435,6 +509,17 @@ def test_f2_a_stale_composition_after_our_own_pad_write_does_not_undo_it():
     run(a, br, 3.0)
     assert br.seq.pad_config[0] == UN
     mapping_consistent(a, br)
+
+
+# ---- Z: the structural fuzzer as a regression test --------------------------------------------- #
+def test_z_structural_random_walk():
+    import fuzz_arena
+    problems, crashes = {}, {}
+    for seed in range(4):
+        fuzz_arena.run(seed, 600, problems, crashes)
+    problems.pop("_count", None)
+    assert not crashes, {k: v[:2] for k, v in crashes.items()}
+    assert not problems, {k: v[0] for k, v in problems.items()}
 
 
 if __name__ == "__main__":

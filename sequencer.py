@@ -370,7 +370,16 @@ class Sequencer:
             v.gate = max(0.0, bt - v.start)
 
     def tick(self, bt):
-        """Advance to beat time bt. Returns {(track, bar): level} for every level that changed."""
+        """Advance to beat time bt. Returns {(track, bar): level} for every level that changed.
+        A clock that goes backwards (a tap, a resync) moves the running envelopes along with it, so a
+        flash never freezes, and a pattern ahead of the clock starts again at the current bar."""
+        if self.last_bt is not None and bt < self.last_bt:
+            d = bt - self.last_bt
+            for v in self.voices.values():
+                v.start += d
+            if self.start_beat > bt:
+                self.start_beat = math.floor(bt / BAR_BEATS) * BAR_BEATS
+                self.last_step = None
         if self.running:
             new_bar = self.last_bt is not None and math.floor(bt / BAR_BEATS) > math.floor(self.last_bt / BAR_BEATS)
             if self.pending_apply is not None and new_bar:

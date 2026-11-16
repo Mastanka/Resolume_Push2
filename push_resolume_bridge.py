@@ -182,7 +182,7 @@ class Bridge(SeqMixin, MappingMixin, PresetsMixin):
         self.taps = []
         self.tap_flash = 0.0
         self.tap_count = 0
-        self.beat_anchor = (time.time(), 0)   # (time of a known beat, its index in the bar 0-3)
+        self.clock = None          # (time, beat, bpm) at the last rebase: beat time never jumps back far
         self.pulse = True          # playing pads pulse on the beat (Metronome toggles)
         self.pins_path = paths.data_file("pins.yaml", cfg.get("pins_file"))
         self.order = self._load_order()
@@ -799,7 +799,7 @@ class Bridge(SeqMixin, MappingMixin, PresetsMixin):
                 self.taps = []
             self.taps = (self.taps + [now])[-8:]
             self.tap_count = 1 if len(self.taps) == 1 else self.tap_count + 1
-            self.beat_anchor = (now, (self.tap_count - 1) % 4)
+            self._align(now, (self.tap_count - 1) % 4)
             ev = resolve_node(self.comp, TAP_PATH) if self.comp else None
             if is_param(ev):
                 self.sender.event(ev["id"])
@@ -810,22 +810,46 @@ class Bridge(SeqMixin, MappingMixin, PresetsMixin):
 
     def resync(self):
         with self.lock:
-            self.beat_anchor, self.taps, self.tap_flash = (time.time(), 0), [], time.time()
+            now = time.time()
+            self.taps, self.tap_flash = [], now
+            self._align(now, 0)
             ev = resolve_node(self.comp, RESYNC_PATH) if self.comp else None
             if is_param(ev):
                 self.sender.event(ev["id"])
 
-    def beat(self, now=None):
-        """(beat index in the bar 0-3, seconds since that beat) or None without a tempo."""
+    def beat_time(self, now=None):
+        """Continuous beats, or None without a tempo. A BPM change continues from the current beat
+        (it used to rescale the whole timeline, so slowing down threw the clock back by minutes)."""
         p = self.tempo_param()
-        bpm = float(self.value_of(p) or 0) if p else 0
+        bpm = float(self.value_of(p) or 0) if p else 0.0
         if bpm <= 0:
             return None
         now = now or time.time()
-        period = 60.0 / bpm
-        t0, b0 = self.beat_anchor
-        n = math.floor((now - t0) / period)
-        return (b0 + n) % 4, now - t0 - n * period
+        with self.lock:
+            c = self.clock
+            if c is None:
+                c = self.clock = (now, 0.0, bpm)
+            elif c[2] != bpm:
+                c = self.clock = (now, c[1] + (now - c[0]) * c[2] / 60.0, bpm)
+            return c[1] + (now - c[0]) * bpm / 60.0
+
+    def _align(self, now, index):
+        """Tap / resync: this moment is beat `index` (0-3) of a bar. The clock moves to the nearest such
+        beat, at most two beats away, so the sequencer keeps playing in the new phase instead of
+        waiting for a clock that was thrown back to 0."""
+        bt = self.beat_time(now)
+        if bt is None:
+            return
+        target = 4 * round((bt - index) / 4.0) + index
+        self.clock = (now, float(target), self.clock[2])
+
+    def beat(self, now=None):
+        """(beat index in the bar 0-3, seconds since that beat) or None without a tempo."""
+        bt = self.beat_time(now)
+        if bt is None:
+            return None
+        n = math.floor(bt)
+        return int(n) % 4, (bt - n) * 60.0 / self.clock[2]
 
     def touch(self, idx):
         with self.lock:
@@ -1056,6 +1080,8 @@ class Bridge(SeqMixin, MappingMixin, PresetsMixin):
         if name in LOWER_ROW and self.play_held and down:  # Play + button below = launch that column
             k = LOWER_ROW.index(name)
             n = self.col_offset + k + 1
+            if n > len((self.comp or {}).get("columns") or []):
+                return                                     # no such column (its light is off)
             self.col_pressed[k] = n                        # released by _button_up, whatever the offset is then
             self.sender.column(n, True)
             return

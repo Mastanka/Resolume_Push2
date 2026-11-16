@@ -42,15 +42,6 @@ class SeqMixin:
         else:
             self.sender.param(pid, {"value": value})
 
-    def beat_time(self, now=None):
-        """Continuous beats since the beat anchor, or None without a tempo."""
-        p = self.tempo_param()
-        bpm = float(self.value_of(p) or 0) if p else 0.0
-        if bpm <= 0:
-            return None
-        t0, b0 = self.beat_anchor
-        return b0 + ((now or time.time()) - t0) * bpm / 60.0
-
     def add_chaser(self):
         """Shift + Note: put a Bar Chaser on the selected clip's layer (runs in a worker thread)."""
         L = self.sel[0]

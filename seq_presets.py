@@ -75,6 +75,7 @@ class PresetsMixin:
         if sig == self.rig_sig_seen and not loaded:
             return
         self.rig_sig_seen = sig
+        self._preview_reload()                                     # the draft on the new bars
         todo = self.seq.mismatched(sig) if r else []
         if not todo:
             self.refit_offer = False

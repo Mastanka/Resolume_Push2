@@ -124,7 +124,8 @@ class Arena:
                                                   "Color": self._p("ParamColor", "#ffffffff", palette=[])}}]},
                 "layers": [self._layer(n, cols) for n in range(1, layers + 1)]}
         for L, track in chasers.items():
-            comp["layers"][L - 1]["video"]["effects"].append(self._chaser(track))
+            if 1 <= L <= layers:
+                comp["layers"][L - 1]["video"]["effects"].append(self._chaser(track))
         return comp
 
     # ---- index -------------------------------------------------------------------------- #
