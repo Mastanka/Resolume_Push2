@@ -6,11 +6,14 @@ chosen in the effect's own panel (`Pad n` dropdowns) and read back here for the 
 from __future__ import annotations
 
 import time
+from collections import deque
+
 from resolume_api import is_param, text
 from rig import parse_geometry
 
 MIN_DT = 0.02          # s between two sends of the same layer (50/s); 30/s when many change
 MANY = 16
+ROUTING_DT = 0.005     # s: set_level re-checks the routing at most this often (flush checks every tick)
 N_TRACKS = 4           # tracks a level can come from (the sequencer's T1-T4)
 
 
@@ -78,6 +81,9 @@ class PluginEngine:
         self._levels = {}          # (track, pad index) -> level the sequencer wants now (> 0 only)
         self._feeds = {}           # level param id -> (pad index, tracks whose levels it shows)
         self._routing = None       # what _feeds was built for: ((effect id, track), …), fold
+        self._routing_t = -1.0     # when routing was last checked (set_level checks at most every ROUTING_DT)
+        self._by_source = {}       # (track, pad index) -> [level param ids it reaches]
+        self._sends = deque()      # times of recent sends, for the rate limit's "busy" test
         self.fold = True           # a track without a Bar Chaser layer plays on its partner's (config sequencer.fold_tracks)
         self._cache = (None, [])   # (composition, [(layer, clip, effect)]): one tuple, so threads see a matching pair
         self._known = {}           # effect id -> (pads we expect, our writes pending until)
@@ -267,6 +273,7 @@ class PluginEngine:
         return partner if partner in have else min(have)
 
     def _sync_routing(self, now):
+        self._routing_t = now
         insts = self.instances()
         key = (tuple((i["fx"].get("id"), i["track"]) for i in insts), self.fold)
         if key == self._routing:
@@ -284,7 +291,11 @@ class PluginEngine:
         for pid in [p for p in self._last if p not in feeds]:     # gone with its effect or composition
             self._last.pop(pid, None)
             self._pending.pop(pid, None)
-        self._feeds, self._routing = feeds, key
+        by_source = {}
+        for pid, (k, srcs) in feeds.items():
+            for t in srcs:
+                by_source.setdefault((t, k), []).append(pid)
+        self._feeds, self._by_source, self._routing = feeds, by_source, key
         for pid in feeds:
             self._push(pid, now, quiet=True)
         return True
@@ -302,8 +313,12 @@ class PluginEngine:
             self._pending[pid] = out
             return
         self._pending.pop(pid, None)
-        self._last[pid] = (now, out)
-        self.send_level(pid, out)
+        self._send(pid, out, now)
+
+    def _send(self, pid, value, now):
+        self._last[pid] = (now, value)
+        self._sends.append(now)
+        self.send_level(pid, value)
 
     def set_level(self, track, pad, value, now=None):
         k = pad_from_key(pad)
@@ -315,14 +330,15 @@ class PluginEngine:
             self._levels[(track, k)] = q
         else:
             self._levels.pop((track, k), None)
-        self._sync_routing(now)
-        for pid, (pk, tracks) in self._feeds.items():
-            if pk == k and track in tracks:
-                self._push(pid, now)
+        if now - self._routing_t >= ROUTING_DT or (track, k) not in self._by_source:
+            self._sync_routing(now)
+        for pid in self._by_source.get((track, k), ()):
+            self._push(pid, now)
 
     def _window(self, now):
-        busy = sum(1 for t, _ in self._last.values() if now - t < 0.1) > MANY
-        return 0.033 if busy else MIN_DT
+        while self._sends and now - self._sends[0] > 0.1:
+            self._sends.popleft()
+        return 0.033 if len(self._sends) > MANY else MIN_DT
 
     def flush(self, now=None):
         """Every clock tick: follow routing changes, and send the levels set_level held back because
@@ -342,8 +358,7 @@ class PluginEngine:
             del self._pending[pid]
             if last and last[1] == q:
                 continue
-            self._last[pid] = (now, q)
-            self.send_level(pid, q)
+            self._send(pid, q, now)
 
     # ---- pad memory --------------------------------------------------------- #
     @staticmethod
