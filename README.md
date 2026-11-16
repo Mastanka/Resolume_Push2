@@ -239,8 +239,11 @@ python push_resolume_bridge.py --dump 3            # layer 3
 python push_resolume_bridge.py --dump 3 --clip 2   # layer 3, clip 2
 ```
 
-The parameter order you set with **Convert** is saved in `pins.yaml`, your own colours in
-`colors.yaml`, sequencer patterns in `chases.yaml`. Delete any of them to go back to the defaults.
+The bridge keeps its settings and show data in its own folder next to Arena's files,
+`~/Documents/Resolume Arena/Push 2/`: `config.yaml`, the parameter order you set with **Convert**
+(`pins.yaml`), your own colours (`colors.yaml`) and the sequencer patterns, groups, pad mapping and kick bars
+(`chases.yaml`). On the first start it copies the ones it finds next to the script. Edit `config.yaml`
+there; delete any file to go back to the defaults.
 
 | Command line | |
 |---|---|

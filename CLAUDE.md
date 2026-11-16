@@ -41,7 +41,8 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 | `tests/fuzz_states.py` | State fuzzer: random physically consistent events against a `Bridge` with a synthetic composition, invariants after each; reports (exit 0). `python tests/fuzz_states.py 16 2500` ≈ 15 s |
 | `tests/fixtures/rig/mock_rig.xml` | Advanced Output preset matching the mock's Bar Chaser fixtures (tests set `sequencer.preset_folder` here) |
 | `tests/fixtures/preset_small.xml` | 4-screen Advanced Output preset for the plugin tests |
-| `config.yaml` | Resolume host/port, grid offsets, encoder steps, per-layer parameter slots |
+| `config.yaml` | Resolume host/port, grid offsets, encoder steps, per-layer parameter slots. The live copy is in the data folder (`paths.py`), seeded once from this one |
+| `paths.py` | The bridge's own folder `~/Documents/Resolume Arena/Push 2/` (`PUSH2_DATA_DIR` overrides): config.yaml, pins.yaml, colors.yaml, chases.yaml; files next to the script are copied there once |
 | `pins.yaml` | Param order for auto layers, written by the bridge (Convert move). Štefan's show data |
 | `docs/specs/` | Short design specs per feature |
 | `requirements.txt` | push2-python (from git), pycairo, numpy, requests, PyYAML |
@@ -49,7 +50,11 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 | `LICENSE` | MIT |
 | `docs/promo/` | 5 presentation PNGs + `make_promo.py` (needs `pip install segno`) |
 | `.github/ISSUE_TEMPLATE/` | Idea + bug templates |
-| `tests/mock_resolume.py` | Fake Resolume REST server (port 8080) with a small composition |
+| `tests/mock_resolume.py` | Fake Resolume REST + WebSocket server (port 18080, `MOCK_PORT`) with a small composition; test-control endpoints `_new_composition`, `_delete_layer`, `_options`, `_drop_puts` |
+| `tests/sim_arena.py` | In-process Arena simulator (Arena's id behaviour, the REST calls, `user_*` edits, WebSocket-style delivery, virtual clock); `make_bridge`, `settle` |
+| `tests/test_scenarios.py` | 34 scenario tests on the simulator: layers, Bar Chaser add / remove / Track / fold, composition switch / new / empty, blackout, held controls, fixtures, broken preset, presets, tempo, subscriptions, plus a structural random walk |
+| `tests/fuzz_arena.py` | Structural fuzzer: random Push input + random Arena edits; checkpoints check nothing stays lit, the mapping is consistent, no writes to ids that are gone. `python tests/fuzz_arena.py 16 2000` ≈ 20 s |
+| `tests/soak_mock.py` | Every thread running (real `run()`, fake Push) against the mock over HTTP + WebSocket while a driver changes the composition; `python tests/soak_mock.py 60` |
 | `tests/test_fake_push.py` | Runs the real `run()` loop with a fake Push object; asserts it works |
 | `tests/render_preview.py` | Renders the display to PNG for visual checks |
 
@@ -179,7 +184,9 @@ overlays. Parameter page is per menu (`Bridge.page` property over `_pages`).
   K1 = top visible layer, going down; K11 = `composition.master`. BD = mute (mix: Solo held = solo;
   solo: solo). In the SEQ view the pads stay the sequencer; the SEQ track buttons return with the menu.
 - Always: blackout (`Bridge.blackout` = saved master), flash (`Bridge.flash`), beat clock
-  (`beat_anchor` from taps / resync + Resolume BPM → `beat()`), short messages (`note_msg`).
+  (`Bridge.clock` = (time, beat, bpm) of the last rebase: `beat_time()` continues from the current beat on a
+  BPM change, `_align()` moves it to the nearest matching beat (≤ 2 beats) on Tap / resync; never reset to 0,
+  which used to freeze the sequencer), short messages (`note_msg`).
 
 ## Architecture
 
@@ -194,7 +201,7 @@ main thread (run loop)   ──► LEDs at 50 Hz (diffed vs cache, beat edges) +
 ```
 
 - `ResolumeWS` subscribes by id to `Bridge.desired_ids()` (states, masters, tempo, selected clip/layer,
-  composition effects), re-synced every 0.5 s. `Bridge.index` = id → node, rebuilt by `set_comp`.
+  composition effects; never the Bar Chaser `Level n` params the bridge writes itself), re-synced every 0.5 s. `Bridge.index` = id → node, rebuilt by `set_comp`.
 
 - **All MIDI output (pad/button colours, palette) happens in the main thread** — push2-python/mido
   requirement. Callbacks only change state.
@@ -207,6 +214,14 @@ main thread (run loop)   ──► LEDs at 50 Hz (diffed vs cache, beat edges) +
   whatever the grid shows now. `release_all()` on MIDI (re)connect and at quit (push2-python drops the first second of
   MIDI after a connect). `_revalidate()` in `set_comp` clamps the grid offsets and the selection to the composition.
   `tests/fuzz_states.py` checks these invariants on random event walks; `tests/test_states.py` holds the reproductions.
+- **Composition changes** (`set_comp`): `PluginEngine.sync_pads` returns True for a newly opened composition →
+  `_composition_opened()` (flashes / held clips / columns of the old one end without writes, the blackout is
+  re-armed on the new master), `_revalidate()`, `check_rig(loaded)`. **Levels** (`PluginEngine`): `_levels[(track,
+  pad)]` is what the sequencer wants; `_feeds[pid]` = (pad, tracks shown there) is rebuilt on every routing change
+  (an instance added / removed, a Track changed, fold) by `_sync_routing`, which re-pushes every Level param: no bar
+  stays lit on a layer that no longer plays it and ids that are gone are never written. `instances()` caches where
+  the effects are per composition and reads Track live. An instance whose dropdown only offers "—" (preset not
+  readable) never becomes or donates the mapping (`has_fixtures`).
 - **Deferred saves**: knob ticks and step presses call `Sequencer.save_later()`; `seq_loop` writes `chases.yaml`
   `SAVE_DELAY` (0.2 s) after the last change, outside the lock (`take_dirty()` + `write()`); single actions (`store_pattern`,
   groups, pad mapping) still `save()` at once; quit flushes. `PluginEngine.flush()` (each `seq_loop` tick) sends the
@@ -270,7 +285,9 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
   checked against the mock and `--dump`, not every Resolume source/effect type.
 - Big ranges (Transform Position X ±16384) are too coarse at 1 %/tick — handled per slot with `step`/`range`.
   `tempo_tap` uses the same event call as `resync` (verified), its effect on BPM is untested.
-- Beat phase on the Push comes from the taps / resync (`beat_anchor`); Resolume doesn't expose its phase.
+- Beat phase on the Push comes from the taps / resync (`Bridge._align`); Resolume doesn't expose its phase.
+- A newly opened composition is detected by a new composition master id (`PluginEngine.sync_pads`). Verified
+  on the mock and the simulator only: that Arena gives a new or re-opened composition new ids is assumed.
 - A new full composition only arrives on WS connect (and maybe on structure changes); the REST
   refresh every `ws_refresh` s catches added/removed clips.
 - `stop_column: N` in config.yaml is a fallback for stopping; not needed on 7.23 (`/clear` works).
@@ -287,9 +304,11 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
 
 ## Bar Chaser plugin (plugin/)
 
-FFGL 2.1 effect, universal bundle. 55 params: `Preset` (text), `Reload` (event), `Track` (1–4),
+FFGL 2.1 effect, universal bundle. 56 params: `Preset` (text), `Reload` (event), `Track` (1–4),
 `Master`, `Edge`, `Outside`, `Mode` (Texture / Solid / Show pads), `Pad 1..24` (option, elements from the
-Advanced Output preset via `SetParamElements`), `Level 1..24`. Hosts reset every param to its declared
+Advanced Output preset via `SetParamElements`), `Level 1..24`, `Geometry` (read-only text, last so older
+compositions keep their indices: "WxH|name:left,top,width,height|…" for every dropdown entry; the bridge reads
+it through the API instead of the preset file, `rig.parse_geometry`; not yet verified on Arena). Hosts reset every param to its declared
 default after creation, so defaults must carry the initial pad assignment. `plugin/tests/host_test.cpp`
 is a tiny CGL host: loads the bundle, feeds a red/green picture, checks pass-through, masking, solid,
 show pads. Build needs Xcode CLT + `brew install cmake`. Verified on Arena 7.23.2 (2026-09-27): loads
@@ -310,6 +329,10 @@ python tests/test_sequencer.py      # pure logic, no mock needed
 python tests/test_states.py         # stuck-state regressions + random walk, no mock needed
 python tests/test_helpers.py        # JSON helpers, render per screen, retry / outbox, no mock needed
 python tests/test_presets.py        # PRESETS: drafts, macros, preview, Apply / Revert / Re-fit / Load bank, no mock needed
+python tests/test_paths.py          # data folder
+python tests/test_scenarios.py      # Arena simulator: composition / effect / fixture / tempo scenarios + structural walk
+python tests/fuzz_arena.py 16 2000  # structural fuzzer (reports; 0 crashes, 0 violations expected)
+python tests/soak_mock.py 60        # every thread against the mock over HTTP + WebSocket (starts its own mock)
 python tests/test_banks.py          # presets: rigs × recipes, no mock needed
 plugin/build.sh                     # C++: builds the bundle and runs ctest (preset parser + GL host test)
 python tests/test_engine.py         # restart the mock before each script: they change its composition
