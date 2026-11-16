@@ -55,13 +55,14 @@ class FakePush:
 push2_python.Push2 = FakePush
 import push_resolume_bridge as B  # noqa: E402
 
+PORT = int(os.environ.get("MOCK_PORT", "18080"))   # tests/mock_resolume.py listens here
 # Never run against a real Arena: only the mock answers /product with this name.
 try:
-    _name = requests.get("http://127.0.0.1:8080/api/v1/product", timeout=2).json().get("name")
+    _name = requests.get(f"http://127.0.0.1:{PORT}/api/v1/product", timeout=2).json().get("name")
 except Exception as e:
-    sys.exit(f"mock not running on 127.0.0.1:8080 ({e}) — start tests/mock_resolume.py first")
+    sys.exit(f"mock not running on 127.0.0.1:{PORT} ({e}) — start tests/mock_resolume.py first")
 if _name != "Mock Resolume":
-    sys.exit(f"refusing to run: 127.0.0.1:8080 is {_name!r}, not the mock")
+    sys.exit(f"refusing to run: 127.0.0.1:{PORT} is {_name!r}, not the mock")
 
 cfg = B.load_config(Path(B.__file__).with_name("config.yaml"))
 pins = Path(tempfile.mkdtemp()) / "pins.yaml"       # never touch the real pins.yaml
@@ -74,7 +75,8 @@ cfg["sequencer"]["preset_folder"] = str(Path(__file__).resolve().parent / "fixtu
 cfg["resolume"]["ws_refresh"] = 30.0     # REST safety refresh rare → everything below runs on live updates
 POLL_ONLY = os.environ.get("TEST_POLL") == "1"      # TEST_POLL=1: WebSocket off, test the polling fallback
 cfg["resolume"]["websocket"] = not POLL_ONLY
-rest = B.Resolume("127.0.0.1", 8080)
+cfg["resolume"]["port"] = PORT
+rest = B.Resolume("127.0.0.1", PORT)
 threading.Thread(target=B.run, args=(cfg, rest), daemon=True).start()
 time.sleep(1.0)
 
@@ -193,7 +195,7 @@ assert ("btn", ("Upper Row 6", "white")) in calls and ("btn", ("Upper Row 1", "d
 tap("Upper Row 1")
 
 # --- F8 tempo: taps → Resolume's own tap event, Shift + Tap → resync; K10 +3 BPM
-events = lambda: requests.get("http://127.0.0.1:8080/api/v1/_events").json()
+events = lambda: requests.get(f"http://127.0.0.1:{PORT}/api/v1/_events").json()
 tc = rest.composition()["tempocontroller"]
 tap_id, resync_id = str(tc["tempo_tap"]["id"]), str(tc["resync"]["id"])
 for _ in range(3):
@@ -252,7 +254,7 @@ fire("on_button_pressed", "Stop")
 time.sleep(0.4)
 assert rest.composition()["master"]["value"] == m0, "blackout off must restore the master"
 # Arena sometimes closes a connection without answering: the blackout must still arrive and stay
-drop = lambda n: requests.post("http://127.0.0.1:8080/api/v1/_drop_puts", data=str(n))
+drop = lambda n: requests.post(f"http://127.0.0.1:{PORT}/api/v1/_drop_puts", data=str(n))
 drop(1)                                               # one lost try: the request goes out again at once
 fire("on_button_pressed", "Stop")
 time.sleep(1.5)
@@ -384,12 +386,12 @@ time.sleep(1.0)
 # --- F16 live updates: a change made elsewhere (e.g. mouse in Arena) reaches the pads without polling
 L3 = rest.composition()["layers"][2]
 if not POLL_ONLY:
-    requests.put(f"http://127.0.0.1:8080/api/v1/parameter/by-id/{L3['bypassed']['id']}", json={"value": True})
+    requests.put(f"http://127.0.0.1:{PORT}/api/v1/parameter/by-id/{L3['bypassed']['id']}", json={"value": True})
     n0 = len(calls)
     time.sleep(0.6)
     assert any(n == "pad" and a[0][0] == 5 and a[1] in ("dark_gray", "light_gray") for n, a in calls[n0:]), \
         "external mute of layer 3 didn't reach the pads via WebSocket"
-    requests.put(f"http://127.0.0.1:8080/api/v1/parameter/by-id/{L3['bypassed']['id']}", json={"value": False})
+    requests.put(f"http://127.0.0.1:{PORT}/api/v1/parameter/by-id/{L3['bypassed']['id']}", json={"value": False})
 
 # --- F18 SEQ with the Bar Chaser effect: setup, multi-select, steps, run, LEDs
 fire("on_pad_pressed", 60, (7, 0), 100); fire("on_pad_released", 60, (7, 0), 0)     # select L1 C1
@@ -448,7 +450,7 @@ time.sleep(0.3)
 chases = yaml.safe_load(open(cfg["chases_file"]).read())
 steps = chases["patterns"][0]["tracks"][0]["steps"]
 assert steps["pad 1"] == [[0, 1.0, None]] and steps["pad 2"][0] == [0, 1.0, None] and steps["pad 2"][1][1] < 0.6, steps
-assert ("pad", ((0, 2), "L0_mid")) in calls or ("pad", ((0, 2), "L0_dim")) in calls, "half-level step pad"
+assert ("pad", ((0, 2), "S_red_mid")) in calls or ("pad", ((0, 2), "S_red_dim")) in calls, "half-level step pad"
 assert chases["track_groups"] == {1: [[1, 2]] + [None] * 7}, chases["track_groups"]
 assert chases["groups"] == [None, [2]] + [None] * 6, chases["groups"]
 assert chases["pads"][:4] == ["Bar A", "Bar B", "Bar C", "\u2014"], chases["pads"]
@@ -465,12 +467,12 @@ assert not any(n == "pad" for n, _ in calls[n0:]), "MUTE on SEQ must not change 
 tap("Mute")
 time.sleep(0.2)
 assert ("btn", ("Lower Row 1", "L0")) in calls[n0:], "back in SEQ: BD1 = track 1"
-log0 = len(requests.get("http://127.0.0.1:8080/api/v1/_opacity_log").json())
+log0 = len(requests.get(f"http://127.0.0.1:{PORT}/api/v1/_opacity_log").json())
 fire("on_button_pressed", "Play")                                                    # run
 time.sleep(2.6)
 fire("on_button_pressed", "Play")                                                    # stop
 time.sleep(0.5)
-log = requests.get("http://127.0.0.1:8080/api/v1/_opacity_log").json()[log0:]
+log = requests.get(f"http://127.0.0.1:{PORT}/api/v1/_opacity_log").json()[log0:]
 fx1 = [e for e in rest.composition()["layers"][0]["video"]["effects"] if e["name"] == "Bar Chaser"][0]
 l1, l2 = fx1["params"]["Level 1"]["id"], fx1["params"]["Level 2"]["id"]
 a_on = [t for t, pid, v in log if pid == l1 and v > 0.9]
@@ -484,19 +486,19 @@ assert not any(pid == fx2["params"]["Level 1"]["id"] for _, pid, _ in log), "tra
 assert ("btn", ("Play", "green")) in calls
 fire("on_pad_pressed", 60, (4, 1), 100); fire("on_pad_released", 60, (4, 1), 0)     # row 5 = pattern 2 (queued)
 time.sleep(0.2)
-assert ("pad", ((4, 1), "white")) in calls, "queued pattern blinks white"
+assert ("pad", ((4, 1), "S_orange")) in calls, "queued pattern blinks orange"
 n0 = len(calls)
 tap("1/32t")                                                                        # recall group 1
 fire("on_button_pressed", "Delete"); tap("1/32"); fire("on_button_released", "Delete")   # clear empty group 2: no-op
 time.sleep(0.2)
 assert since(n0, ("1/32t", "L0")), "recalled group lit fully"
-assert ("pad", ((7, 0), "light_gray")) in calls[n0:], "recall must select pad 1 again (group 1 = pads 1 + 2)"
+assert ("pad", ((7, 0), "S_yellow_mid")) in calls[n0:], "recall must select pad 1 again (group 1 = pads 1 + 2)"
 # --- MAPPING (SEQ menu 4): fixtures on the top rows, row 5 red, Select + fixture then a pad = store
 n0 = len(calls)
 tap("Upper Row 4")
 time.sleep(0.3)
 assert since(n0, ("Upper Row 4", "L6")), "MAPPING lit red"
-assert ("pad", ((4, 0), "red")) in calls[n0:] and ("pad", ((4, 7), "red")) in calls[n0:], "divider row red"
+assert ("pad", ((4, 0), "S_orange")) in calls[n0:] and ("pad", ((4, 7), "S_orange")) in calls[n0:], "divider row orange"
 assert last_pad((0, 1)) == "L0_dim" and last_pad((0, 4)) == "dark_gray" and last_pad((0, 6)) == "black", \
     "6 fixtures, the first 4 used"
 assert last_pad((7, 3)) == "black" and last_pad((7, 0)) == "L0_dim", "pad 4 has no fixture, pad 1 has one"
@@ -517,10 +519,10 @@ fire("on_pad_released", 60, (7, 3), 0); fire("on_button_released", "Delete")
 time.sleep(0.5)
 assert fxp()["Pad 4"]["value"] == "\u2014"
 
-# --- PRESETS (SEQ menu 3): the buttons below the display are presets, not tracks
+# --- PRESETS (SEQ menu 3): recipe grid on the top-left pads, Apply on button 1
 tap("Upper Row 3")
 time.sleep(0.3)
-assert last("Lower Row 1") == "black", "3 mapped pads: presets need 4"
+assert last("Lower Row 4") == "black", "3 mapped pads: presets need 4"
 tap("Upper Row 4")                                                                  # map pad 4 = L4F1 (a 2 m bar)
 fire("on_button_pressed", "Select")
 fire("on_pad_pressed", 60, (0, 4), 100); fire("on_pad_released", 60, (0, 4), 0)
@@ -528,22 +530,23 @@ fire("on_pad_pressed", 60, (7, 3), 100); fire("on_pad_released", 60, (7, 3), 0)
 fire("on_button_released", "Select")
 tap("Upper Row 3")
 time.sleep(0.3)
-assert last("Lower Row 1") == "dark_gray" and last("Upper Row 3") == "L6", "4 pads: presets ready"
+assert last("Lower Row 4") == "dark_gray" and last("Upper Row 3") == "L6", "4 pads: presets ready"
 n0 = len(calls)
-tap("Lower Row 1")                                                                  # pick R1 Pump
-time.sleep(0.6)
-assert ("pad", ((4, 5), "white")) in calls[n0:] and ("pad", ((4, 5), "black")) in calls[n0:], "pattern row blinks"
-fire("on_pad_pressed", 60, (4, 2), 100); fire("on_pad_released", 60, (4, 2), 0)     # P3 is empty: stored
-time.sleep(0.3)
+fire("on_pad_pressed", 60, (4, 2), 100); fire("on_pad_released", 60, (4, 2), 0)     # edit P3 (live stays P1)
+fire("on_pad_pressed", 60, (0, 0), 100); fire("on_pad_released", 60, (0, 0), 0)     # R1 Pump → draft
+time.sleep(0.4)
+assert ("pad", ((0, 0), "white")) in calls[n0:] and last("Lower Row 1") == "green", "draft: recipe lit, Apply green"
 pats = lambda: yaml.safe_load(open(cfg["chases_file"]).read())["patterns"]
+assert pats()[2]["name"] == "P3", "a draft is not saved"
+tap("Lower Row 1")                                                                  # Apply
+time.sleep(0.3)
 assert pats()[2]["name"] == "R1 Pump" and pats()[2]["source"]["rig"] == "1S 2D 3S 4D", pats()[2].get("source")
-tap("Lower Row 2")                                                                  # R2 3/16 onto the used P3
-fire("on_pad_pressed", 60, (4, 2), 100); fire("on_pad_released", 60, (4, 2), 0)
+fire("on_encoder_rotated", "Track1 Encoder", 10)                                    # Strobe 0.7 on the applied P3
+time.sleep(0.2)
+assert pats()[2]["source"]["macros"]["strobe"] == 0.5, "a knob makes a draft, the slot waits for Apply"
+tap("Lower Row 1")
 time.sleep(0.3)
-assert last("Lower Row 7") == "red" and last("Lower Row 8") == "green", "NO / YES"
-tap("Lower Row 8")
-time.sleep(0.3)
-assert pats()[2]["name"] == "R2 3/16"
+assert pats()[2]["source"]["macros"]["strobe"] == 0.7 and pats()[2]["source"]["seed"] == pats()[2]["source"]["seed"]
 tap("Upper Row 1")
 
 n1 = len(calls)

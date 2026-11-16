@@ -6,8 +6,12 @@ it returns."""
 from __future__ import annotations
 
 import math
+import os
 import random
+import shutil
 import sys
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -17,10 +21,11 @@ GRIDS = {"1/4": 1.0, "1/4t": 2 / 3, "1/8": 0.5, "1/8t": 1 / 3,
          "1/16": 0.25, "1/16t": 1 / 6, "1/32": 0.125, "1/32t": 1 / 12}   # beats per step
 DIRECTIONS = ["forward", "reverse", "bounce", "random"]
 MAX_STEPS = 32
-BAR_BEATS = 4          # pattern switches happen on this boundary
+BAR_BEATS = 4          # pattern switches happen on a bar boundary (a phrase boundary for longer patterns)
 N_PATTERNS = 16
 N_TRACKS = 4
 N_GROUPS = 8           # pad groups on the 8 buttons right of the pads
+SAVE_DELAY = 0.2       # s after the last knob tick / step press before chases.yaml is written
 
 
 # --------------------------------------------------------------------------- #
@@ -92,6 +97,15 @@ class Pattern:
     swing: float = 0.0
     tracks: list = field(default_factory=lambda: [Track() for _ in range(N_TRACKS)])
     source: dict = None        # made by a preset: {bank, recipe, seed, rig}; None = own or hand-edited
+    grid: str = "1/16"         # step length (GRIDS); every pattern keeps its own
+
+
+def phrase_beats(p):
+    """Beats between the places pattern p may start: its length when that is a whole number of bars
+    (a 2-bar pattern starts on every other bar, counted from Play), else one bar."""
+    bars = p.length * GRIDS.get(p.grid, 0.25) / BAR_BEATS
+    n = round(bars)
+    return n * BAR_BEATS if n >= 1 and abs(bars - n) < 1e-6 else BAR_BEATS
 
 
 def _track_to_dict(t):
@@ -114,7 +128,7 @@ def _track_from_dict(d):
 
 
 def _pattern_to_dict(p):
-    d = {"name": p.name, "length": p.length, "direction": p.direction, "swing": p.swing}
+    d = {"name": p.name, "length": p.length, "direction": p.direction, "swing": p.swing, "grid": p.grid}
     if p.source:
         d["source"] = dict(p.source)
     d["tracks"] = [_track_to_dict(t) for t in p.tracks]
@@ -126,9 +140,10 @@ def _pattern_from_dict(d):
     while len(tracks) < N_TRACKS:
         tracks.append(Track())
     src = d.get("source")
+    grid = str(d.get("grid", "1/16"))                  # older files and preset dicts: 1/16
     return Pattern(name=str(d.get("name", "P?")), length=int(d.get("length", 16)),
                    direction=d.get("direction", "forward"), swing=float(d.get("swing", 0.0)), tracks=tracks,
-                   source=dict(src) if isinstance(src, dict) else None)
+                   source=dict(src) if isinstance(src, dict) else None, grid=grid if grid in GRIDS else "1/16")
 
 
 class Sequencer:
@@ -141,9 +156,9 @@ class Sequencer:
         self.track = 0             # selected track
         self.bar = 0               # selected bar index (into the bridge's bar list)
         self.bank = 0              # bars 16*bank .. on the pads
-        self.grid = "1/16"
         self.running = False
-        self.start_beat = 0.0
+        self.start_beat = 0.0      # where the playing pattern started (its step 0)
+        self.origin = 0.0          # where Play started: phrases are counted from here
         self.last_bt = None
         self.last_step = None
         self.last_pattern_step = None
@@ -151,8 +166,15 @@ class Sequencer:
         self.groups = [None] * N_GROUPS   # global pad groups GG1-8: sorted pad indices (0-based) or None
         self.track_groups = {}     # track -> [8] pad groups G1-8 of that track (shown before the global one)
         self.pad_config = None     # 24 fixture names shared by every track: the last Bar Chaser pad mapping
+        self.kick_pads = []        # pad numbers (1-based) chosen as kick bars on the Push; [] = automatic
         self.voices = {}           # (track, bar name) -> Voice
         self.levels = {}           # (track, bar name) -> last level returned by tick()
+        self.dirty, self.dirty_t = False, 0.0   # a deferred save is waiting (save_later / flush)
+        self.pending_apply = None  # (slot, Pattern) replacing the live pattern at the next bar
+        self.landed = None         # slot whose waiting pattern just landed (the bridge reloads its preview)
+        self.load_error = None     # why chases.yaml could not be read (the file was kept aside)
+        self._wlock = threading.Lock()
+        self._version = self._written = 0   # snapshot counter: an older snapshot never overwrites a newer
         if self.path and self.path.exists():
             self.load()
 
@@ -160,6 +182,17 @@ class Sequencer:
     @property
     def pattern(self):
         return self.patterns[self.current]
+
+    @property
+    def grid(self):
+        """The playing pattern's step length (every pattern keeps its own)."""
+        return self.pattern.grid
+
+    @grid.setter
+    def grid(self, g):
+        if g in GRIDS and g != self.pattern.grid:
+            self.pattern.grid = g
+            self.save_later()
 
     def _steps(self, bar, track=None):
         t = self.pattern.tracks[self.track if track is None else track]
@@ -182,6 +215,28 @@ class Sequencer:
         self.save()
         return on
 
+    def toggle_steps(self, bars, step, level=1.0):
+        """A step pressed on the Push for every selected pad: on for all when any is off, else off
+        for all. Returns True when the step is on afterwards. An edit: the pattern stops following
+        its preset."""
+        self.mark_edited()
+        sts = [self._steps(b) for b in bars]
+        all_on = all(step in st for st in sts)
+        for st in sts:
+            if all_on:
+                st.pop(step, None)
+            elif step not in st:
+                st[step] = [float(level), None]
+        self.save_later()
+        return not all_on
+
+    def remove_steps(self, bars, step):
+        """Delete + step on the Push, for every selected pad."""
+        self.mark_edited()
+        for b in bars:
+            self._steps(b).pop(step, None)
+        self.save_later()
+
     def set_step_values(self, bar, steps, level=None, gate=None, track=None):
         self.mark_edited()
         st = self._steps(bar, track)
@@ -191,7 +246,7 @@ class Sequencer:
                     st[s][0] = max(0.0, min(1.0, float(level)))
                 if gate is not None:
                     st[s][1] = max(0.1, min(1.0, float(gate)))
-        self.save()
+        self.save_later()
 
     def clear_steps(self, bar=None, track=None):
         self.mark_edited()
@@ -204,14 +259,27 @@ class Sequencer:
 
     def clear_pattern(self, p=None):
         p = self.current if p is None else p
+        self._drop_pending(p)
         self.patterns[p] = Pattern(name=f"P{p + 1}")
         self.save()
 
     def copy_pattern(self, src, dst):
-        d = _pattern_from_dict(_pattern_to_dict(self.patterns[src]))
+        d = _pattern_from_dict(_pattern_to_dict(self.slot_pattern(src)))
         d.name = f"P{dst + 1}"
+        self._drop_pending(dst)
         self.patterns[dst] = d
         self.save()
+
+    def slot_pattern(self, p):
+        """What slot p holds, counting an Apply that waits for the bar: what the PRESETS menu edits."""
+        if self.pending_apply is not None and self.pending_apply[0] == p:
+            return self.pending_apply[1]
+        return self.patterns[p]
+
+    def _drop_pending(self, p):
+        """A direct write to slot p wins over an older Apply still waiting for the bar."""
+        if self.pending_apply is not None and self.pending_apply[0] == p:
+            self.pending_apply = None
 
     def double_loop(self):
         p = self.pattern
@@ -231,31 +299,62 @@ class Sequencer:
 
     def store_pattern(self, p, d):
         """Put a pattern dict (a realised preset) into slot p. A running pattern plays on with it."""
+        self._drop_pending(p)
         self.patterns[p] = _pattern_from_dict(d)
         self.save()
 
+    def apply(self, p, d):
+        """Replace pattern p with a dict: the live, running pattern at the next bar boundary (the
+        outgoing voices finish their release), any other slot at once. Returns "bar" or "now"."""
+        if self.running and p == self.current:
+            self.pending_apply = (p, _pattern_from_dict(d))
+            return "bar"
+        self.store_pattern(p, d)
+        return "now"
+
+    def load_bank(self, dicts, keep_own=True):
+        """A whole bank into P1-P16. Own patterns (no preset source, with steps) are kept when
+        keep_own; returns their slots."""
+        kept = []
+        for i, d in enumerate(dicts[:N_PATTERNS]):
+            p = self.patterns[i]
+            if keep_own and p.source is None and any(st for t in p.tracks for st in t.steps.values()):
+                kept.append(i)
+                continue
+            self.patterns[i] = _pattern_from_dict(d)
+        self.pending_apply = None
+        self.save()
+        return kept
+
     def mismatched(self, signature):
-        """Slots whose preset placement was made for a different rig than `signature`."""
-        return [i for i, p in enumerate(self.patterns) if p.source and p.source.get("rig") != signature]
+        """Slots whose preset placement (or the Apply waiting for the bar) was made for another rig."""
+        return [i for i in range(len(self.patterns))
+                if self.slot_pattern(i).source and self.slot_pattern(i).source.get("rig") != signature]
 
     def refit(self, signature, refit_fn):
-        """Re-place every preset pattern made for another rig; knobs, length and swing stay.
-        refit_fn(pattern dict) -> pattern dict (banks.refit with the current rig). Returns the slots."""
+        """Re-place every preset pattern made for another rig; knobs, length and swing stay. An Apply
+        waiting for the bar is re-placed too. refit_fn(pattern dict) -> pattern dict (banks.refit with
+        the current rig). Returns the slots."""
         done = self.mismatched(signature)
         for i in done:
-            self.patterns[i] = _pattern_from_dict(refit_fn(_pattern_to_dict(self.patterns[i])))
+            pa = self.pending_apply
+            if pa is not None and pa[0] == i:
+                self.pending_apply = (i, _pattern_from_dict(refit_fn(_pattern_to_dict(pa[1]))))
+            p = self.patterns[i]
+            if p.source and p.source.get("rig") != signature:
+                self.patterns[i] = _pattern_from_dict(refit_fn(_pattern_to_dict(p)))
         if done:
             self.save()
         return done
 
     def set_length(self, n):
         self.pattern.length = max(1, min(MAX_STEPS, int(n)))
-        self.save()
+        self.save_later()
 
     def set_direction(self, d):
         if d in DIRECTIONS:
             self.pattern.direction = d
-            self.save()
+            self.save_later()
 
     # ---- playback (pure: the bridge passes beat time in, gets levels out) ------- #
     def step_beats(self):
@@ -263,20 +362,43 @@ class Sequencer:
 
     def start(self, bt):
         self.running = True
-        self.start_beat = math.floor(bt / BAR_BEATS) * BAR_BEATS
+        self.start_beat = self.origin = math.floor(bt / BAR_BEATS) * BAR_BEATS
         self.last_step = None
         self.last_bt = bt
 
     def stop(self):
         self.running = False        # voices keep ticking so releases finish
+        self.pending = None         # a queued pattern is dropped: Play starts what is shown as current
+        if self.pending_apply:      # nothing to wait for any more
+            p, pat = self.pending_apply
+            self.pending_apply = None
+            self.patterns[p] = pat
+            self.landed = p
+            self.save()
 
     def switch_pattern(self, p, bt, now=False):
-        if now or not self.running:
-            self.current, self.pending = p, None
-            self.start_beat = math.floor(bt / BAR_BEATS) * BAR_BEATS
-            self.last_step = None
+        """Running: queued until its phrase boundary (see phrase_beats); now = at once, joining at the
+        step its phrase has reached. Not running: at once."""
+        if not self.running:
+            self._begin(p, math.floor(bt / BAR_BEATS) * BAR_BEATS)
+        elif now:
+            P = phrase_beats(self.patterns[p])
+            self._begin(p, self.origin + math.floor((bt - self.origin) / P) * P)
         else:
             self.pending = p
+
+    def _begin(self, p, at):
+        self.current, self.pending = p, None
+        self.start_beat = at
+        self.last_step = None
+
+    def _boundary(self, pat, bt):
+        """The phrase boundary of pattern pat (counted from Play) passed since the last tick, else None."""
+        if self.last_bt is None:
+            return None
+        P = phrase_beats(pat)
+        b = self.origin + (math.floor((self.last_bt - self.origin) / P) + 1) * P
+        return b if b <= bt else None
 
     def abs_step(self, bt):
         """Grid steps since the pattern start, with swing (steps 2, 4, 6 … start later)."""
@@ -316,11 +438,32 @@ class Sequencer:
             v.gate = max(0.0, bt - v.start)
 
     def tick(self, bt):
-        """Advance to beat time bt. Returns {(track, bar): level} for every level that changed."""
+        """Advance to beat time bt. Returns {(track, bar): level} for every level that changed.
+        A clock that goes backwards (a tap, a resync) moves the running envelopes along with it, so a
+        flash never freezes, and a pattern ahead of the clock starts again at the current bar."""
+        if self.last_bt is not None and bt < self.last_bt:
+            d = bt - self.last_bt
+            for v in self.voices.values():
+                v.start += d
+            if self.start_beat > bt:
+                self.start_beat = math.floor(bt / BAR_BEATS) * BAR_BEATS
+                self.last_step = None
+            self.origin = min(self.origin, self.start_beat)
         if self.running:
-            if self.pending is not None and self.last_bt is not None \
-                    and math.floor(bt / BAR_BEATS) > math.floor(self.last_bt / BAR_BEATS):
-                self.switch_pattern(self.pending, bt, now=True)
+            if self.pending_apply is not None:                 # lands on the new pattern's phrase
+                b = self._boundary(self.pending_apply[1], bt)
+                if b is not None:
+                    p, pat = self.pending_apply
+                    self.pending_apply = None
+                    self.patterns[p] = pat
+                    self.landed = p
+                    self.save_later()
+                    if p == self.current:
+                        self._begin(p, b)
+            if self.pending is not None:
+                b = self._boundary(self.patterns[self.pending], bt)
+                if b is not None:
+                    self._begin(self.pending, b)
             k = self.abs_step(bt)
             if k != self.last_step:
                 self.last_step = k
@@ -378,6 +521,7 @@ class Sequencer:
         return {"groups": groups(self.groups),
                 "track_groups": {t + 1: groups(gs) for t, gs in sorted(self.track_groups.items()) if any(gs)},
                 "pads": list(self.pad_config) if self.pad_config else None,
+                "kick_pads": list(self.kick_pads),
                 "patterns": [_pattern_to_dict(p) for p in self.patterns]}
 
     def from_dict(self, d):
@@ -390,22 +534,76 @@ class Sequencer:
         if isinstance(pads, dict):                                  # older file: one list per track, take T1's
             pads = pads.get(min(pads, key=lambda t: int(t))) if pads else None
         self.pad_config = [str(n) for n in pads] if pads else None
+        self.kick_pads = sorted(int(k) for k in (d.get("kick_pads") or []))
         pats = [_pattern_from_dict(x) for x in (d.get("patterns") or [])][:N_PATTERNS]
         while len(pats) < N_PATTERNS:
             pats.append(Pattern(name=f"P{len(pats) + 1}"))
         self.patterns = pats
 
     def save(self):
+        """Write the file now (single actions: a stored preset, a group, the pad mapping)."""
+        self.dirty = False
+        self.write(self._snapshot())
+
+    def save_later(self, now=None):
+        """Write the file SAVE_DELAY after the last change. Knob ticks and step presses come many
+        times a second and a full write takes tens of ms on the MIDI thread."""
+        self.dirty, self.dirty_t = True, (now or time.time())
+
+    def _snapshot(self):
+        self._version += 1
+        return self._version, self.to_dict()
+
+    def take_dirty(self, now=None, force=False):
+        """The snapshot of a due deferred save (None when nothing is due). Take it under the bridge
+        lock, then write() it outside."""
+        if not self.dirty or (not force and (now or time.time()) - self.dirty_t < SAVE_DELAY):
+            return None
+        self.dirty = False
+        return self._snapshot()
+
+    def flush(self, now=None, force=False):
+        snap = self.take_dirty(now, force)
+        if snap is not None:
+            self.write(snap)
+
+    def write(self, snap):
+        """Write a snapshot. Two threads may write; a snapshot older than the one on disk is skipped,
+        and the file is replaced in one step (a temporary file, then a rename), so it is never torn."""
         if not self.path:
             return
-        try:
-            self.path.write_text("# Step sequencer patterns, written by the bridge. Safe to edit or delete.\n"
-                                 + yaml.safe_dump(self.to_dict(), sort_keys=False), encoding="utf-8")
-        except Exception as e:
-            print(f"[seq] can't write {self.path}: {e}", file=sys.stderr)
+        version, data = snap
+        text = "# Step sequencer patterns, written by the bridge. Safe to edit or delete.\n" \
+               + yaml.safe_dump(data, sort_keys=False)
+        with self._wlock:
+            if version < self._written:
+                return
+            tmp = self.path.with_name(self.path.name + ".tmp")
+            try:
+                tmp.write_text(text, encoding="utf-8")
+                os.replace(tmp, self.path)
+                self._written = version
+            except Exception as e:
+                print(f"[seq] can't write {self.path}: {e}", file=sys.stderr)
 
     def load(self):
+        """Read chases.yaml. A file that can't be read is copied aside (chases.yaml.bad-<time>) before
+        anything can overwrite it, and the sequencer starts empty; load_error says where it went."""
         try:
             self.from_dict(yaml.safe_load(self.path.read_text(encoding="utf-8")) or {})
         except Exception as e:
-            print(f"[seq] can't read {self.path}: {e}", file=sys.stderr)
+            backup = self.path.with_name(f"{self.path.name}.bad-{time.strftime('%Y%m%d-%H%M%S')}")
+            n = 1
+            while backup.exists():
+                backup = self.path.with_name(f"{self.path.name}.bad-{time.strftime('%Y%m%d-%H%M%S')}-{n}")
+                n += 1
+            try:
+                shutil.copy2(self.path, backup)
+            except OSError:
+                backup = None
+            fresh = Sequencer(n_tracks=self.n_tracks)               # nothing half-read stays
+            self.patterns, self.groups, self.track_groups = fresh.patterns, fresh.groups, fresh.track_groups
+            self.pad_config, self.kick_pads = None, []
+            self.load_error = (f"chases.yaml could not be read ({type(e).__name__}); "
+                               + (f"kept as {backup.name}" if backup else "and could not be copied"))
+            print(f"[seq] {self.load_error}: {e}", file=sys.stderr)

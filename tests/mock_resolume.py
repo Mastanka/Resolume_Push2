@@ -1,10 +1,19 @@
 """Minimal fake of Resolume Arena's REST API for offline testing.
-Serves a small composition on http://127.0.0.1:8080/api/v1 and logs every POST/PUT.
+Serves a small composition on http://127.0.0.1:18080/api/v1 (MOCK_PORT) and logs every POST/PUT.
 Run:  python tests/mock_resolume.py
 """
 import json, itertools, base64, hashlib, struct, threading, time
 from urllib.parse import unquote
+import os
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from rig import preset_rects  # noqa: E402
+
+PORT = int(os.environ.get("MOCK_PORT", "18080"))   # not 8080: on macOS a mock on 127.0.0.1:8080 would
+#                                                      # answer every loopback client of a running Arena
 ids = itertools.count(1000)
 def rng(v, lo=0.0, hi=1.0): return {"id": next(ids), "valuetype": "ParamRange", "value": v, "min": lo, "max": hi}
 PALETTE = ["#000000ff", "#ff0000ff", "#00ff00ff", "#ffff00ff", "#0000ffff", "#ff00ffff", "#ffffffff", "#ffb17bff"]
@@ -41,8 +50,12 @@ def file_clip(path):
     return c
 def choice(v, options):
     return {"id": next(ids), "valuetype": "ParamChoice", "value": v, "index": options.index(v), "options": list(options)}
+_RECTS = preset_rects(str(Path(__file__).resolve().parent / "fixtures" / "rig" / "mock_rig.xml"))
+GEOMETRY = "1920x1080|" + "|".join(f"{n}:{int(l)},{int(t)},{int(r - l)},{int(b - t)}" for n, (l, t, r, b) in _RECTS.items())
+
+
 def bar_chaser_effect():
-    """The Bar Chaser FFGL effect as Arena shows it: 55 params. The dropdowns list the fixtures
+    """The Bar Chaser FFGL effect as Arena shows it: 56 params. The dropdowns list the fixtures
     (Bar A has two), then the whole screens; pads 1-3 hold whole screens, as in an older show."""
     slices = ["\u2014", "Bar A / 1 - 423 141 RGB", "Bar A / 424 - 846 141 RGB 2", "Bar B / 1 - 855 h3 2m grb",
               "Bar C / 1 - 423 141 RGB", "Bar D / 1 - 855 h3 2m grb", "Bar E / 1 - 423 141 RGB",
@@ -55,6 +68,7 @@ def bar_chaser_effect():
         params[f"Pad {k + 1}"] = choice(["Bar A", "Bar B", "Bar C"][k] if k < 3 else slices[0], slices)
     for k in range(24):
         params[f"Level {k + 1}"] = rng(0.0)
+    params["Geometry"] = s(GEOMETRY)          # the effect publishes its rectangles (Bar Chaser 2026-09-28+)
     return {"name": "Bar Chaser", "display_name": "Bar Chaser", "id": next(ids), "bypassed": b_(False), "params": params}
 def crop_effect():
     return {"name": "Crop", "display_name": "Crop", "id": next(ids), "bypassed": b_(False),
@@ -73,7 +87,9 @@ def note_opacity(pid, value):
         for fx in layer["video"].get("effects") or []:
             if fx.get("name") == "Bar Chaser" and any(v.get("id") == pid for k, v in fx["params"].items() if k.startswith("Level ")):
                 OPACITY_LOG.append([time.time(), pid, value]); return
-COMP = {"master": rng(0.9),
+def make_comp():
+    """The mock's composition, with fresh ids every call (POST /api/v1/_new_composition = open another)."""
+    return {"master": rng(0.9),
   "tempocontroller": {"tempo": rng(120.0, 20.0, 500.0), "tempo_tap": ev(), "resync": ev()},
   "video": {"opacity": rng(1.0), "effects": [
       {"name": "Colorize", "id": next(ids), "bypassed": b_(True),
@@ -88,6 +104,7 @@ COMP = {"master": rng(0.9),
   {"name": s("Comets"), "bypassed": b_(False), "solo": b_(False), "master": rng(0.75), "video": {"opacity": rng(1.0), "effects": []}, "clips": [clip(None), clip("Comets down", "Connected"), clip(None), clip(None)]},
   {"name": s("Ambient clouds"), "bypassed": b_(False), "solo": b_(False), "master": rng(0.5), "video": {"opacity": rng(0.4), "effects": []}, "clips": [clip("Clouds", gen=True), clip(None), clip(None), clip(None)]},
 ]}
+COMP = make_comp()
 BYID = {}
 def index(n):
     if isinstance(n, dict):
@@ -99,7 +116,7 @@ index(COMP)
 LOG = []
 EVENTS = {}   # ParamEvent id -> times triggered (GET /api/v1/_events)
 DROP_PUTS = [0]   # POST /api/v1/_drop_puts N: the next N PUTs get no answer (connection closed), like Arena
-# ---- WebSocket (ws://127.0.0.1:8080/api/v1), like Arena 7.23: full composition on connect,
+# ---- WebSocket (ws://127.0.0.1:<MOCK_PORT>/api/v1), like Arena 7.23: full composition on connect,
 # subscribe / unsubscribe by "/parameter/by-id/<id>", then parameter_update on every change.
 WS_CLIENTS = []          # [handler], each with .subs {id: last value sent} and .ws_lock
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -130,6 +147,8 @@ def ws_broadcast_comp():
 def ws_broadcast():
     for h in list(WS_CLIENTS):
         for pid, last in list(h.subs.items()):
+            if pid not in BYID:                   # from a composition that is closed now
+                continue
             v = BYID[pid].get("value")
             if v != last:
                 h.subs[pid] = v
@@ -178,6 +197,27 @@ class H(BaseHTTPRequestHandler):
         b = self._body(); LOG.append(("POST", self.path, b)); print("POST", self.path, b, flush=True)
         if self.path.endswith("/_drop_puts"):
             DROP_PUTS[0] = int(b or 1); self.send_response(204); self.end_headers(); return
+        if self.path.endswith("/_new_composition"):            # test control: open another composition
+            global COMP
+            COMP = make_comp(); BYID.clear(); index(COMP)
+            self.send_response(204); self.end_headers(); ws_broadcast_comp(); return
+        if self.path.endswith("/_delete_layer"):               # test control: delete layer N (1-based)
+            n = int(b or 1)
+            if 1 <= n <= len(COMP["layers"]):
+                COMP["layers"].pop(n - 1); BYID.clear(); index(COMP)
+            self.send_response(204); self.end_headers(); ws_broadcast_comp(); return
+        if self.path.endswith("/_options"):                    # test control: the Advanced Output changed
+            n = int(b or 0)
+            for layer in COMP["layers"]:
+                for fx in layer["video"].get("effects") or []:
+                    if fx.get("name") != "Bar Chaser": continue
+                    for k in range(24):
+                        p = fx["params"][f"Pad {k + 1}"]
+                        opts = ["\u2014"] + [o for o in p.get("all", p["options"]) if o != "\u2014"][:n]
+                        p.setdefault("all", list(p["options"]))
+                        p["options"] = opts
+                        if p["value"] not in opts: p["value"] = "\u2014"
+            self.send_response(204); self.end_headers(); ws_broadcast_comp(); return
         parts = self.path.split("/")
         if parts[3:] == ["composition", "layers", "add"]:
             L = new_layer(len(COMP["layers"]) + 1); index(L)
@@ -207,7 +247,10 @@ class H(BaseHTTPRequestHandler):
             self.send_response(204); self.end_headers(); ws_broadcast_comp(); return
         if parts[-2:-1] and parts[-3] == "columns" and parts[-1] == "connect" and b == "true":
             n = int(parts[-2])
+            if not 1 <= n <= len(COMP["columns"]):
+                self.send_response(404); self.end_headers(); return
             for layer in COMP["layers"]:
+                if n > len(layer["clips"]): continue
                 c = layer["clips"][n-1]
                 if c["connected"]["value"] == "Empty": continue
                 for o in layer["clips"]:
@@ -215,14 +258,16 @@ class H(BaseHTTPRequestHandler):
                 c["connected"]["value"] = "Connected"
             for i, col in enumerate(COMP["columns"]):
                 col["connected"]["value"] = "Connected" if i == n-1 else "Disconnected"
-        if parts[-1] == "select":
+        if parts[-1] == "select" and int(parts[5]) <= len(COMP["layers"]):
             for layer in COMP["layers"]:
                 for c in layer["clips"]: c["selected"] = {"value": False}
-            COMP["layers"][int(parts[5])-1]["clips"][int(parts[7])-1]["selected"] = {"value": True}
-        if parts[-1] == "clear":
+            clips = COMP["layers"][int(parts[5])-1]["clips"]
+            if int(parts[7]) <= len(clips): clips[int(parts[7])-1]["selected"] = {"value": True}
+        if parts[-1] == "clear" and int(parts[5]) <= len(COMP["layers"]):
             for c in COMP["layers"][int(parts[5])-1]["clips"]:
                 if c["connected"]["value"].startswith("Connected"): c["connected"]["value"] = "Disconnected"
-        if parts[-1] == "connect" and "clips" in parts and b == "true":
+        if parts[-1] == "connect" and "clips" in parts and b == "true" \
+                and int(parts[5]) <= len(COMP["layers"]) and int(parts[7]) <= len(COMP["layers"][int(parts[5]) - 1]["clips"]):
             L, C = int(parts[5]), int(parts[7])
             for c in COMP["layers"][L-1]["clips"]:
                 if c["connected"]["value"].startswith("Connected"): c["connected"]["value"] = "Disconnected"
@@ -241,10 +286,14 @@ class H(BaseHTTPRequestHandler):
         if DROP_PUTS[0] > 0:                      # "Remote end closed connection without response"
             DROP_PUTS[0] -= 1; self.close_connection = True; return
         pid = int(self.path.rsplit("/",1)[-1]); body = json.loads(b)
+        if pid not in BYID:                       # like Arena: an id from another composition
+            self.send_response(404); self.end_headers(); return
         if BYID[pid]["valuetype"] == "ParamEvent":
             EVENTS[str(pid)] = EVENTS.get(str(pid), 0) + 1
         elif "value" in body: BYID[pid]["value"] = body["value"]; note_opacity(pid, body["value"])
         elif "index" in body: BYID[pid]["value"] = BYID[pid]["options"][body["index"]]
         self.send_response(204); self.end_headers()
         ws_broadcast()
-ThreadingHTTPServer(("127.0.0.1", 8080), H).serve_forever()
+if __name__ == "__main__":
+    print(f"Mock Resolume on http://127.0.0.1:{PORT}/api/v1")
+    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()

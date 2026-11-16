@@ -55,10 +55,15 @@ python push_resolume_bridge.py
 Before you run it: in Resolume, **Preferences → Webserver → Enable Webserver & REST API**
 (port 8080).
 
+**Release folder:** [`Release/`](Release) holds the current version (see [CHANGELOG.md](CHANGELOG.md)):
+only the files needed to run the bridge, a prebuilt Bar Chaser effect, `setup.sh` and `start.command`.
+You can copy it to another Mac and follow the README inside it. `python push_resolume_bridge.py --version`
+prints the version.
+
 ## Detailed installation (macOS)
 
-Tested on macOS (Apple Silicon) with Resolume Arena 7.23. Windows and Linux may work, but
-haven't been tried.
+Tested on macOS (Apple Silicon) with Resolume Arena 7.23. macOS only for now: the Push display
+library path, the Bar Chaser build and the Advanced Output preset folder are macOS-specific.
 
 **1. Turn on Resolume's web API**
 Resolume Arena → **Preferences → Webserver** → tick **Enable Webserver & REST API**. Leave the
@@ -162,16 +167,28 @@ hold the button and goes back when you let go.
 
 **Step sequencer (SEQUENCER view)** — press **Note**; **Session** goes back to the clips.
 Menus (red): **1 ENVELOPE** = knobs Attack, Decay, Sustain, Release, Gate. **2 SETTINGS** = knobs
-Direction, Length, Level. **3 PRESETS** = ready-made patterns (the Techno bank: 16 presets) that fit
-your rig: the buttons below the display are the presets (Shift = 9–16). Press one (it blinks, and so
-does the pattern row), then a pattern pad: an empty slot gets the preset, a used one asks
-*Overwrite?* with button 7 = NO and 8 = YES. The preset places kicks on the long bars and hats on the
-short ones of whatever rig is mapped (4–24 fixtures); if the rig changes, the bridge re-fits preset
-patterns when a composition loads, and asks in PRESETS when it changes during the show.
+Direction, Length, Level. **3 PRESETS** = ready-made patterns (the Techno bank: 16 recipes) that fit
+your rig, with five macros. The top four pad rows are the recipes as a 4 × 4 grid: rows = Rumble
+(Berlin), Machine funk (Detroit), Hard groove (club), Warehouse (hard); columns = Minimal, Groove, Peak,
+Kick out. Press a pattern pad (row 5) to choose the slot you are editing (the live pattern keeps
+playing; the same pad again switches to it as usual), press a recipe: it becomes a **draft** for that
+slot, shown on the display as a small preview of your bars while nothing changes on stage. Knobs
+1–5 = **Strobe, Density, Speed, Spread, Accent** (Shift = fine; hold **Select** + knob = the same
+value on every preset slot), knob 6 = seed (turn = reshuffle, Shift = next / previous), knob 7 = bank.
+Buttons below the display: **1 Apply** (the live pattern changes when its phrase starts: a 2-bar preset on every other bar counted from Play; a hand-made pattern
+asks with 7 = NO, 8 = YES), **2 Revert** (drop the draft), **3 Re-fit** (move every preset pattern onto
+the current bars; it blinks when the rig changed during the show), **4 Load bank** (press twice: the
+whole bank into P1–P16, your own patterns are kept). A recipe places kicks on the long bars and hats on
+the short ones of whatever rig is mapped (4–24 fixtures); when a composition loads, preset patterns
+made for another rig are re-fitted at once.
 **4 MAPPING** = which DMX fixture each pad lights, shared by all tracks: the top four pad rows show the
-fixtures (L1F1, L1F2, L2F1 … = lumiverse / fixture, in Arena's order), row 5 is red, rows 6–8 are pads
+fixtures (L1F1, L1F2, L2F1 … = lumiverse / fixture, in Arena's order), row 5 is orange, rows 6–8 are pads
 1–24. Hold **Select** and press a fixture (it blinks), then press a pad to store it there (both blink
-twice). **Delete** + pad = no fixture. **Octave** ▲ ▼ = more fixtures.
+twice). **Delete** + pad = no fixture. **Octave** ▲ ▼ = more fixtures. Hold **Shift** to see which bars the
+presets use for the kick (red) and press pads to choose them yourself; choose every bar to let the kick roam
+the whole rig; remove them all to go back to automatic (long bars, or on alike bars a choice by position).
+A track without its own Bar Chaser layer plays on its partner's layer (T2 on T1, T4 on T3), so a preset's hats
+and rumble still show with two layers (`sequencer.fold_tracks: false` turns that off).
 
 It needs the **Bar Chaser** effect (in `plugin/`, built with `plugin/build.sh`, installed with
 `python push_resolume_bridge.py --install-plugin`, then restart Arena). Save your Advanced Output as a
@@ -179,12 +196,15 @@ preset once (Arena → Output → Advanced → Presets → Save): the effect rea
 fixture ("Lumiverse 1 / 1 - 423 141 RGB"), then every whole lumiverse, in its **Pad 1 … Pad 24**
 dropdowns. New pads start on fixture 1, 2, 3 … Put one Bar Chaser on each layer whose clip you want to flash,
 as the **last** effect on the layer (or press **Shift + Note** with a clip of that layer selected),
-and set its **Track** (1–4) — or hold **Browse** and press track button 1–4 on the Push.
+and set its **Track** (1–4) — or hold **Browse** and press track button 1–4 on the Push. A Bar Chaser on a
+clip counts only while that clip plays; until then its track plays on its partner's layer.
 
 ```
-rows 1–4   32 steps of the selected track on the selected pads (green = playhead)
-row 5      patterns 1–8 (Shift = 9–16)
-rows 6–8   pads 1–24, bottom-left = pad 1, each = a slice chosen in the effect
+rows 1–4   32 steps of the selected track on the selected pads — red: bright = on, mid = on at a low level
+           or on for some selected pads, dark = off; green = playhead
+row 5      patterns 1–8 (Shift = 9–16) — orange: bright = current, dim = has steps, dark = empty, blinking = queued
+rows 6–8   pads 1–24, bottom-left = pad 1, each = a fixture chosen in the effect — yellow: bright = flashing now,
+           mid = selected, dim = has a fixture, off = none
 ```
 
 | Control | Does |
@@ -195,10 +215,10 @@ rows 6–8   pads 1–24, bottom-left = pad 1, each = a slice chosen in the effe
 | Hold a step + Gate knob (ENVELOPE) / Level knob (SETTINGS) | That step's gate / level on the selected pads |
 | **Repeat** on + hold a pad | Strobe at the grid rate |
 | Buttons below the display 1–4 | Select the texture track; **Browse** + button = the selected clip's layer joins that track |
-| Pattern pad (row 5) | Switch at the next bar; press it again to switch now |
-| **Play** | Run / stop |
+| Pattern pad (row 5) | Switch when its phrase starts (a 2-bar pattern: every other bar, counted from Play); press it again to switch now, at the step its phrase has reached |
+| **Play** | Run / stop (stop drops a queued pattern) |
 | **Layout** → buttons right of the pads | Pad groups 1–8. **Select** + button = store the selection for this track; **Select** + **Shift** + button = store it for all tracks (global). Tap = select that group's pads. **Delete** (+ **Shift**) + button = clear. Track group = track colour, global group = white; dim = stored, bright = current, off = empty. A track's own group hides the global one on that button |
-| **Scale** → buttons right of the pads | Grid 1/4 … 1/32t (white = current) |
+| **Scale** → buttons right of the pads | Grid 1/4 … 1/32t of the current pattern; every pattern keeps its own (white = current) |
 | **Delete** + step / pad / track / pattern / group | Clear |
 | **Duplicate** + pattern → pattern | Copy |
 | **Double Loop** / **Fixed Length** + button 1–8 | Double the pattern / length 4–32 |
@@ -225,8 +245,11 @@ python push_resolume_bridge.py --dump 3            # layer 3
 python push_resolume_bridge.py --dump 3 --clip 2   # layer 3, clip 2
 ```
 
-The parameter order you set with **Convert** is saved in `pins.yaml`, your own colours in
-`colors.yaml`, sequencer patterns in `chases.yaml`. Delete any of them to go back to the defaults.
+The bridge keeps its settings and show data in its own folder next to Arena's files,
+`~/Documents/Resolume Arena/Push 2/`: `config.yaml`, the parameter order you set with **Convert**
+(`pins.yaml`), your own colours (`colors.yaml`) and the sequencer patterns, groups, pad mapping and kick bars
+(`chases.yaml`). On the first start it copies the ones it finds next to the script. Edit `config.yaml`
+there; delete any file to go back to the defaults.
 
 | Command line | |
 |---|---|

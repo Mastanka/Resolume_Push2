@@ -48,18 +48,19 @@ Usage
     python push_resolume_bridge.py --dump 3 --clip 2
     python push_resolume_bridge.py --check 8       test every Resolume call on layer 8 (undone after)
     python push_resolume_bridge.py --install-plugin  copy the Bar Chaser effect into Resolume's Extra Effects
+    python push_resolume_bridge.py --version         print the version
 """
 
 from __future__ import annotations
 
 import argparse
 import colorsys
+import functools
 import importlib.util
 import json
 import os
 import platform
 import math
-import random
 import sys
 import threading
 import time
@@ -70,10 +71,23 @@ from pathlib import Path
 import requests
 import yaml
 
-import banks
-import rig as rigmod
-from chaser_engine import UNASSIGNED, PluginEngine, pad_key
-from sequencer import DIRECTIONS, Sequencer
+__version__ = "1.0.0"      # MAJOR.MINOR.PATCH; bump it with CHANGELOG.md, then python tools/make_release.py
+
+import paths
+from seq_mapping import MappingMixin
+from seq_presets import PresetsMixin
+from seq_screen import SeqMixin
+from constants import (  # noqa: F401  (tests and tools read the control names from here)
+    TRACK_ENCODERS, MASTER_ENCODER, NAV_BUTTONS, MIX_BUTTON, PLAY_BUTTON, STOP_BUTTON, MOVE_BUTTON, TAP_BUTTON,
+    TEMPO_ENCODER, BLACKOUT_BUTTON, MUTE_BUTTON, SOLO_BUTTON, SCENE_BUTTONS, BLINK, BLACKOUT_RESEND, BLACKOUT_TRIES,
+    METRONOME_BUTTON, TAP_PATH, RESYNC_PATH, BEAT_ON, LED_HZ, MASTER_COLOR_BUTTON, PASTE_BUTTON, NOTE_TIME,
+    SELECT_BUTTON, SWING_ENCODER, HELD_FLAGS, CLIP_MENUS, SEQ_MENUS, SEQ_PAGES, MAP_FIXTURES, PARAM_MODES,
+    FX_MODES, MIX_MODES, OVERLAY_BUTTONS, HOLD_TIME, FX_SOURCES, UPPER_ROW, LOWER_ROW, TEMPO_PATH,
+    TAP_RESET, TAP_FLASH, DIM, MID, PALETTE_BASE, SWATCH_BASE, SECTION_BASE, SECTION_RGB,
+    SECTION_SHADES, COLOR_SOURCES, COLOR_KNOBS, AUTO_SKIP_LAST, AUTO_SOURCES, OVERRIDE_HOLD, NOTE_BUTTON, SESSION_BUTTON,
+    BROWSE_BUTTON, REPEAT_BUTTON, ACCENT_BUTTON, DELETE_BUTTON, DOUBLE_LOOP_BUTTON, FIXED_LENGTH_BUTTON, OCTAVE_UP, OCTAVE_DOWN,
+    LAYOUT_BUTTON, SCALE_BUTTON, SEQ_RED, SEQ_RED_DIM,
+)
 from display import LAYER_RGB, render  # noqa: F401  (render re-exported for tests/tools)
 from resolume_api import (  # noqa: F401
     Resolume, ResolumeWS, Sender, clip_state, color_label, fmt_value, hex_to_rgba, is_param, label_of,
@@ -83,80 +97,6 @@ from resolume_api import (  # noqa: F401
 # push2_python, cairo and numpy are imported inside run()/render() so that
 # `--dump` also works on a machine without the Push libraries installed.
 
-TRACK_ENCODERS = [f"Track{i} Encoder" for i in range(1, 9)]
-MASTER_ENCODER = "Master Encoder"
-NAV_BUTTONS = ["Up", "Down", "Left", "Right", "Page Left", "Page Right"]
-MIX_BUTTON = "Mix"                          # B_3 on the control map
-PLAY_BUTTON = "Play"                        # B_1: hold + pad = launch clip
-STOP_BUTTON = "Record"                      # B_2: hold + pad = stop layer
-MOVE_BUTTON = "Convert"                     # B_4: hold + touch knob = move param
-TAP_BUTTON = "Tap Tempo"                    # B_5
-TEMPO_ENCODER = "Tempo Encoder"             # K10
-BLACKOUT_BUTTON = "Stop"                    # "Stop Clip": composition master 0 / back
-MUTE_BUTTON = "Mute"                        # hold + pad = mute (bypass) that layer
-SOLO_BUTTON = "Solo"                        # hold + pad = solo that layer
-SCENE_BUTTONS = ["1/32t", "1/32", "1/16t", "1/16", "1/8t", "1/8", "1/4t", "1/4"]  # = pad rows, top first
-BLINK = 0.25          # s on / off for blinking LEDs
-BLACKOUT_RESEND = 0.5  # s: blackout / restore not reported back by Resolume yet → send it again
-BLACKOUT_TRIES = 10    # resends before giving up (with a message on the display)
-METRONOME_BUTTON = "Metronome"              # pad pulse on / off
-TAP_PATH = "tempocontroller/tempo_tap"
-RESYNC_PATH = "tempocontroller/resync"
-BEAT_ON = 0.12        # s a beat stays lit (Tap Tempo button, pad pulse)
-LED_HZ = 50           # LED updates per second (beat edges); the display runs at display_fps
-MASTER_COLOR_BUTTON = "Master"              # COLOR on the composition's colour effect
-PASTE_BUTTON = "Duplicate"                  # COLOR: hold + pad / row / column = paste colour
-NOTE_TIME = 1.8       # s a short message stays on the display
-NOTE_BUTTON, SESSION_BUTTON = "Note", "Session"   # the two views: sequencer / clips
-BROWSE_BUTTON, REPEAT_BUTTON, ACCENT_BUTTON = "Browse", "Repeat", "Accent"
-DELETE_BUTTON, DOUBLE_LOOP_BUTTON, FIXED_LENGTH_BUTTON = "Delete", "Double Loop", "Fixed Length"
-OCTAVE_UP, OCTAVE_DOWN = "Octave Up", "Octave Down"
-SELECT_BUTTON = "Select"                    # SEQ: tap = multi-select on / off; hold + group button = store
-LAYOUT_BUTTON, SCALE_BUTTON = "Layout", "Scale"   # SEQ: buttons right of the pads = pad groups / grid
-SWING_ENCODER = "Swing Encoder"
-SEQ_HZ = 100          # sequencer clock ticks per second
-# Menus on the buttons above the display, per view. CLIP view (Session): white; SEQUENCER view (Note): red.
-CLIP_MENUS = {"Upper Row 1": "clip_params", "Upper Row 2": "color", "Upper Row 3": "clip_fx",
-              "Upper Row 6": "layer_params", "Upper Row 7": "layer_fx"}
-SEQ_MENUS = {"Upper Row 1": "seq_env", "Upper Row 2": "seq_settings", "Upper Row 3": "seq_presets",
-             "Upper Row 4": "seq_mapping"}
-SEQ_PAGES = {"seq_env": ["Attack", "Decay", "Sustain", "Release", "Gate"],     # knobs per SEQ menu
-             "seq_settings": ["Direction", "Length", "Level"], "seq_presets": [], "seq_mapping": []}
-MAP_FIXTURES = 32     # MAPPING: fixtures on the top four pad rows (Octave ▲ ▼ = next 32)
-MAP_BLINK = 0.08      # s per phase of the double blink that confirms a stored mapping
-PRESET_BANK = "techno"   # banks.BANKS: the presets on the buttons below the display (Shift = 9-16)
-CONFIRM_NO, CONFIRM_YES = 6, 7   # PRESETS questions: buttons 7 (NO) and 8 (YES) below the display
-PARAM_MODES = ("clip_params", "layer_params")
-FX_MODES = ("clip_fx", "layer_fx")
-MIX_MODES = ("mix", "mute", "solo")       # screens on top of either view (Mix / Mute / Solo button)
-OVERLAY_BUTTONS = {MIX_BUTTON: "mix", MUTE_BUTTON: "mute", SOLO_BUTTON: "solo"}
-HOLD_TIME = 0.4       # s: shorter press = click (the screen stays), longer = hold (back on release)
-LEGACY_MODES = {"params": "clip_params", "fx": "clip_fx", "seq": "seq_env"}
-SEQ_RED, SEQ_RED_DIM = "L6", "L6_dim"     # layer colour 7 is red: the SEQUENCER menu buttons
-FX_SOURCES = [("Clip", "clip"), ("Layer", "layer")]   # FX menus: CLIP EFFECTS / LAYER EFFECTS
-UPPER_ROW = [f"Upper Row {i}" for i in range(1, 9)]
-LOWER_ROW = [f"Lower Row {i}" for i in range(1, 9)]
-TEMPO_PATH = "tempocontroller/tempo"
-TAP_RESET = 2.0       # s without a tap starts a new tap count
-TAP_FLASH = 0.1       # s the Tap Tempo button stays lit per tap
-DIM = 0.15            # brightness of loaded-but-not-playing pads
-MID = 0.45            # brightness of playing pads between beats (pulse)
-PALETTE_BASE = 64     # Push palette slots 64..79 are overwritten with the layer colours
-SWATCH_BASE = 80      # slots 80..87 = the COLOR menu's palette swatches on Lower Row 1-8
-COLOR_SOURCES = [("clip", "video"), ("layer", "video/effects")]   # where colour params are searched
-# COLOR menu knobs: (label, kind, coarse step, fine step). kind r/g/b 0..255, h 0..360, s/v 0..100
-COLOR_KNOBS = [("Red", "r", 3, 1), ("Green", "g", 3, 1), ("Blue", "b", 3, 1),
-               ("Hue", "h", 2, 0.5), ("Saturation", "s", 1, 0.2), ("Brightness", "v", 1, 0.2)]
-
-AUTO_SKIP_LAST = {"bypassed", "position", "duration"}
-AUTO_SOURCES = [                     # where "auto" layers look for parameters, in order
-    ("layer", "video/opacity"),
-    ("clip", "video/sourceparams"),
-    ("clip", "video/effects"),
-    ("layer", "video/effects"),
-    ("clip", "transport"),
-]
-OVERRIDE_HOLD = 0.8   # s to trust our own sent value over polled state (prevents jitter)
 
 DEFAULT_CONFIG = {
     "resolume": {"host": "127.0.0.1", "port": 8080, "poll_interval": 0.25,
@@ -166,10 +106,11 @@ DEFAULT_CONFIG = {
     "encoders": {"coarse": 0.01, "fine": 0.001},
     "display_fps": 20,
     "stop_column": None,   # None = stop via /clear; N = trigger column N instead
-    "pins_file": None,     # param order file; None = pins.yaml next to this script
-    "colors_file": None,   # own palette (Shift + Lower Row in COLOR); None = colors.yaml here
-    "chases_file": None,   # step sequencer patterns; None = chases.yaml next to this script
+    "pins_file": None,     # param order file; None = pins.yaml in the data folder (paths.py)
+    "colors_file": None,   # own palette (Shift + Lower Row in COLOR); None = colors.yaml there
+    "chases_file": None,   # step sequencer patterns; None = chases.yaml there
     "sequencer": {"tracks": 4,
+                  "fold_tracks": True,   # a track without a Bar Chaser layer plays on its partner's (T1/T2, T3/T4)
                   "rig": {},             # optional: dominant: [pads], order: [pads] (see rig.build_rig)
                   "preset_folder": None},  # Advanced Output presets; None = Resolume's own folder
     "layers": {"default": "auto"},
@@ -194,7 +135,7 @@ class Slot:
         return self.path.split(":", 1)[-1].lower()
 
 
-class Bridge:
+class Bridge(SeqMixin, MappingMixin, PresetsMixin):
     def __init__(self, cfg, rest):
         self.cfg = cfg
         self.rest = rest
@@ -222,7 +163,7 @@ class Bridge:
         self.color_target = "clip"  # "clip" or "master" (composition colour effect)
         self.paste_held = False    # Duplicate
         self.note = ("", 0.0)      # short message on the display (text, time)
-        self.colors_path = Path(cfg.get("colors_file") or Path(__file__).with_name("colors.yaml"))
+        self.colors_path = paths.data_file("colors.yaml", cfg.get("colors_file"))
         self.own_palette = self._load_palette()
         self.hsv_cache = {}        # param id -> (rgb, [h, s, v]) keeps hue while saturation is 0
         self.fx_page = 0
@@ -238,51 +179,26 @@ class Bridge:
         self.blackout_seen = False # Resolume has reported the master at 0 since this blackout began
         self.restore = None        # master value being restored, until Resolume reports it
         self.bo_sent, self.bo_tries = 0.0, 0   # last (re)send of the blackout / restore value
-        self.flash = {}            # layer -> master value before the flash button was pressed
-        self.col_pressed = set()   # columns we sent a "down" for
+        self.flash = {}            # flash button row -> (master param id, value before, layer) while held
+        self.col_pressed = {}      # lower-row button -> column we sent a "down" for
         self.move_src = None       # absolute slot index being moved
         self.taps = []
         self.tap_flash = 0.0
         self.tap_count = 0
-        self.beat_anchor = (time.time(), 0)   # (time of a known beat, its index in the bar 0-3)
+        self.clock = None          # (time, beat, bpm) at the last rebase: beat time never jumps back far
+        self.quitting = False      # shutdown() ran: the clock thread stops sending
         self.pulse = True          # playing pads pulse on the beat (Metronome toggles)
-        self.pins_path = Path(cfg.get("pins_file") or Path(__file__).with_name("pins.yaml"))
+        self.pins_path = paths.data_file("pins.yaml", cfg.get("pins_file"))
         self.order = self._load_order()
         self.touched = None        # encoder slot index being touched
-        self.pressed = set()       # cells we sent a "down" for
+        self.pressed = {}          # pad (i, j) -> (layer, column) we sent a "down" for
+        self.held = set()          # every button physically down (push2-python names)
         self.overrides = {}        # param id -> (value, time sent)
         self.choice_acc = {}
         self.midi_reset = False
-        # ---- step sequencer (SEQ) ----
-        sc = cfg.get("sequencer") or {}
-        self.seq = Sequencer(cfg.get("chases_file") or Path(__file__).with_name("chases.yaml"),
-                             n_tracks=int(sc.get("tracks", 4)))
-        self.engine = PluginEngine(rest, lambda: self.comp, self.refresh_comp, self._send_level,
-                                   store=self.seq, send_param=self.sender.param)
-        self.sel_pads = {0}        # selected pads (0-based); steps edit all of them
-        self.multi = False         # Select latched: pad press adds / removes instead of replacing
-        self.select_held = self.select_used = False
-        self.side = "groups"       # buttons right of the pads in SEQ: "groups" (Layout) or "grid" (Scale)
-        self.cur_group = None      # ("track" | "global", button) last stored / recalled (lit while it matches)
-        self.map_armed = None      # MAPPING: fixture index picked with Select, waiting for a pad
-        self.map_focus = None      # MAPPING: pad last pressed (its fixture is shown)
-        self.map_blink = {}        # MAPPING: ("fx", index) / ("pad", k) -> time of the confirming double blink
-        self.map_page = 0          # MAPPING: which 32 fixtures are on the pads
-        self.preset_pick = None    # PRESETS: recipe id picked on the buttons below the display
-        self.confirm = None        # PRESETS question: {"kind": "overwrite", "slot", "recipe"}
-        self.refit_offer = False   # the rig changed during the show: PRESETS offers a re-fit
-        self._rig_cache = (None, None, None)   # (inputs, Rig or None, error text)
-        self._rig_checked = (None, 0.0)        # (mapping, time) of the last look at the preset file
-        self.rig_sig_seen = None   # rig signature last checked
-        self.repeat = False
-        self.accent = False
-        self.delete_held = self.browse_held = self.fixed_len_held = False
-        self.browse_used = False
-        self.held_steps = set()    # step indices held on the pads
-        self.held_bars = {}        # pad key -> track, while a pad is held
-        self.dup_src = None        # Duplicate + pattern: source pattern
-        self.seq_note = ""         # last setup / load message (shown on the display)
-        self.last_grid_step = None
+        self._init_seq(cfg, rest)             # SEQ / MAPPING / PRESETS state (seq_screen.py)
+        if self.seq.load_error:
+            self.note = (self.seq.load_error, time.time() + 10)   # shown for ~12 s
 
     # ---- screens: view (pads) + menu (display, knobs, buttons below) + MIX / MUTE / SOLO ---- #
     @property
@@ -292,7 +208,6 @@ class Bridge:
 
     @mode.setter
     def mode(self, m):
-        m = LEGACY_MODES.get(m, m)
         if m in MIX_MODES:
             self.overlay, self.ov_latched = m, True
             return
@@ -347,10 +262,9 @@ class Bridge:
         self._clear_overlay()
         self.view = view
         self.move_src = None
-        self.held_steps.clear()
-        self.held_bars.clear()
+        self._release_seq_holds()
         self.select_held = False
-        self.map_armed = self.preset_pick = self.confirm = None
+        self.map_armed = self.confirm = self.load_armed = None
 
     # ---- composition access --------------------------------------------- #
     def layers(self):
@@ -396,12 +310,44 @@ class Bridge:
             print(f"[resolume] connected — {len(comp.get('layers') or [])} layers")
         with self.lock:
             self.comp, self.index, self.online = comp, index, True
-            self._check_blackout()
+            loaded = False
             try:
                 loaded = self.engine.sync_pads(comp)    # one pad mapping on every Bar Chaser
+                self.engine.observe(comp)               # what Arena shows on the Level params
+            except Exception:
+                traceback.print_exc()
+            if loaded:
+                self._composition_opened()
+            self._revalidate()
+            self._check_blackout()
+            try:
                 self.check_rig(loaded)                  # presets still fit the Advanced Output?
             except Exception:
                 traceback.print_exc()
+
+    def shutdown(self):
+        """Quit: let go of everything, stop the sequencer (an Apply waiting for the bar lands), set every
+        Bar Chaser level to 0 so no bar stays lit after the bridge is gone, and write chases.yaml."""
+        self.quitting = True                            # seq_step does nothing from now on
+        self.release_all()
+        with self.lock:
+            self.seq.stop()
+            self.seq.voices.clear()
+            self.seq.levels.clear()
+            self.engine.all_dark()
+            self.seq.flush(force=True)
+
+    def _composition_opened(self):
+        """Another composition is open (new ids everywhere). Momentary actions started in the old one end
+        without writing into the new one; a blackout stays: the new composition's master goes to 0 too."""
+        self.flash.clear()
+        self.pressed.clear()
+        self.col_pressed.clear()
+        self.move_src = None
+        self._pages.clear()
+        self.restore = None
+        if self.blackout is not None:
+            self.blackout_seen, self.bo_sent, self.bo_tries = False, 0.0, 0
 
     def on_param(self, pid, value):
         """WebSocket parameter_update: patch the value in place."""
@@ -451,664 +397,9 @@ class Bridge:
             if layer:
                 add_all(layer.get("video"))
             add_all(resolve_node(comp, "video/effects"))
-        return ids
-
-    # ---- step sequencer ---------------------------------------------------------- #
-    def refresh_comp(self):
-        try:
-            self.set_comp(self.rest.composition())
-        except Exception as e:
-            print(f"[seq] refresh failed: {e}", file=sys.stderr)
-
-    def _send_level(self, pid, value):
-        with self.lock:
-            n = self.index.get(pid)
-            if n is not None:
-                n["value"] = value
-        if self.live():
-            self.ws.set(pid, value)
-        else:
-            self.sender.param(pid, {"value": value})
-
-    def beat_time(self, now=None):
-        """Continuous beats since the beat anchor, or None without a tempo."""
-        p = self.tempo_param()
-        bpm = float(self.value_of(p) or 0) if p else 0.0
-        if bpm <= 0:
-            return None
-        t0, b0 = self.beat_anchor
-        return b0 + ((now or time.time()) - t0) * bpm / 60.0
-
-    def add_chaser(self):
-        """Shift + Note: put a Bar Chaser on the selected clip's layer (runs in a worker thread)."""
-        L = self.sel[0]
-        layer = self.layer_json(L)
-        if layer is None:
-            self.note_msg("select a clip on the layer first")
-            return
-
-        def work():
-            code = self.engine.add_to_layer(L)
-            name = text(layer.get("name")) or f"layer {L}"
-            self.note_msg(f"Bar Chaser is on {name}" if code == 200 else
-                          f"Bar Chaser added to {name}" if code == 204 else f"can't add Bar Chaser: HTTP {code}")
-        threading.Thread(target=work, daemon=True).start()
-
-    def join_track(self, track):
-        """Browse: the selected clip's layer answers to track `track` (adds the effect if missing)."""
-        L = self.sel[0]
-        layer = self.layer_json(L)
-        if layer is None:
-            self.note_msg("select a clip on the layer first")
-            return
-
-        def work():
-            ok = self.engine.set_track(L, track + 1)
-            name = text(layer.get("name")) or f"layer {L}"
-            self.note_msg(f"T{track + 1} = {name}" if ok else f"can't set track on {name}")
-        threading.Thread(target=work, daemon=True).start()
-
-    def seq_loop(self):
-        """100 Hz: feed beat time to the sequencer, send changed levels, handle Repeat."""
-        last_err = 0.0
-        while True:
-            try:
-                bt = self.beat_time()
-                changed = {}
-                if bt is not None:
-                    with self.lock:
-                        sb = self.seq.step_beats()
-                        g = math.floor(bt / sb)
-                        if self.repeat and self.held_bars and g != self.last_grid_step:
-                            for bar, track in list(self.held_bars.items()):
-                                tr = self.seq.pattern.tracks[track]
-                                self.seq.trigger(track, bar, 1.0, tr.gate * sb, bt)
-                        self.last_grid_step = g
-                        changed = self.seq.tick(bt)
-                for (track, bar), v in changed.items():
-                    self.engine.set_level(track, bar, v)
-            except Exception:                              # never let a bug stop the clock
-                if time.time() - last_err > 5:
-                    traceback.print_exc()
-                    last_err = time.time()
-            time.sleep(1.0 / SEQ_HZ)
-
-    def bar_index(self, i, j):
-        """Pad (row i, col j) in the pad block (rows 5-7) → pad index 0-23, bottom-left = 0."""
-        return (7 - i) * 8 + j if 5 <= i <= 7 else None
-
-    def pattern_index(self, j):
-        """Row 4: patterns 1-8, with Shift 9-16."""
-        return j + (8 if self.shift else 0)
-
-    def sel_keys(self):
-        return [pad_key(k) for k in sorted(self.sel_pads)]
-
-    def current_group(self):
-        """("track" | "global", button) of the group the selection came from, while it still equals it."""
-        if self.cur_group is None:
-            return None
-        scope, g = self.cur_group
-        pads, shown = self.seq.group(g, self.seq.track)
-        return self.cur_group if pads and shown == scope and set(pads) == self.sel_pads else None
-
-    def group_label(self, scope, g):
-        return f"GG{g + 1}" if scope == "global" else f"G{g + 1}"
-
-    def _group_button(self, g):
-        """Button g right of the pads (Layout). Select + button = store for the selected track,
-        Select + Shift + button = store for all tracks (GG); Delete (+ Shift) = clear; tap = select."""
-        seq, t = self.seq, self.seq.track
-        scope = "global" if self.shift else "track"
-        owner = None if self.shift else t
-        tag = self.group_label(scope, g) + ("" if self.shift else f" of T{t + 1}")
-        if self.select_held:
-            self.select_used = True
-            seq.store_group(g, self.sel_pads, owner)
-            self.cur_group = (scope, g)
-            self.note_msg(f"{tag} = pad{'s' * (len(self.sel_pads) != 1)} "
-                          + ", ".join(str(k + 1) for k in sorted(self.sel_pads)))
-        elif self.delete_held:
-            seq.clear_group(g, owner)
-            self.note_msg(f"{tag} cleared")
-        else:
-            pads, shown = seq.group(g, t)
-            if pads:
-                self.sel_pads = set(pads)
-                self.cur_group = (shown, g)
-            else:
-                self.note_msg(f"G{g + 1} empty · Select + button = store (+ Shift = all tracks)")
-
-    # ---- rig and presets (SEQ PRESETS menu) ------------------------------------ #
-    def current_rig(self):
-        """(Rig, "") or (None, error) from the shared pad mapping and the Advanced Output preset the
-        effect reads. Rebuilt only when the mapping, the preset file or its time, or config change."""
-        sc = self.cfg.get("sequencer") or {}
-        folder = sc.get("preset_folder") or rigmod.PRESET_FOLDER
-        values = self.engine.mapping()
-        now = time.time()
-        if self._rig_checked[0] == values and now - self._rig_checked[1] < 1.0:
-            return self._rig_cache[1], self._rig_cache[2]           # the preset file is looked at once a second
-        self._rig_checked = (values, now)
-        path = rigmod.resolve_preset(self.engine.preset_text(), folder)
-        try:
-            mtime = os.path.getmtime(path) if path else None
-        except OSError:
-            mtime = None
-        override = sc.get("rig") or {}
-        key = (tuple(values), path, mtime, repr(override))
-        if self._rig_cache[0] == key:
-            return self._rig_cache[1], self._rig_cache[2]
-        rects = {}
-        if mtime is not None:
-            try:
-                rects = rigmod.preset_rects(path)
-            except Exception as e:                                 # unreadable preset: roles by position
-                print(f"[presets] can't read {path}: {e}", file=sys.stderr)
-        pads = [rigmod.PadInfo(k + 1, v, rects.get(v)) for k, v in enumerate(values) if v]
-        try:
-            r, err = rigmod.build_rig(pads, override), ""
-        except rigmod.RigError as e:
-            r, err = None, str(e)
-        self._rig_cache = (key, r, err)
-        return r, err
-
-    def check_rig(self, loaded=False):
-        """Do the preset patterns still fit the rig? A newly loaded composition re-fits them at once;
-        a change during the show (MAPPING, a new Advanced Output preset) is reported and the PRESETS
-        menu asks before re-fitting, because a re-fit moves every hit."""
-        r, _ = self.current_rig()
-        sig = r.signature() if r else None
-        if sig == self.rig_sig_seen and not loaded:
-            return
-        self.rig_sig_seen = sig
-        todo = self.seq.mismatched(sig) if r else []
-        if not todo:
-            self.refit_offer = False
-            return
-        if loaded:
-            done = self.seq.refit(sig, lambda d: banks.refit(d, r))
-            self.note_msg(f"Rig changed: {len(done)} preset pattern{'s' * (len(done) != 1)} re-fitted")
-        else:
-            self.refit_offer = True
-            self.note_msg("Rig changed · re-fit in PRESETS")
-
-    def presets_menu(self):
-        return self.view == "seq" and self.menus["seq"] == "seq_presets"
-
-    def question(self):
-        """The YES / NO question the PRESETS menu shows, or None."""
-        if self.confirm:
-            return self.confirm
-        if self.refit_offer and self.presets_menu() and not self.preset_pick:
-            return {"kind": "refit"}
-        return None
-
-    def _store_preset(self, slot, recipe):
-        """Realise a preset on the current rig and store it as pattern `slot` (a new seed each time)."""
-        seq = self.seq
-        r, err = self.current_rig()
-        self.preset_pick, self.confirm = None, None
-        if r is None:
-            self.note_msg(err)
-            return
-        d = banks.realize(recipe, r, random.randrange(1, 1000000), PRESET_BANK)
-        seq.store_pattern(slot, d)
-        seq.grid = "1/16"                                          # presets are written for 1/16
-        self.map_blink = {("pattern", slot): time.time()}
-        self.note_msg(f"P{slot + 1} = {d['name']}")
-
-    def _preset_button(self, k):
-        """Buttons below the display in PRESETS: a preset (Shift = 9-16), or NO / YES to a question."""
-        q = self.question()
-        if q:
-            if k == CONFIRM_YES and q["kind"] == "overwrite":
-                self._store_preset(q["slot"], q["recipe"])
-            elif k == CONFIRM_YES:                                 # re-fit
-                r, err = self.current_rig()
-                if r is None:
-                    self.note_msg(err)
-                else:
-                    done = self.seq.refit(r.signature(), lambda d: banks.refit(d, r))
-                    self.note_msg(f"{len(done)} preset pattern{'s' * (len(done) != 1)} re-fitted")
-                self.refit_offer = False
-            elif k == CONFIRM_NO:
-                if q["kind"] == "refit":
-                    self.refit_offer = False
-                self.confirm = None
-                self.note_msg("Kept")
-            return
-        items = banks.presets(PRESET_BANK)
-        i = k + (8 if self.shift else 0)
-        if i >= len(items):
-            return
-        rid = items[i][0]
-        if self.preset_pick == rid:
-            self.preset_pick = None                                # pressed again = cancel
-            return
-        r, err = self.current_rig()
-        if r is None:
-            self.note_msg(err)
-            return
-        self.preset_pick = rid
-
-    def _preset_pattern_pad(self, slot):
-        """A pattern pad while a preset is picked: store it there; a used slot asks first."""
-        if self.seq.is_empty(slot):
-            self._store_preset(slot, self.preset_pick)
-        else:
-            self.confirm = {"kind": "overwrite", "slot": slot, "recipe": self.preset_pick}
-
-    def _presets_snapshot(self):
-        sq = self.seq
-        r, err = self.current_rig()
-        items = banks.presets(PRESET_BANK)
-        q = self.question()
-        names = dict(items)
-        def slot_name(i):
-            n = sq.patterns[i].name
-            return f"P{i + 1}" + ("" if n == f"P{i + 1}" else f" ({n})")
-        if q and q["kind"] == "overwrite":
-            title = f"Overwrite {slot_name(q['slot'])} with {names[q['recipe']]}?"
-        elif q:
-            n = len(sq.mismatched(r.signature())) if r else 0
-            title = f"Rig changed: re-fit {n} preset pattern{'s' * (n != 1)} to it?"
-        elif self.preset_pick:
-            title = f"{names[self.preset_pick]}  ·  press a pattern pad to store it"
-        else:
-            title = "Pick a preset below, then a pattern pad"
-        if r is None:
-            rig_line = err
-        else:
-            geo = "long / short from the Advanced Output" if r.source == "preset" else \
-                "all bars alike, long ones chosen by position" if r.virtual else f"roles from {r.source}"
-            rig_line = f"Rig: {len(r.pads)} fixtures · {len(r.D)} long, {len(r.S)} short · {geo}"
-            misfit = sq.mismatched(r.signature())
-            if misfit:
-                rig_line += "  ·  made for another rig: " + ", ".join(f"P{i + 1}" for i in misfit)
-        cur = sq.pattern
-        src = cur.source
-        info = slot_name(sq.current) + (f" · preset {src.get('recipe')} · seed {src.get('seed')}" if src
-                                        else " · own pattern")
-        missing = [t + 1 for t in range(sq.n_tracks) if not self.engine.ready(t)]
-        if missing:
-            info += "  ·  no Bar Chaser layer: " + ", ".join(f"T{t}" for t in missing)
-        page = items[8:] if self.shift else items[:8]
-        if q:
-            labels = [""] * 8
-            labels[CONFIRM_NO], labels[CONFIRM_YES] = "NO", "YES"
-        else:
-            labels = [n for _, n in page] + [""] * (8 - len(page))
-        picked = next((k for k, (rid, _) in enumerate(page) if rid == self.preset_pick), None)
-        return {"title": title, "rig": rig_line, "info": info, "labels": labels, "picked": picked,
-                "question": bool(q)}
-
-    def mapping(self):
-        return self.view == "seq" and self.menus["seq"] == "seq_mapping"
-
-    def _map_pad(self, ij, down):
-        """MAPPING: top four rows = fixtures, row 5 = red divider, rows 6-8 = pads 1-24.
-        Select + fixture = pick it (blinks), then a pad = store it there (both blink twice).
-        Delete + pad = no fixture. True = handled, False = let the normal pad code run."""
-        i, j = ij
-        seq, eng = self.seq, self.engine
-        fx = eng.fixtures(seq.track)
-        if i < 4:
-            f = self.map_page * MAP_FIXTURES + i * 8 + j
-            if down and f < len(fx):
-                if self.select_held:
-                    self.select_used = True
-                    self.map_armed = None if self.map_armed == f else f
-                elif self.map_armed == f:
-                    self.map_armed = None                          # pressed again = cancel
-                self.note_msg(f"{fx[f]['label']} = {fx[f]['name']}")
-            return True
-        if i == 4:
-            return True
-        k = self.bar_index(i, j)
-        if not down:
-            return False
-        if self.delete_held:
-            if eng.set_pad(k, UNASSIGNED):
-                self.map_blink = {("pad", k): time.time()}
-                self.note_msg(f"Pad {k + 1}: no fixture")
-                self.check_rig()
-            return True
-        if self.map_armed is not None and self.map_armed < len(fx):
-            f = self.map_armed
-            if eng.set_pad(k, fx[f]["name"]):
-                now = time.time()
-                self.map_blink = {("fx", f): now, ("pad", k): now}
-                self.note_msg(f"Pad {k + 1} = {fx[f]['label']}")
-                self.check_rig()
-            else:
-                self.note_msg("No Bar Chaser to map: Shift + Note on a layer")
-            self.map_armed, self.map_focus = None, k
-            if self.select_held:
-                self.select_used = True
-            return True
-        self.map_focus = k
-        return False                                               # select + flash as usual
-
-    def _seq_pad(self, ij, velocity, down):
-        i, j = ij
-        with self.lock:
-            bt = self.beat_time() or 0.0
-            seq = self.seq
-            if self.mapping() and self._map_pad(ij, down):
-                return
-            if i < 4:                                              # steps, for every selected pad
-                step = i * 8 + j
-                if not down:
-                    self.held_steps.discard(step)
-                    return
-                if step >= seq.pattern.length:
-                    return
-                keys = self.sel_keys()
-                if self.delete_held:
-                    for key in keys:
-                        seq._steps(key).pop(step, None)
-                    seq.save()
-                    return
-                self.held_steps.add(step)
-                all_on = all(step in seq._steps(key) for key in keys)
-                level = 1.0 if self.accent else max(0.05, velocity / 127.0)
-                for key in keys:
-                    st = seq._steps(key)
-                    if all_on:
-                        st.pop(step, None)
-                    elif step not in st:
-                        st[step] = [level, None]
-                seq.save()
-            elif i == 4:                                           # patterns
-                if not down:
-                    return
-                p = self.pattern_index(j)
-                if self.presets_menu() and self.preset_pick:
-                    self._preset_pattern_pad(p)
-                    return
-                if self.delete_held:
-                    seq.clear_pattern(p)
-                elif self.paste_held:
-                    if self.dup_src is None:
-                        self.dup_src = p
-                    else:
-                        src, self.dup_src = self.dup_src, None
-                        seq.copy_pattern(src, p)
-                        self.note_msg(f"P{src + 1} copied to P{p + 1}")
-                else:
-                    seq.switch_pattern(p, bt, now=(seq.pending == p))   # same pad again = now
-            else:                                                  # pads 1-24
-                k = self.bar_index(i, j)
-                key = pad_key(k)
-                track = seq.track
-                if not down:
-                    if key in self.held_bars:
-                        seq.release(self.held_bars.pop(key), key, bt)
-                    return
-                if self.delete_held:
-                    seq.clear_steps(key)
-                    return
-                if self.select_held:
-                    self.select_used = True                    # no latch toggle on release
-                if self.multi or self.select_held:
-                    if k in self.sel_pads and len(self.sel_pads) > 1:
-                        self.sel_pads.discard(k)
-                    else:
-                        self.sel_pads.add(k)
-                else:
-                    self.sel_pads = {k}
-                self.held_bars[key] = track
-                seq.trigger(track, key, 1.0, None, bt)
-
-    def _seq_button(self, name, down):
-        """Buttons that mean something else while the pads are the sequencer. True = consumed."""
-        bt = self.beat_time() or 0.0
-        if name == DELETE_BUTTON:
-            self.delete_held = down
-            return True
-        if name == FIXED_LENGTH_BUTTON:
-            self.fixed_len_held = down
-            return True
-        if name == BROWSE_BUTTON:
-            if down:
-                self.browse_held, self.browse_used = True, False
-            else:
-                self.browse_held = False
-                if not self.browse_used:
-                    self.join_track(self.seq.track)
-            return True
-        if name == SELECT_BUTTON:                                  # tap = latch, hold = momentary
-            with self.lock:
-                if down:
-                    self.select_held, self.select_used = True, False
-                else:
-                    self.select_held = False
-                    if not self.select_used:
-                        self.multi = not self.multi
-            return True
-        if name in (LAYOUT_BUTTON, SCALE_BUTTON):
-            if down:
-                self.side = "groups" if name == LAYOUT_BUTTON else "grid"
-            return True
-        if name == PASTE_BUTTON:                                   # Duplicate: copy pattern
-            self.paste_held = down
-            if not down:
-                self.dup_src = None
-            return True
-        if name in LOWER_ROW and self.overlay is None and self.presets_menu():
-            if down:                                               # presets, not tracks: a preset is all four
-                with self.lock:
-                    self._preset_button(LOWER_ROW.index(name))
-            return True
-        seq_row = name in LOWER_ROW and self.overlay is None
-        if not down:
-            return name in (PLAY_BUTTON, REPEAT_BUTTON, ACCENT_BUTTON, DOUBLE_LOOP_BUTTON,
-                            OCTAVE_UP, OCTAVE_DOWN) or name in SCENE_BUTTONS or seq_row
-        with self.lock:
-            if name == PLAY_BUTTON:
-                if self.seq.running:
-                    self.seq.stop()
-                else:
-                    self.seq.start(bt)
-                return True
-            if name == REPEAT_BUTTON:
-                self.repeat = not self.repeat
-                return True
-            if name == ACCENT_BUTTON:
-                self.accent = not self.accent
-                return True
-            if name == DOUBLE_LOOP_BUTTON:
-                self.seq.double_loop()
-                return True
-            if name in (OCTAVE_UP, OCTAVE_DOWN):                   # MAPPING: fixture pages
-                if self.mapping():
-                    pages = max(1, math.ceil(len(self.engine.fixtures(self.seq.track)) / MAP_FIXTURES))
-                    step = 1 if name == OCTAVE_DOWN else -1
-                    self.map_page = max(0, min(pages - 1, self.map_page + step))
-                return True
-            if name in SCENE_BUTTONS:                              # top button = 1/32t / group 1
-                if self.side == "grid":
-                    self.seq.grid = name
-                else:
-                    self._group_button(SCENE_BUTTONS.index(name))
-                return True
-            if seq_row:
-                k = LOWER_ROW.index(name)
-                if self.fixed_len_held:
-                    self.seq.set_length((k + 1) * 4)
-                elif k < self.seq.n_tracks:
-                    if self.delete_held:
-                        self.seq.clear_steps(track=k)
-                    elif self.browse_held:
-                        self.browse_used = True
-                        self.join_track(k)
-                    else:
-                        self.seq.track = k
-                return True
-        return False
-
-    def _turn_seq(self, idx, inc):
-        names = SEQ_PAGES.get(self.mode, [])
-        if idx >= len(names):
-            return
-        name = names[idx]
-        seq, tr = self.seq, self.seq.pattern.tracks[self.seq.track]
-        fine = 0.2 if self.shift else 1.0
-        if self.held_steps and name in ("Gate", "Level"):         # hold step + knob, all selected pads
-            for key in self.sel_keys():
-                st = seq._steps(key)
-                for s_ in self.held_steps:
-                    if s_ in st:
-                        if name == "Level":
-                            seq.set_step_values(key, [s_], level=st[s_][0] + inc * 0.02 * fine)
-                        else:
-                            gate = st[s_][1] if st[s_][1] is not None else tr.gate
-                            seq.set_step_values(key, [s_], gate=gate + inc * 0.02 * fine)
-            return
-        e = tr.envelope
-        if name == "Attack":
-            e.attack = max(0.0, min(4.0, e.attack + inc * 0.05 * fine))
-        elif name == "Decay":
-            e.decay = max(0.0, min(4.0, e.decay + inc * 0.05 * fine))
-        elif name == "Sustain":
-            e.sustain = max(0.0, min(1.0, e.sustain + inc * 0.01 * fine))
-        elif name == "Release":
-            e.release = max(0.0, min(4.0, e.release + inc * 0.05 * fine))
-        elif name == "Gate":
-            tr.gate = max(0.1, min(1.0, tr.gate + inc * 0.02 * fine))
-        elif name == "Direction":
-            acc = self.choice_acc.get("seqdir", 0) + inc
-            if abs(acc) >= 4:
-                i = (DIRECTIONS.index(seq.pattern.direction) + (1 if acc > 0 else -1)) % len(DIRECTIONS)
-                seq.set_direction(DIRECTIONS[i])
-                acc = 0
-            self.choice_acc["seqdir"] = acc
-        elif name == "Length":
-            seq.set_length(seq.pattern.length + inc)
-        elif name == "Level":
-            tr.level = max(0.0, min(1.0, tr.level + inc * 0.01 * fine))
-        seq.save()
-
-    def turn_swing(self, inc):
-        with self.lock:
-            p = self.seq.pattern
-            p.swing = max(0.0, min(1.0, p.swing + inc * 0.02))
-            self.seq.save()
-
-    def _map_pad_colors(self):
-        """MAPPING lights: fixtures dim white, mapped ones in the track colour, the picked one blinking;
-        row 5 red; pads with a fixture in the track colour; a stored mapping blinks twice."""
-        seq, eng, now = self.seq, self.engine, time.time()
-        tc = seq.track % 8
-        fx = eng.fixtures(seq.track)
-        values = [eng.pad_name(seq.track, k) for k in range(24)]
-        used = set()
-        for v in values:
-            used.update(eng.fixtures_of_value(seq.track, v))
-        focus = set(eng.fixtures_of_value(seq.track, values[self.map_focus])) if self.map_focus is not None else set()
-        armed_pads = {k for k, v in enumerate(values)
-                      if self.map_armed is not None and self.map_armed in eng.fixtures_of_value(seq.track, v)}
-        lit = {key for (t, key), v in seq.levels.items() if t == seq.track and v > 0.02}
-        blink = int(now / BLINK) % 2 == 0
-
-        def double(key):
-            t0 = self.map_blink.get(key)
-            if t0 is None or now - t0 >= 4 * MAP_BLINK:
-                return None
-            return "white" if int((now - t0) / MAP_BLINK) in (0, 2) else "black"
-
-        grid = {}
-        for i in range(8):
-            for j in range(8):
-                if i < 4:
-                    f = self.map_page * MAP_FIXTURES + i * 8 + j
-                    if f >= len(fx):
-                        color = "black"
-                    else:
-                        color = double(("fx", f))
-                        if color is None:
-                            if self.map_armed == f:
-                                color = "white" if blink else "black"
-                            elif f in focus:
-                                color = f"L{tc}"
-                            else:
-                                color = f"L{tc}_dim" if f in used else "dark_gray"
-                elif i == 4:
-                    color = "red"
-                else:
-                    k = self.bar_index(i, j)
-                    color = double(("pad", k))
-                    if color is None:
-                        if pad_key(k) in lit or k == self.map_focus or k in armed_pads:
-                            color = f"L{tc}" if values[k] else "white"
-                        else:
-                            color = f"L{tc}_dim" if values[k] else "black"
-                grid[(i, j)] = color
-        return grid
-
-    def _seq_pad_colors(self):
-        if self.mapping():
-            return self._map_pad_colors()
-        grid = {}
-        seq = self.seq
-        pos = seq.position(self.beat_time() or 0.0)
-        keys = self.sel_keys()
-        tc = seq.track % 8
-        track_steps = [seq.pattern.tracks[seq.track].steps.get(key, {}) for key in keys]
-        lit = {key for (t, key), v in seq.levels.items()          # pads sounding on this track only
-               if t == seq.track and v > 0.02}
-        blink = int(time.time() / BLINK) % 2 == 0
-        presets = self.presets_menu()
-        misfit = set()
-        if presets:
-            r, _ = self.current_rig()
-            misfit = set(seq.mismatched(r.signature())) if r else set()
-        for i in range(8):
-            for j in range(8):
-                color = "black"
-                if i < 4:
-                    step = i * 8 + j
-                    if step < seq.pattern.length:
-                        n_on = sum(1 for st in track_steps if step in st)
-                        if step == pos:
-                            color = "green"
-                        elif n_on and n_on == len(track_steps):
-                            lv = min(st[step][0] for st in track_steps if step in st)
-                            color = f"L{tc}" if lv >= 0.66 else f"L{tc}_mid"
-                        elif n_on:
-                            color = f"L{tc}_dim"
-                        else:
-                            color = "dark_gray"
-                elif i == 4:
-                    p = self.pattern_index(j)
-                    has = any(t.steps for t in seq.patterns[p].tracks)
-                    t0 = self.map_blink.get(("pattern", p))
-                    if t0 is not None and time.time() - t0 < 4 * MAP_BLINK:        # stored: blinks twice
-                        color = "white" if int((time.time() - t0) / MAP_BLINK) in (0, 2) else "black"
-                    elif presets and self.confirm and self.confirm.get("slot") == p:
-                        color = "white"
-                    elif presets and self.preset_pick:
-                        color = "white" if blink else "black"                    # pick a slot
-                    elif seq.pending == p:
-                        color = "white" if blink else "dark_gray"
-                    elif presets and p in misfit:
-                        color = "orange"                                         # made for another rig
-                    else:
-                        color = "white" if p == seq.current else ("dark_gray" if has else "black")
-                else:
-                    k = self.bar_index(i, j)
-                    key = pad_key(k)
-                    if key in lit:
-                        color = f"L{tc}"
-                    elif not self.engine.pad_assigned(seq.track, k):
-                        color = "black"
-                    elif k in self.sel_pads:
-                        color = "light_gray"
-                    else:
-                        color = "dark_gray"
-                grid[(i, j)] = color
-        return grid
+            own = {p["id"] for i in self.engine.instances()             # our own Level writes: no echo
+                   for name, p in (i["fx"].get("params") or {}).items() if name.startswith("Level ") and is_param(p)}
+        return [pid for pid in ids if pid not in own]
 
     def poll_loop(self):
         session = requests.Session()
@@ -1213,7 +504,7 @@ class Bridge:
         spec = self.layer_spec(L)
         out = []
         if spec == "auto":
-            seen = set()
+            seen = set(self.engine.managed_ids())       # Bar Chaser params the bridge drives itself: no knob
             for scope, path in AUTO_SOURCES:
                 if scope != scope_wanted:
                     continue
@@ -1527,7 +818,7 @@ class Bridge:
                 self.taps = []
             self.taps = (self.taps + [now])[-8:]
             self.tap_count = 1 if len(self.taps) == 1 else self.tap_count + 1
-            self.beat_anchor = (now, (self.tap_count - 1) % 4)
+            self._align(now, (self.tap_count - 1) % 4)
             ev = resolve_node(self.comp, TAP_PATH) if self.comp else None
             if is_param(ev):
                 self.sender.event(ev["id"])
@@ -1538,22 +829,46 @@ class Bridge:
 
     def resync(self):
         with self.lock:
-            self.beat_anchor, self.taps, self.tap_flash = (time.time(), 0), [], time.time()
+            now = time.time()
+            self.taps, self.tap_flash = [], now
+            self._align(now, 0)
             ev = resolve_node(self.comp, RESYNC_PATH) if self.comp else None
             if is_param(ev):
                 self.sender.event(ev["id"])
 
-    def beat(self, now=None):
-        """(beat index in the bar 0-3, seconds since that beat) or None without a tempo."""
+    def beat_time(self, now=None):
+        """Continuous beats, or None without a tempo. A BPM change continues from the current beat
+        (it used to rescale the whole timeline, so slowing down threw the clock back by minutes)."""
         p = self.tempo_param()
-        bpm = float(self.value_of(p) or 0) if p else 0
+        bpm = float(self.value_of(p) or 0) if p else 0.0
         if bpm <= 0:
             return None
         now = now or time.time()
-        period = 60.0 / bpm
-        t0, b0 = self.beat_anchor
-        n = math.floor((now - t0) / period)
-        return (b0 + n) % 4, now - t0 - n * period
+        with self.lock:
+            c = self.clock
+            if c is None:
+                c = self.clock = (now, 0.0, bpm)
+            elif c[2] != bpm:
+                c = self.clock = (now, c[1] + (now - c[0]) * c[2] / 60.0, bpm)
+            return c[1] + (now - c[0]) * bpm / 60.0
+
+    def _align(self, now, index):
+        """Tap / resync: this moment is beat `index` (0-3) of a bar. The clock moves to the nearest such
+        beat, at most two beats away, so the sequencer keeps playing in the new phase instead of
+        waiting for a clock that was thrown back to 0."""
+        bt = self.beat_time(now)
+        if bt is None:
+            return
+        target = 4 * round((bt - index) / 4.0) + index
+        self.clock = (now, float(target), self.clock[2])
+
+    def beat(self, now=None):
+        """(beat index in the bar 0-3, seconds since that beat) or None without a tempo."""
+        bt = self.beat_time(now)
+        if bt is None:
+            return None
+        n = math.floor(bt)
+        return int(n) % 4, (bt - n) * 60.0 / self.clock[2]
 
     def touch(self, idx):
         with self.lock:
@@ -1592,17 +907,76 @@ class Bridge:
             self.bo_sent, self.bo_tries = now, 0
 
     def flash_layer(self, row, down):
+        """Button right of pad row `row` held = that layer's master at 100 %. The button owns the
+        flash: the layer and its master are captured at the press, so a scroll, a view switch or a
+        new composition in between cannot leave the layer at 100 %."""
         with self.lock:
+            if not down:
+                self._end_flash(row)
+                return
+            if row in self.flash:
+                return
             L = self.pad_to_cell(row, 0)[0]
             p = master_param(self.layer_json(L))
             if p is None:
                 return
-            if down and L not in self.flash:
-                self.flash[L] = float(self.value_of(p) or 0)
-                self._set(p["id"], 1.0, {"value": 1.0})
-            elif not down and L in self.flash:
-                v = self.flash.pop(L)
-                self._set(p["id"], v, {"value": v})
+            self.flash[row] = (p["id"], float(self.value_of(p) or 0), L)
+            self._set(p["id"], 1.0, {"value": 1.0})
+
+    # ---- momentary actions end with the control that started them ------------------------- #
+    def _end_flash(self, row):
+        f = self.flash.pop(row, None)
+        if f:
+            self._set(f[0], f[1], {"value": f[1]})
+
+    def _end_clip(self, ij):
+        cell = self.pressed.pop(ij, None)
+        if cell:
+            self.sender.trigger(*cell, False)
+
+    def _end_column(self, k):
+        n = self.col_pressed.pop(k, None)
+        if n is not None:
+            self.sender.column(n, False)
+
+    def _button_up(self, name):
+        """A button came up: end what its press began, whatever the screen shows now."""
+        with self.lock:
+            if name in SCENE_BUTTONS:
+                self._end_flash(SCENE_BUTTONS.index(name))
+            elif name in LOWER_ROW:
+                self._end_column(LOWER_ROW.index(name))
+
+    def release_all(self):
+        """Everything held is let go: flashes restored, pressed clips and columns released,
+        modifiers cleared, held steps and pads dropped. For a MIDI reconnect (push2-python drops the
+        first second of MIDI after a connect, so releases can be lost) and for shutdown."""
+        with self.lock:
+            for row in list(self.flash):
+                self._end_flash(row)
+            for ij in list(self.pressed):
+                self._end_clip(ij)
+            for k in list(self.col_pressed):
+                self._end_column(k)
+            for flag in set(HELD_FLAGS.values()):
+                setattr(self, flag, False)
+            self.held.clear()
+            self.ov_press.clear()
+            self.touched = None
+            self._release_seq_holds()
+
+    def _revalidate(self):
+        """A composition arrived: keep the grid and the selection inside it. A smaller deck loading
+        while scrolled up used to leave every pad black and the knobs on a clip that no longer existed."""
+        n_l, n_c = len(self.layers()), self.max_cols()
+        self.layer_offset = max(0, min(self.layer_offset, n_l - 8))
+        self.col_offset = max(0, min(self.col_offset, n_c - 8))
+        L, C = self.sel
+        L2 = max(1, min(L, n_l))
+        C2 = max(1, min(C, len((self.layer_json(L2) or {}).get("clips") or [])))
+        if (L2, C2) != self.sel:
+            self.sel = (L2, C2)
+            self.move_src, self.color_idx, self.fx_page = None, 0, 0
 
     def layer_flag(self, L, key):
         """layer.bypassed / layer.solo param (or None)."""
@@ -1665,28 +1039,34 @@ class Bridge:
             self.sender.select(L, C)               # show it in Resolume's clip panel too
             if not self.play_held or clip_state(clip) == "Empty":
                 return
-            self.pressed.add((L, C))
+            self.pressed[ij] = (L, C)
         self.sender.trigger(L, C, True)
 
     def pad_released(self, ij):
-        if self.view == "seq":
-            return self._seq_pad(ij, 0, False)
-        cell = self.pad_to_cell(*ij)
         with self.lock:
-            if cell not in self.pressed:
-                return
-            self.pressed.discard(cell)
-        self.sender.trigger(*cell, False)
+            self._end_clip(ij)                 # the pad owns its clip press, whatever the grid shows now
+        if self.view == "seq":
+            self._seq_pad(ij, 0, False)
 
     def button(self, name, down):
+        # Physical layer first: what is held is a fact about the hardware, not about the screen.
+        # A screen may react to a release but never swallow it (that is how Play, Delete and
+        # Browse stayed "held" after a view switch).
+        if down:
+            self.held.add(name)
+        else:
+            self.held.discard(name)
+            self._button_up(name)
+        flag = HELD_FLAGS.get(name)
+        if flag is not None:
+            setattr(self, flag, down)
+        if down and name == BROWSE_BUTTON:
+            self.browse_used = self.view != "seq"          # pressed outside SEQ: the release does nothing
+        if down and name == SELECT_BUTTON:
+            self.select_used = self.view != "seq"
         if name == "Shift":
-            self.shift = down
             return
         if name in OVERLAY_BUTTONS:                        # Mix / Mute / Solo: click = open, hold = peek
-            if name == MUTE_BUTTON:
-                self.mute_held = down                      # hold + pad = mute that layer
-            elif name == SOLO_BUTTON:
-                self.solo_held = down
             self.overlay_button(OVERLAY_BUTTONS[name], down)
             return
         if down:
@@ -1716,15 +1096,13 @@ class Bridge:
         if name in SCENE_BUTTONS:
             self.flash_layer(SCENE_BUTTONS.index(name), down)
             return
-        if name in LOWER_ROW and (self.play_held or not down):
-            n = self.col_offset + LOWER_ROW.index(name) + 1
-            if down:
-                self.col_pressed.add(n)
-                self.sender.column(n, True)
-                return
-            if n in self.col_pressed:
-                self.col_pressed.discard(n)
-                self.sender.column(n, False)
+        if name in LOWER_ROW and self.play_held and down:  # Play + button below = launch that column
+            k = LOWER_ROW.index(name)
+            n = self.col_offset + k + 1
+            if n > len((self.comp or {}).get("columns") or []):
+                return                                     # no such column (its light is off)
+            self.col_pressed[k] = n                        # released by _button_up, whatever the offset is then
+            self.sender.column(n, True)
             return
         if name == MOVE_BUTTON:
             self.convert_held = down
@@ -1768,7 +1146,7 @@ class Bridge:
                 self.menus[self.view] = (SEQ_MENUS if self.view == "seq" else CLIP_MENUS)[name]
                 self._clear_overlay()
                 self.move_src = None
-                self.map_armed = self.preset_pick = self.confirm = None
+                self.map_armed = self.confirm = self.load_armed = None
                 self.color_target = "clip"
             elif name == NOTE_BUTTON:
                 if self.shift:
@@ -1856,20 +1234,9 @@ class Bridge:
             blink = int(time.time() / BLINK) % 2 == 0
             mix_layers = self.mix_layers()
             fx_items = self.fx_page_items()[0] if self.mode in FX_MODES else []
-            q = self.question() if seq and self.overlay is None and self.presets_menu() else None
-            rig_ok = self.current_rig()[0] is not None if seq and self.presets_menu() else False
-            items = banks.presets(PRESET_BANK)
             for k, b in enumerate(LOWER_ROW):
                 if seq and self.overlay is None and self.presets_menu():
-                    i = k + (8 if self.shift else 0)
-                    if q:
-                        out[b] = "red" if k == CONFIRM_NO else ("green" if k == CONFIRM_YES else "black")
-                    elif i >= len(items):
-                        out[b] = "black"
-                    elif self.preset_pick == items[i][0]:
-                        out[b] = "white" if blink else "black"
-                    else:
-                        out[b] = "dark_gray" if rig_ok else "black"
+                    out[b] = self._presets_lower_color(k, blink)
                 elif seq and self.overlay is None:
                     if k < self.seq.n_tracks:
                         has = self.engine.ready(k)
@@ -1899,6 +1266,7 @@ class Bridge:
                 else:
                     out[b] = "black" if k >= pages else ("white" if k == self.page else "dark_gray")
             cur_g, tc = self.current_group(), self.seq.track % 8
+            flashed = {f[2] for f in self.flash.values()}
             for i, b in enumerate(SCENE_BUTTONS):
                 if seq and self.side == "grid":             # Scale: grid selection
                     out[b] = "white" if b == self.seq.grid else "dark_gray"
@@ -1915,7 +1283,7 @@ class Bridge:
                     continue
                 L = self.pad_to_cell(i, 0)[0]
                 out[b] = ("black" if self.layer_json(L) is None
-                          else f"L{(L - 1) % 8}" if L in self.flash else f"L{(L - 1) % 8}_dim")
+                          else f"L{(L - 1) % 8}" if L in flashed else f"L{(L - 1) % 8}_dim")
             all_l = range(1, len(self.layers()) + 1)
             any_mute = any(self.layer_flag(l, "bypassed") and self.value_of(self.layer_flag(l, "bypassed"))
                            for l in all_l)
@@ -2009,55 +1377,7 @@ class Bridge:
                      "on": None if byp is None else not self.value_of(byp),
                      "amount": fmt_value(amt, self.value_of(amt), {}) if amt else None}
                     for tag, name, byp, amt in items]}
-            seq = None
-            if self.view == "seq":
-                sq, tr = self.seq, self.seq.pattern.tracks[self.seq.track]
-                e = tr.envelope
-
-                def beats(v):
-                    return f"{v:.2f} b", min(1.0, v / 4.0)
-
-                def pct(v):
-                    return f"{v * 100:.0f}%", v
-
-                every = {"Attack": beats(e.attack), "Decay": beats(e.decay), "Sustain": pct(e.sustain),
-                         "Release": beats(e.release), "Gate": pct(tr.gate),
-                         "Direction": (sq.pattern.direction, 0.0),
-                         "Length": (f"{sq.pattern.length} steps", sq.pattern.length / 32),
-                         "Level": pct(tr.level)}
-                knobs = [(n,) + every[n] for n in SEQ_PAGES.get(self.menus["seq"], [])]
-                pads = [(k + 1, self.engine.short(sq.track, self.engine.pad_name(sq.track, k)) or "—")
-                        for k in sorted(self.sel_pads)]
-                mapping = None
-                if self.mapping():
-                    fxl = self.engine.fixtures(sq.track)
-                    names = [self.engine.pad_name(sq.track, k) for k in range(24)]
-                    pages = max(1, math.ceil(len(fxl) / MAP_FIXTURES))
-                    if self.map_armed is not None and self.map_armed < len(fxl):
-                        f = fxl[self.map_armed]
-                        title, sub = f"{f['label']} picked  ·  press a pad to store it", f["name"]
-                    elif self.map_focus is not None:
-                        v = names[self.map_focus]
-                        title = f"Pad {self.map_focus + 1} = {self.engine.short(sq.track, v) or '—'}"
-                        sub = v or "no fixture"
-                    else:
-                        title, sub = "Hold Select + a fixture, then press a pad", \
-                            f"{len(fxl)} fixtures on the top rows" if fxl else "no fixtures: save the Advanced Output preset"
-                    mapping = {"title": title, "sub": sub, "assigned": sum(1 for v in names if v),
-                               "fixtures": len(fxl), "page": self.map_page, "pages": pages}
-                ready = self.engine.ready(sq.track)
-                presets = self._presets_snapshot() if self.presets_menu() else None
-                seq = {"knobs": knobs, "menu": self.menus["seq"], "mapping": mapping, "presets": presets,
-                       "track": sq.track, "pattern": sq.pattern.name, "running": sq.running,
-                       "pos": sq.position(self.beat_time() or 0.0), "length": sq.pattern.length, "grid": sq.grid,
-                       "pads": pads, "layer": self.engine.layer_name(sq.track), "ready": ready,
-                       "env": {"attack": e.attack, "decay": e.decay, "sustain": e.sustain, "release": e.release,
-                               "gate": tr.gate},
-                       "pending": sq.pending, "swing": sq.pattern.swing,
-                       "group": self.group_label(*self.current_group()) if self.current_group() else None,
-                       "multi": self.multi or self.select_held,
-                       "select_held": self.select_held, "side": self.side,
-                       "warning": "" if ready else f"T{sq.track + 1}: no Bar Chaser — Shift + Note on a layer"}
+            seq = self._seq_snapshot() if self.view == "seq" else None
             return {
                 "seq": seq,
                 "fx": fx,
@@ -2096,6 +1416,10 @@ def apply_palette(push):
                                      rgb=[int(c * DIM) for c in rgb], allow_overwrite=True)
         push.set_color_palette_entry(PALETTE_BASE + 24 + k, f"L{k}_mid",          # slots 88..95
                                      rgb=[int(c * MID) for c in rgb], allow_overwrite=True)
+    for h, (hue, rgb) in enumerate(SECTION_RGB):                                     # slots 96..107
+        for s, (suffix, level) in enumerate(SECTION_SHADES):
+            push.set_color_palette_entry(SECTION_BASE + h * len(SECTION_SHADES) + s, f"S_{hue}{suffix}",
+                                         rgb=[int(c * level) for c in rgb], allow_overwrite=True)
     push.reapply_color_palette()
 
 
@@ -2122,15 +1446,29 @@ def run(cfg, rest, sim=False):
     def _display_connected(push):
         print("[push] display connected")
 
+    def safe(fn):
+        """Handlers run on push2-python's MIDI thread, where python-rtmidi swallows exceptions:
+        log them, or a bug would leave the Push half-updated in silence."""
+        @functools.wraps(fn)
+        def call(*args):
+            try:
+                fn(*args)
+            except Exception:
+                traceback.print_exc()
+        return call
+
     @push2_python.on_pad_pressed()
+    @safe
     def _pad_down(push, pad_n, pad_ij, velocity):
         bridge.pad_pressed(pad_ij, velocity)
 
     @push2_python.on_pad_released()
+    @safe
     def _pad_up(push, pad_n, pad_ij, velocity):
         bridge.pad_released(pad_ij)
 
     @push2_python.on_encoder_rotated()
+    @safe
     def _enc_turn(push, name, inc):
         if name in TRACK_ENCODERS:
             bridge.turn(TRACK_ENCODERS.index(name), inc)
@@ -2142,20 +1480,24 @@ def run(cfg, rest, sim=False):
             bridge.turn_swing(inc)
 
     @push2_python.on_encoder_touched()
+    @safe
     def _enc_touch(push, name):
         if name in TRACK_ENCODERS:
             bridge.touch(TRACK_ENCODERS.index(name))
 
     @push2_python.on_encoder_released()
+    @safe
     def _enc_release(push, name):
         if name in TRACK_ENCODERS:
             bridge.untouch(TRACK_ENCODERS.index(name))
 
     @push2_python.on_button_pressed()
+    @safe
     def _btn_down(push, name):
         bridge.button(name, True)
 
     @push2_python.on_button_released()
+    @safe
     def _btn_up(push, name):
         bridge.button(name, False)
 
@@ -2170,11 +1512,12 @@ def run(cfg, rest, sim=False):
     bridge.sender.start()
     threading.Thread(target=bridge.seq_loop, daemon=True).start()
 
-    print(f"Bridge running → {rest.url}   (Ctrl+C to quit)")
+    print(f"Bridge {__version__} running → {rest.url}   (Ctrl+C to quit)")
     if sim:
         print("Simulator: http://localhost:6128")
 
     pad_cache, btn_cache, palette_ok, display_warned = {}, {}, False, False
+    led_warned = 0.0
     swatch_cache = None
     started, midi_warned = time.time(), False
     dt = 1.0 / float(cfg.get("display_fps", 20))
@@ -2193,6 +1536,7 @@ def run(cfg, rest, sim=False):
             if bridge.midi_reset:
                 palette_ok, pad_cache, btn_cache, bridge.midi_reset = False, {}, {}, False
                 swatch_cache = None
+                bridge.release_all()                       # a release may have been lost around the reconnect
             if push.midi_is_configured():
                 if not palette_ok:
                     apply_palette(push)
@@ -2207,14 +1551,19 @@ def run(cfg, rest, sim=False):
                     swatch_cache = swatches
                     for b in LOWER_ROW:
                         btn_cache.pop(b, None)
-                for name, color in bridge.button_colors().items():
-                    if btn_cache.get(name) != color:
-                        push.buttons.set_button_color(name, color)
-                        btn_cache[name] = color
-                for ij, color in bridge.pad_colors().items():
-                    if pad_cache.get(ij) != color:
-                        push.pads.set_pad_color(ij, color)
-                        pad_cache[ij] = color
+                try:                                       # a bug here must not stop the loop (and the display)
+                    for name, color in bridge.button_colors().items():
+                        if btn_cache.get(name) != color:
+                            push.buttons.set_button_color(name, color)
+                            btn_cache[name] = color
+                    for ij, color in bridge.pad_colors().items():
+                        if pad_cache.get(ij) != color:
+                            push.pads.set_pad_color(ij, color)
+                            pad_cache[ij] = color
+                except Exception:
+                    if time.time() - led_warned > 5:
+                        traceback.print_exc()
+                        led_warned = time.time()
             bridge.blackout_watchdog()
             if t0 >= next_frame:
                 next_frame = t0 + dt
@@ -2229,6 +1578,8 @@ def run(cfg, rest, sim=False):
     except KeyboardInterrupt:
         print("\nBye.")
         try:
+            bridge.shutdown()                              # held controls released, levels 0, chases.yaml written
+            time.sleep(0.4)                                # let the Sender and the WebSocket deliver that
             push.pads.set_all_pads_to_color("black")
         finally:
             push.stop_active_sensing_thread()
@@ -2266,6 +1617,15 @@ def dump(rest, layer_no, col_no=None):
     print("\nCopy a path into config.yaml, e.g.  - {label: Scale, path: <path>, scope: clip}\n")
 
 
+def plugin_bundle():
+    """The Bar Chaser bundle to install: next to the script in a release folder, else the build's."""
+    here = Path(__file__).resolve().parent
+    for p in (here / "Bar Chaser.bundle", here / "plugin" / "dist" / "Bar Chaser.bundle"):
+        if p.is_dir():
+            return p
+    return here / "plugin" / "dist" / "Bar Chaser.bundle"
+
+
 def install_plugin(bundle):
     """Copy the built Bar Chaser bundle into ~/Documents/Resolume Arena/Extra Effects."""
     import shutil
@@ -2299,7 +1659,8 @@ def load_config(path):
 
 def main():
     ap = argparse.ArgumentParser(description="Ableton Push 2 → Resolume Arena bridge")
-    ap.add_argument("--config", default=str(Path(__file__).with_name("config.yaml")))
+    ap.add_argument("--config", default=None,
+                    help="settings file (default: config.yaml in ~/Documents/Resolume Arena/Push 2, seeded from the repo's)")
     ap.add_argument("--dump", type=int, metavar="LAYER", help="list parameter paths for a layer and exit")
     ap.add_argument("--clip", type=int, metavar="COLUMN", help="clip column to list with --dump")
     ap.add_argument("--sim", action="store_true", help="run push2-python's browser simulator")
@@ -2307,14 +1668,16 @@ def main():
                     help="try every Resolume call on this (spare) layer, undo each, report OK/FAIL")
     ap.add_argument("--check-columns", action="store_true", help="with --check: also launch a column")
     ap.add_argument("--install-plugin", nargs="?", const="", metavar="BUNDLE",
-                    help="copy the Bar Chaser effect into Resolume's Extra Effects folder (default: plugin/dist/Bar Chaser.bundle)")
+                    help="copy the Bar Chaser effect into Resolume's Extra Effects folder "
+                         "(default: Bar Chaser.bundle next to this script, else plugin/dist/)")
+    ap.add_argument("--version", action="version", version=f"Push 2 → Resolume bridge {__version__}")
     args = ap.parse_args()
 
-    cfg = load_config(args.config)
-    rest = Resolume(cfg["resolume"]["host"], cfg["resolume"]["port"])
     if args.install_plugin is not None:
-        install_plugin(args.install_plugin or str(Path(__file__).with_name("plugin") / "dist" / "Bar Chaser.bundle"))
+        install_plugin(args.install_plugin or str(plugin_bundle()))
         return
+    cfg = load_config(paths.config_path(args.config))
+    rest = Resolume(cfg["resolume"]["host"], cfg["resolume"]["port"])
     if args.check:
         from resolume_check import Checker
         ok = Checker(cfg["resolume"]["host"], cfg["resolume"]["port"], args.check).run(args.check_columns)

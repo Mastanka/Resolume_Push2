@@ -2,7 +2,8 @@
 
 Python app that turns an **Ableton Push 2** (without Ableton Live) into a clip launcher and
 parameter controller for **Resolume Arena**, with a custom UI on the Push display.
-Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now in iterative development.
+Status: **1.0.0** (`__version__` in `push_resolume_bridge.py`, `CHANGELOG.md`, `Release/`). Earlier versions
+confirmed on real hardware by the owner, Štefan. Now in iterative development.
 
 ## Owner & rig context
 
@@ -18,7 +19,11 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 
 | File | Purpose |
 |---|---|
-| `push_resolume_bridge.py` | Entry point: constants, `Bridge` (state + input), `run()`, `--dump`, config |
+| `push_resolume_bridge.py` | Entry point: `Bridge` (state + input, clip view, overlays, blackout), `run()`, `--dump`, config |
+| `constants.py` | Control names (push2-python's), menus, knob tables, palette slots, tuning constants |
+| `seq_screen.py` | `SeqMixin`: SEQ view (steps, pattern row, pads, groups, SEQ knobs, `seq_loop`, `_seq_snapshot`), SEQ state in `_init_seq` |
+| `seq_mapping.py` | `MappingMixin`: the MAPPING menu |
+| `seq_presets.py` | `PresetsMixin`: rig detection, the PRESETS menu (recipe grid, macros, drafts, preview, Apply / Revert / Re-fit / Load bank) |
 | `resolume_api.py` | Resolume JSON helpers (`resolve_node`, `walk`, colour helpers), REST client, `Sender` |
 | `resolume_check.py` | `--check LAYER`: tries every Resolume call on a spare layer, undoes it, prints OK/FAIL |
 | `colors.yaml` | Own COLOR palette (Shift + BD saves), Štefan's show data |
@@ -26,23 +31,34 @@ Status: **v0.1 working on real hardware** (confirmed by the owner, Štefan). Now
 | `sequencer.py` | SEQ logic, pure: bars from the Advanced Output preset XML, `Envelope`, `Track` / `Pattern`, `Sequencer` (editing, `tick()`, `chases.yaml`) |
 | `chaser_engine.py` | `PluginEngine`: levels → `Level n` params of the Bar Chaser effect instances (grouped by their `Track`); one shared pad mapping (`sync_pads`, run by `Bridge.set_comp`; `set_pad`) |
 | `rig.py` | SEQ presets: the mapped pads in physical order with long (D) / short (S) roles, from the Advanced Output preset (`preset_rects` = Python twin of `plugin/src/Preset.cpp`) |
-| `banks.py` | SEQ presets: the 16 Techno recipes in role space, `realize()` onto a rig, `refit()`, `presets()` |
+| `banks.py` | SEQ presets: the 16 Techno recipes in role space with tiers, `Mulberry32` (same PRNG as `docs/preview/preview_page.html`), `realize()` with macros, `morph()` (Strobe), `refit()`, `set_macros()`, `presets()`. Keep it bit-identical to the page's engine |
 | `plugin/` | The **Bar Chaser** FFGL effect (C++, CMake, vendored FFGL SDK lib + pugixml). `plugin/build.sh` → `plugin/dist/Bar Chaser.bundle`; `ctest` runs the preset-parser test and an offscreen GL host test |
 | `chases.yaml` | Sequencer patterns, Štefan's show data |
 | `tests/test_sequencer.py` | Pure tests for `sequencer.py` (no mock) |
 | `tests/test_engine.py` | `PluginEngine`, shared mapping, PRESETS and screens through a `Bridge`, REST calls, against the mock |
 | `tests/test_banks.py` | Rig detection and every recipe on 110 rigs; Python preset reader = plugin names |
+| `tests/test_states.py` | Stuck-state regressions (flash / Play / Delete across views, held clip across a scroll, deck switch, held step), engine flush, deferred save, preset `source`, plus a short random walk. Pure |
+| `tests/test_helpers.py` | `resolve_node` / `walk` / `fmt_value` / colour helpers, one render per screen, REST retry scope, WebSocket outbox bound. Pure |
+| `tests/fuzz_states.py` | State fuzzer: random physically consistent events against a `Bridge` with a synthetic composition, invariants after each; reports (exit 0). `python tests/fuzz_states.py 16 2500` ≈ 15 s |
 | `tests/fixtures/rig/mock_rig.xml` | Advanced Output preset matching the mock's Bar Chaser fixtures (tests set `sequencer.preset_folder` here) |
 | `tests/fixtures/preset_small.xml` | 4-screen Advanced Output preset for the plugin tests |
-| `config.yaml` | Resolume host/port, grid offsets, encoder steps, per-layer parameter slots |
+| `config.yaml` | Resolume host/port, grid offsets, encoder steps, per-layer parameter slots. The live copy is in the data folder (`paths.py`), seeded once from this one |
+| `paths.py` | The bridge's own folder `~/Documents/Resolume Arena/Push 2/` (`PUSH2_DATA_DIR` overrides): config.yaml, pins.yaml, colors.yaml, chases.yaml; files next to the script are copied there once |
 | `pins.yaml` | Param order for auto layers, written by the bridge (Convert move). Štefan's show data |
 | `docs/specs/` | Short design specs per feature |
 | `requirements.txt` | push2-python (from git), pycairo, numpy, requests, PyYAML |
 | `README.md` | User-facing setup and controls |
 | `LICENSE` | MIT |
+| `CHANGELOG.md` | One entry per version (MAJOR.MINOR.PATCH) |
+| `Release/` | **Generated, never edit.** The current version: the modules `push_resolume_bridge.py` imports, config.yaml + pins.yaml seeds, requirements, README (with an install header), the prebuilt `Bar Chaser.bundle`, `setup.sh`, `start.command`, `VERSION` |
+| `tools/make_release.py` | Rebuilds `Release/` (runs `plugin/build.sh` unless `--skip-plugin`; keeps `Release/.venv`; smoke-tests that the folder imports on its own) |
 | `docs/promo/` | 5 presentation PNGs + `make_promo.py` (needs `pip install segno`) |
 | `.github/ISSUE_TEMPLATE/` | Idea + bug templates |
-| `tests/mock_resolume.py` | Fake Resolume REST server (port 8080) with a small composition |
+| `tests/mock_resolume.py` | Fake Resolume REST + WebSocket server (port 18080, `MOCK_PORT`) with a small composition; test-control endpoints `_new_composition`, `_delete_layer`, `_options`, `_drop_puts` |
+| `tests/sim_arena.py` | In-process Arena simulator (Arena's id behaviour, the REST calls, `user_*` edits, WebSocket-style delivery, virtual clock); `make_bridge`, `settle` |
+| `tests/test_scenarios.py` | 45 scenario tests on the simulator: layers, Bar Chaser add / remove / Track / fold, composition switch / new / empty, blackout, held controls, fixtures, broken preset, presets, tempo, subscriptions, plus a structural random walk |
+| `tests/fuzz_arena.py` | Structural fuzzer: random Push input + random Arena edits; checkpoints check nothing stays lit, the mapping is consistent, no writes to ids that are gone. `python tests/fuzz_arena.py 16 2000` ≈ 20 s |
+| `tests/soak_mock.py` | Every thread running (real `run()`, fake Push) against the mock over HTTP + WebSocket while a driver changes the composition; `python tests/soak_mock.py 60` |
 | `tests/test_fake_push.py` | Runs the real `run()` loop with a fake Push object; asserts it works |
 | `tests/render_preview.py` | Renders the display to PNG for visual checks |
 
@@ -124,30 +140,51 @@ overlays. Parameter page is per menu (`Bridge.page` property over `_pages`).
   `Opacity` param, BD = `bypassed`. Page ◀▶ = `fx_page`. Composition effects are in no menu (Master
   button reaches the composition colour).
 - **seq_env / seq_settings / seq_presets / seq_mapping** (Note view, BU1–4): knobs from `SEQ_PAGES` (hold
-  step + Gate / Level knob = that step). **PRESETS** (`Bridge.presets_menu()`, spec
-  `docs/specs/2026-09-27-seq-presets-design.md`): BD1–8 = presets of `banks.presets()` (Shift 9–16)
-  instead of tracks; `preset_pick` blinks with the pattern row; a pattern pad stores it
-  (`_store_preset`: `banks.realize` on `current_rig()`, new seed, `Sequencer.store_pattern`, grid 1/16)
-  or asks (`confirm`, BD7 NO / BD8 YES). `Pattern.source` = {bank, recipe, seed, rig}; step edits
-  clear it (`mark_edited`, also in `_seq_pad`). `check_rig()` after every composition / MAPPING change:
-  loaded composition → `Sequencer.refit` at once; otherwise `refit_offer` → PRESETS asks. Misfit
-  pattern pads orange in PRESETS. **MAPPING** (`Bridge.mapping()`,
+  step + Gate / Level knob = that step). **PRESETS** (`seq_presets.py`, `PresetsMixin`; spec
+  `docs/specs/2026-09-28-seq-banks-dramaturgy-macros-preview.md` + its "As built" section): rows 1–4 columns
+  1–4 = the 16 recipes (`banks.BANKS[PRESET_BANK]`, row = bank, column = energy) → `_preset_recipe_pad` makes
+  a **draft** `Bridge.drafts[slot] = {recipe, seed, macros}` for `Bridge.preset_slot` (row 5 selects it
+  without switching live: `_preset_pattern_pad`; the same pad again = normal switch). K1–K5 macros, K6 seed
+  (Shift ±1), K7 bank (`_preset_turn`; Select held = every preset slot). BD1 Apply (`_apply`: same recipe →
+  `banks.set_macros`, else `banks.realize`; `Sequencer.apply` = at the pattern's next phrase boundary when live and running
+  (`pending_apply`); an own pattern with steps → `confirm`, BD7 NO / BD8 YES), BD2 Revert, BD3 Re-fit
+  (`_refit_now`, blinks on `refit_offer`), BD4 Load bank twice within `LOAD_DOUBLE` (`Sequencer.load_bank`
+  keeps own patterns). **Preview:** `Bridge.preview` (a second `Sequencer`, no path) plays the draft;
+  `preview_tick(bt)` from `seq_loop` fills `preview_levels` for the display strip; nothing is sent.
+  `Pattern.source` = {bank, recipe, seed, macros, rig}; step edits clear it (`mark_edited`, via
+  `Sequencer.toggle_steps` / `remove_steps`, which `_seq_pad` uses). `check_rig()` after every composition /
+  MAPPING change: loaded composition → `Sequencer.refit` at once; otherwise `refit_offer` (BD3 blinks). Misfit
+  pattern pads pink, the edited slot white, slots with a draft light grey. **MAPPING** (`seq_mapping.py`,
   `_map_pad`, `_map_pad_colors`): rows 1–4 = the track's fixtures from the effect's Pad options
   (`chaser_engine.fixture_list`: "Screen / slice" entries grouped by screen → L#F#, a screen without
-  fixture entries = one fixture), row 5 red, rows 6–8 = pads. Select + fixture = `map_armed` (blinks),
+  fixture entries = one fixture), row 5 orange, rows 6–8 = pads. Select + fixture = `map_armed` (blinks),
   then pad = `PluginEngine.set_pad` on every instance, all tracks (shared mapping), double blink
-  (`map_blink`); Delete + pad = "—"; Octave = `map_page` (32 fixtures per page). Otherwise rows 1–4 steps, row 5 patterns 1–8 (Shift 9–16), rows 6–8 pads 1–24
+  (`map_blink`); Delete + pad = "—"; Octave = `map_page` (32 fixtures per page). Shift held: rows 6–8 show the
+  rig roles (kick bars `S_red`), Shift + pad = `_toggle_kick` → `Sequencer.kick_pads` (chases.yaml) → `build_rig`
+  override `kick` (source "push"; all used pads = `Rig.shared`, D = S = every bar). **Track folding:**
+  `PluginEngine.route(t)` = own track, else partner (T1↔T2, T3↔T4), else the lowest track with an instance;
+  folded tracks share `Level n`, `_src` sends the maximum (`sequencer.fold_tracks`, default on). Otherwise rows 1–4 steps, row 5 patterns 1–8 (Shift 9–16), rows 6–8 pads 1–24
   (bottom-left = 1). `Bridge.sel_pads` = multi-selection (`Bridge.multi`: Select latch, or Select held →
   pad toggles); steps act on all selected pads. Buttons right of the pads: `Bridge.side` = "groups"
   (Layout, default) → pad groups: `Sequencer.track_groups[track]` (G, Select + button, track colour)
   shadow `Sequencer.groups` (GG, global, Select + Shift + button, white); `Sequencer.group(g, track)`;
   Delete (+ Shift) clears; tap recalls; `current_group()` = ("track" | "global", g) lit fully. Or "grid"
   (Scale). Groups only select pads: steps stay on their track (isolation). Pads flash only for the
-  selected track. **Pad mapping (shared by all tracks):** `Sequencer.pad_config` = 24 fixture names,
+  selected track. **SEQ pad colours by section** (`SECTION_RGB`, palette slots 96–107): rows 1–4 steps = shades of red
+  (`S_red` on, `_mid` low level / on for some, `_off` off; green playhead), row 5 patterns = orange (`S_orange` current,
+  `_dim` has steps, `_off` empty, blinking queued, `pink` = made for another rig), rows 6–8 pads = yellow (`S_yellow`
+  sounding, `_mid` selected, `_dim` has a fixture, black none). **Pad mapping (shared by all tracks):** `Sequencer.pad_config` = 24 fixture names,
   saved in `chases.yaml`; `PluginEngine.sync_pads()` keeps it on every instance: a pad changed in
   Arena on any instance becomes the mapping (own writes pending `PENDING` s), new instances get it, a
   new composition master id = a loaded composition → T1's mapping (else the first instance's) is
   written to the others. Returns True for a loaded composition. BD1–4 = texture tracks = layers carrying a **Bar Chaser** effect with that `Track`.
+  A Bar Chaser on a clip counts only while that clip plays (`instances()` → `live`; `engine.parked(t)` = the
+  track's only effects sit on stopped clips: it folds, the display says so; its Level params get 0).
+  **Patterns and phrases:** every pattern keeps its own grid (`Pattern.grid`; `Sequencer.grid` is a property
+  over the current pattern; preset dicts and old files = 1/16). A queued pattern or a waiting Apply starts on its
+  own phrase: `phrase_beats(p)` = its length when that is whole bars, else one bar, counted from Play
+  (`Sequencer.origin`); a 2-bar preset therefore lands on every other bar. "Now" (same pattern pad again) joins
+  at the step its phrase has reached. Stop drops a queued pattern (a waiting Apply lands).
   Knobs = the selected track's ADSR + Gate + Level and the pattern's Direction + Length. `Bridge.seq`
   (`Sequencer`, bars named `pad 1`…`pad 24`), `Bridge.engine` (`PluginEngine`), `seq_loop` thread at
   100 Hz → `engine.set_level` → WebSocket `set` of the instance's `Level n`. Shift + Note = add the
@@ -158,7 +195,9 @@ overlays. Parameter page is per menu (`Bridge.page` property over `_pages`).
   K1 = top visible layer, going down; K11 = `composition.master`. BD = mute (mix: Solo held = solo;
   solo: solo). In the SEQ view the pads stay the sequencer; the SEQ track buttons return with the menu.
 - Always: blackout (`Bridge.blackout` = saved master), flash (`Bridge.flash`), beat clock
-  (`beat_anchor` from taps / resync + Resolume BPM → `beat()`), short messages (`note_msg`).
+  (`Bridge.clock` = (time, beat, bpm) of the last rebase: `beat_time()` continues from the current beat on a
+  BPM change, `_align()` moves it to the nearest matching beat (≤ 2 beats) on Tap / resync; never reset to 0,
+  which used to freeze the sequencer), short messages (`note_msg`).
 
 ## Architecture
 
@@ -173,12 +212,39 @@ main thread (run loop)   ──► LEDs at 50 Hz (diffed vs cache, beat edges) +
 ```
 
 - `ResolumeWS` subscribes by id to `Bridge.desired_ids()` (states, masters, tempo, selected clip/layer,
-  composition effects), re-synced every 0.5 s. `Bridge.index` = id → node, rebuilt by `set_comp`.
+  composition effects; never the Bar Chaser `Level n` params the bridge writes itself), re-synced every 0.5 s. `Bridge.index` = id → node, rebuilt by `set_comp`.
 
 - **All MIDI output (pad/button colours, palette) happens in the main thread** — push2-python/mido
   requirement. Callbacks only change state.
 - `Bridge.overrides` holds values we just sent for 0.8 s so the display doesn't jump back to stale
   polled values while an encoder is turning.
+- **Physical layer** (top of `Bridge.button()`): `Bridge.held` + the `HELD_FLAGS` flags are set for every press and
+  release before any screen sees the event, so a screen can react to a release but never swallow it. **Momentary
+  actions** are keyed by the control that started them, target captured at the press: `flash[row] = (master id,
+  value, layer)`, `pressed[pad] = (layer, column)`, `col_pressed[button] = column`; `_button_up` / `_end_clip` end them
+  whatever the grid shows now. `release_all()` on MIDI (re)connect and at quit (push2-python drops the first second of
+  MIDI after a connect). `_revalidate()` in `set_comp` clamps the grid offsets and the selection to the composition.
+  `tests/fuzz_states.py` checks these invariants on random event walks; `tests/test_states.py` holds the reproductions.
+- **Composition changes** (`set_comp`): `PluginEngine.sync_pads` returns True for a newly opened composition →
+  `_composition_opened()` (flashes / held clips / columns of the old one end without writes, the blackout is
+  re-armed on the new master), `_revalidate()`, `check_rig(loaded)`. **Levels** (`PluginEngine`): `_levels[(track,
+  pad)]` is what the sequencer wants; `_feeds[pid]` = (pad, tracks shown there) is rebuilt on every routing change
+  (an instance added / removed, a Track changed, fold) by `_sync_routing`, which re-pushes every Level param: no bar
+  stays lit on a layer that no longer plays it and ids that are gone are never written. `instances()` caches where
+  the effects are per composition and reads Track live. An instance whose dropdown only offers "—" (preset not
+  readable) never becomes or donates the mapping (`has_fixtures`); a pad edit merges only the pads that changed.
+  Every full composition goes to `PluginEngine.observe`: the next `flush` resends where Arena shows something
+  else than the desired level (a lost set, a bar lit before the start or saved lit). `Bridge.shutdown()` (quit)
+  stops the sequencer, sets every level to 0 and writes chases.yaml. `ResolumeWS` keeps one waiting value per
+  parameter and clears it when the socket drops.
+- **chases.yaml writes** are versioned snapshots through a temporary file + rename (two threads write; an older
+  snapshot never wins); a file that can't be read is copied to `chases.yaml.bad-<time>` first (`load_error`).
+  An Apply waiting for the bar is `Sequencer.pending_apply = (slot, Pattern)`; `slot_pattern()` is what PRESETS
+  edits; `landed` makes seq_step reload the preview.
+- **Deferred saves**: knob ticks and step presses call `Sequencer.save_later()`; `seq_loop` writes `chases.yaml`
+  `SAVE_DELAY` (0.2 s) after the last change, outside the lock (`take_dirty()` + `write()`); single actions (`store_pattern`,
+  groups, pad mapping) still `save()` at once; quit flushes. `PluginEngine.flush()` (each `seq_loop` tick) sends the
+  levels the rate limiter held back, so no flash is ever dropped.
 - Parameter slots are recomputed from the polled JSON every frame (`Bridge.slots()`), so
   renames/reorders in Resolume are picked up automatically.
 
@@ -238,7 +304,9 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
   checked against the mock and `--dump`, not every Resolume source/effect type.
 - Big ranges (Transform Position X ±16384) are too coarse at 1 %/tick — handled per slot with `step`/`range`.
   `tempo_tap` uses the same event call as `resync` (verified), its effect on BPM is untested.
-- Beat phase on the Push comes from the taps / resync (`beat_anchor`); Resolume doesn't expose its phase.
+- Beat phase on the Push comes from the taps / resync (`Bridge._align`); Resolume doesn't expose its phase.
+- A newly opened composition is detected by a new composition master id (`PluginEngine.sync_pads`). Verified
+  on the mock and the simulator only: that Arena gives a new or re-opened composition new ids is assumed.
 - A new full composition only arrives on WS connect (and maybe on structure changes); the REST
   refresh every `ws_refresh` s catches added/removed clips.
 - `stop_column: N` in config.yaml is a fallback for stopping; not needed on 7.23 (`/clear` works).
@@ -255,9 +323,11 @@ pressed on that layer. `layers.<n>: auto` fills slots from `AUTO_SOURCES`.
 
 ## Bar Chaser plugin (plugin/)
 
-FFGL 2.1 effect, universal bundle. 55 params: `Preset` (text), `Reload` (event), `Track` (1–4),
+FFGL 2.1 effect, universal bundle. 56 params: `Preset` (text), `Reload` (event), `Track` (1–4),
 `Master`, `Edge`, `Outside`, `Mode` (Texture / Solid / Show pads), `Pad 1..24` (option, elements from the
-Advanced Output preset via `SetParamElements`), `Level 1..24`. Hosts reset every param to its declared
+Advanced Output preset via `SetParamElements`), `Level 1..24`, `Geometry` (read-only text, last so older
+compositions keep their indices: "WxH|name:left,top,width,height|…" for every dropdown entry; the bridge reads
+it through the API instead of the preset file, `rig.parse_geometry`; not yet verified on Arena). Hosts reset every param to its declared
 default after creation, so defaults must carry the initial pad assignment. `plugin/tests/host_test.cpp`
 is a tiny CGL host: loads the bundle, feeds a red/green picture, checks pass-through, masking, solid,
 show pads. Build needs Xcode CLT + `brew install cmake`. Verified on Arena 7.23.2 (2026-09-27): loads
@@ -273,8 +343,15 @@ twice for one index (set `FindParamInfo(i)->defaultFloatVal` instead).
 
 Always run before handing changes back:
 ```
-python tests/mock_resolume.py &
+python tests/mock_resolume.py &     # listens on 127.0.0.1:18080 (MOCK_PORT), never 8080: see below
 python tests/test_sequencer.py      # pure logic, no mock needed
+python tests/test_states.py         # stuck-state regressions + random walk, no mock needed
+python tests/test_helpers.py        # JSON helpers, render per screen, retry / outbox, no mock needed
+python tests/test_presets.py        # PRESETS: drafts, macros, preview, Apply / Revert / Re-fit / Load bank, no mock needed
+python tests/test_paths.py          # data folder
+python tests/test_scenarios.py      # Arena simulator: composition / effect / fixture / tempo scenarios + structural walk
+python tests/fuzz_arena.py 16 2000  # structural fuzzer (reports; 0 crashes, 0 violations expected)
+python tests/soak_mock.py 60        # every thread against the mock over HTTP + WebSocket (starts its own mock)
 python tests/test_banks.py          # presets: rigs × recipes, no mock needed
 plugin/build.sh                     # C++: builds the bundle and runs ctest (preset parser + GL host test)
 python tests/test_engine.py         # restart the mock before each script: they change its composition
@@ -284,8 +361,13 @@ python tests/render_preview.py      # then look at tests/preview_*.png for displ
 python -c "import ast; ast.parse(open('push_resolume_bridge.py').read(), feature_version=(3,9))"
 ```
 Extend `tests/mock_resolume.py` when touching new parts of the JSON. The test scripts refuse to run
-unless `GET /product` says "Mock Resolume" (the mock binds 127.0.0.1:8080 even while Arena runs on *:8080). Final check is always on the
+unless `GET /product` says "Mock Resolume". **The mock and the tests use port 18080** (`MOCK_PORT` overrides): a mock
+on 127.0.0.1:8080 would answer every loopback client of a running Arena, including a live bridge. Final check is always on the
 real Push + Arena, done by Štefan.
+
+**Releases:** bump `__version__` (PATCH = fixes, MINOR = features, MAJOR = show files / Arena setup must be
+redone), add a `CHANGELOG.md` entry, commit, run `python tools/make_release.py`, commit `Release/` separately
+(its README names the source commit). Never edit `Release/` by hand; a new module is picked up through the imports.
 
 ## Backlog (ideas, not commitments)
 

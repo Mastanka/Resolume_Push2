@@ -171,7 +171,7 @@ after every MAPPING change (`Bridge.check_rig()`):
 - **Rig changed during the show** (MAPPING, a new Advanced Output preset): not re-fitted on its own,
   because a re-fit moves every hit. The display says `Rig changed · re-fit in PRESETS` once, and the
   PRESETS menu asks `Rig changed: re-fit 3 preset patterns to it?` with NO / YES.
-- In PRESETS, pattern pads made for another rig light **orange**, and the rig line lists them.
+- In PRESETS, pattern pads made for another rig light **pink** (the pattern row itself is orange), and the rig line lists them.
 
 ## 6. Push: PRESETS menu (SEQ, button 3 above the display)
 

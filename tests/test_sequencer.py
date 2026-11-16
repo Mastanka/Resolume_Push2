@@ -176,6 +176,108 @@ def test_presets():
     assert S.Sequencer(path).pad_config == ["Bar B"]
 
 
+def test_a_broken_file_is_kept_aside_not_overwritten():
+    import tempfile
+    d = Path(tempfile.mkdtemp())
+    path = d / "chases.yaml"
+    path.write_text("patterns: :\n  - name: MY SHOW\n")
+    seq = S.Sequencer(path)
+    assert seq.load_error and "MY SHOW" not in [p.name for p in seq.patterns]
+    backups = list(d.glob("chases.yaml.bad-*"))
+    assert len(backups) == 1 and "MY SHOW" in backups[0].read_text(), backups
+    seq.save()
+    assert "MY SHOW" in backups[0].read_text(), "the backup survives the next save"
+
+
+def test_an_older_snapshot_never_overwrites_a_newer_save():
+    import tempfile
+    path = Path(tempfile.mkdtemp()) / "chases.yaml"
+    seq = S.Sequencer(path)
+    seq.set_length(12)
+    seq.save_later(now=100.0)
+    old = seq.take_dirty(now=101.0)                          # the clock thread took a snapshot ...
+    seq.store_group(0, [0, 1, 2])                            # ... the MIDI thread saved a newer state ...
+    seq.write(old)                                           # ... and the old snapshot is written last
+    assert S.Sequencer(path).groups[0] == [0, 1, 2]
+    assert not list(path.parent.glob("*.tmp")), "written through a temporary file"
+
+
+def test_stop_drops_the_queued_pattern():
+    sq = S.Sequencer()
+    sq.start(0.0); sq.tick(0.1)
+    sq.switch_pattern(1, 1.0)
+    assert sq.pending == 1
+    sq.stop()
+    assert sq.pending is None
+    sq.start(4.0)
+    for bt in (4.1, 8.1, 12.1):
+        sq.tick(bt)
+    assert sq.current == 0, "Play starts what was current, the dropped queue never lands"
+
+
+def test_patterns_start_on_their_own_phrase_counted_from_play():
+    sq = S.Sequencer()
+    sq.patterns[1].length = 32                       # 1/16: 2 bars
+    sq.patterns[3].length = 16; sq.patterns[3].grid = "1/8"   # 8 beats: 2 bars too
+    assert S.phrase_beats(sq.patterns[0]) == 4 and S.phrase_beats(sq.patterns[1]) == 8
+    assert S.phrase_beats(sq.patterns[3]) == 8
+    sq.patterns[4].length = 12                       # 3 beats: not whole bars → every bar
+    assert S.phrase_beats(sq.patterns[4]) == 4
+    sq.start(4.2)                                    # Play in bar 2: phrases at 4, 12, 20, …
+    assert sq.origin == 4.0
+    sq.tick(5.0)
+    sq.switch_pattern(1, 5.0)                        # 2-bar pattern queued in the first bar of a phrase
+    for bt in (6.0, 8.0, 10.0, 11.99):
+        sq.tick(bt)
+        assert sq.current == 0, bt                   # not at 8: that is the phrase's second bar
+    sq.tick(12.01)
+    assert sq.current == 1 and sq.start_beat == 12.0
+    sq.switch_pattern(2, 12.5)                       # a 1-bar pattern: the next bar
+    sq.tick(16.0)
+    assert sq.current == 2 and sq.start_beat == 16.0
+    sq.tick(17.0)
+    sq.switch_pattern(1, 17.0, now=True)             # now: joins where its phrase is (started at 12)
+    assert sq.current == 1 and sq.start_beat == 12.0 and sq.abs_step(17.0) == 20
+    sq.tick(17.5)
+    sq.switch_pattern(3, 17.5)                       # 1/8 × 16 = 2 bars: at 20
+    sq.tick(19.9); assert sq.current == 1
+    sq.tick(20.0); assert sq.current == 3 and sq.start_beat == 20.0
+    # an Apply waiting for the bar lands on the new pattern's phrase and starts it there
+    d = S._pattern_to_dict(sq.patterns[1]); d["name"] = "new"
+    sq.tick(21.0)
+    assert sq.apply(3, d) == "bar"
+    sq.tick(24.5); assert sq.patterns[3].name != "new"
+    sq.tick(28.0)
+    assert sq.patterns[3].name == "new" and sq.landed == 3 and sq.start_beat == 28.0
+    # a big jump in one tick still finds the boundary it passed
+    sq.switch_pattern(0, 28.5)
+    sq.tick(33.0)
+    assert sq.current == 0 and sq.start_beat == 32.0
+
+
+def test_every_pattern_keeps_its_own_grid():
+    import tempfile
+    path = Path(tempfile.mkdtemp()) / "chases.yaml"
+    sq = S.Sequencer(path)
+    assert sq.grid == "1/16"
+    sq.grid = "1/8"
+    assert sq.patterns[0].grid == "1/8" and sq.patterns[1].grid == "1/16"
+    sq.switch_pattern(1, 0.0)
+    assert sq.grid == "1/16" and sq.step_beats() == 0.25
+    sq.grid = "1/3"                                  # not a grid: ignored
+    assert sq.grid == "1/16"
+    sq.save()
+    sq2 = S.Sequencer(path)
+    assert [p.grid for p in sq2.patterns[:2]] == ["1/8", "1/16"]
+    sq2.copy_pattern(0, 5)
+    assert sq2.patterns[5].grid == "1/8"
+    sq2.store_pattern(6, {"name": "preset", "length": 32, "tracks": []})   # a preset dict: 1/16
+    assert sq2.patterns[6].grid == "1/16"
+    path.write_text("patterns:\n  - name: OLD\n    length: 16\n  - name: BAD\n    grid: 1/5\n")
+    sq3 = S.Sequencer(path)                          # older file without grids, or a bad one
+    assert sq3.patterns[0].grid == "1/16" and sq3.patterns[1].grid == "1/16"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

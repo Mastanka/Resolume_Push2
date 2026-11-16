@@ -1,0 +1,840 @@
+<title>SEQ Techno Banks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
+<style>
+:root{
+  color-scheme:dark;
+  --ground:#1f2023; --panel:#292a2e; --pad:#3a3b40; --pad-hi:#4a4b51; --rule:#38393e;
+  --ink:#eceae4; --dim:#a2a4ab; --faint:#6f7178;
+  --t1:#1fd2ff; --t2:#ff45d4; --t3:#ff8f1f; --t4:#4cf07c;
+  --stage:#000;
+  --font:"Archivo","Helvetica Neue",Arial,sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--ground);color:var(--ink);font:400 16px/1.55 var(--font);-webkit-font-smoothing:antialiased}
+.page{max-width:1140px;margin:0 auto;padding-inline:20px;padding-block:28px 64px;display:grid;gap:28px}
+h1,h2,h3{margin:0;font-family:var(--font);text-wrap:balance;line-height:1.05}
+h1{font-size:clamp(2.1rem,5.4vw,3.6rem);font-weight:800;font-stretch:125%;letter-spacing:-.01em}
+.lede{margin:.55em 0 0;max-width:64ch;color:var(--dim)}
+code{font-family:ui-monospace,Menlo,monospace;font-size:.9em;background:var(--panel);padding:.08em .35em;border-radius:3px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.label{font-size:.78rem;font-stretch:75%;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+
+/* stage */
+.stage{background:var(--stage);border-radius:10px;padding:14px 16px 12px;display:grid;gap:10px;z-index:5}
+@media (min-width:900px){.stage{position:sticky;top:env(safe-area-inset-top,0px)}}
+canvas{display:block;width:100%;height:clamp(150px,21vw,230px)}
+.transport{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;color:#d6d7db;font-stretch:88%}
+.btn{background:#1c1d20;border:1px solid #3c3d42;border-radius:6px;padding:6px 14px;font-weight:600;color:#e8e8ea}
+.btn:hover{border-color:#5a5b61}
+.btn.small{padding:4px 10px;font-weight:500;font-size:.9rem}
+#play{min-width:84px;color:#fff}
+#play[aria-pressed="true"]{background:#10361c;border-color:#2f8a4a;color:#7dffa2}
+.bpm{display:flex;align-items:center;gap:8px}
+.bpm input{width:66px;font:inherit;font-variant-numeric:tabular-nums;background:#111;color:#fff;border:1px solid #3c3d42;border-radius:5px;padding:5px 7px}
+.seg{display:inline-flex;border:1px solid #3c3d42;border-radius:6px;overflow:hidden}
+.seg button{background:#1c1d20;border:0;padding:6px 12px;color:#9ea0a7}
+.seg button[aria-pressed="true"]{background:#e9e8e4;color:#111;font-weight:600}
+.pos{font-variant-numeric:tabular-nums;color:#fff;font-weight:600;margin-right:auto}
+.pos span{color:#8d8f96;font-weight:400}
+#copy-note{color:#9fe8b4;font-size:.9rem}
+.rigrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;color:#d6d7db;font-stretch:88%;border-top:1px solid #232428;padding-top:10px}
+.rigrow label{color:#9ea0a7}
+.rigrow input{min-width:min(100%,260px);flex:1 1 220px;font:inherit;font-family:ui-monospace,Menlo,monospace;font-size:.95rem;background:#111;color:#fff;border:1px solid #3c3d42;border-radius:5px;padding:5px 8px;letter-spacing:.06em}
+.rigrow input[aria-invalid="true"]{border-color:#ff5c5c}
+.rigrow .chips{display:flex;flex-wrap:wrap;gap:6px}
+#rig-desc{color:#9ea0a7;font-size:.9rem;flex-basis:100%}
+#rig-desc.err{color:#ff8a8a}
+.fallback{display:grid;gap:6px}
+.fallback textarea{width:100%;height:160px;background:#111;color:#ddd;border:1px solid #3c3d42;border-radius:6px;font:12px/1.4 ui-monospace,Menlo,monospace;padding:8px}
+.fallback p{margin:0;color:var(--dim);font-size:.9rem}
+
+/* deck */
+.deck{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:28px;align-items:start}
+@media (max-width:860px){.deck{grid-template-columns:1fr}}
+.pushrows{display:grid;gap:14px;margin-top:10px}
+.pushrow{display:grid;gap:6px}
+.banks2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:560px){.banks2{grid-template-columns:1fr}}
+.quad{display:grid;gap:6px}
+.quad h3{font-size:.95rem;font-weight:700;font-stretch:112%}
+.quad h3 span{color:var(--faint);font-weight:500;font-stretch:90%}
+.pads{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.pad{position:relative;aspect-ratio:1/1;max-width:100%;border:0;border-radius:6px;background:var(--pad);display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-start;padding:7px;text-align:left;transition:background .12s}
+.pad:hover{background:var(--pad-hi)}
+.pad b{font-size:1.05rem;font-weight:800;font-stretch:112%;line-height:1}
+.pad small{font-size:.72rem;font-stretch:80%;color:#c9cad0;line-height:1.15;margin-top:3px}
+.pad .pn{position:absolute;top:6px;left:7px;font-size:.66rem;font-stretch:75%;color:#8e9097;font-variant-numeric:tabular-nums}
+.pad .mk{position:absolute;top:7px;right:8px;width:6px;height:6px;border-radius:50%;background:#7dffa2;display:none}
+.pad.tweaked .mk{display:block}
+.pad[aria-pressed="true"]{background:#f1f0ec;color:#131315}
+.pad[aria-pressed="true"] small,.pad[aria-pressed="true"] .pn{color:#4a4b50}
+.pad.queued{box-shadow:inset 0 0 0 2px #f1f0ec;animation:blink .5s steps(2,start) infinite}
+@keyframes blink{to{box-shadow:inset 0 0 0 2px transparent}}
+@media (prefers-reduced-motion:reduce){.pad.queued{animation:none}}
+
+.detail{display:grid;gap:12px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:.78rem;font-stretch:85%;font-weight:600;padding:2px 9px;border-radius:99px;background:var(--panel);color:var(--dim)}
+.detail h2{font-size:clamp(1.8rem,3.6vw,2.6rem);font-weight:800;font-stretch:125%}
+.detail p{margin:0;max-width:60ch}
+.facts{color:var(--dim);font-size:.95rem}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.seed{color:var(--faint);font-size:.9rem;font-variant-numeric:tabular-nums}
+
+/* macros */
+.macros{display:grid;gap:8px;background:var(--panel);border-radius:8px;padding:12px 14px}
+.macros header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 14px}
+.macros header .label{margin-right:auto}
+.macro{display:grid;grid-template-columns:82px minmax(0,1fr) 44px;gap:10px;align-items:center}
+.macro .name{font-weight:600;font-stretch:95%}
+.macro .name small{display:block;font-weight:400;font-size:.72rem;color:var(--faint);font-stretch:85%;line-height:1.2}
+.macro output{font-variant-numeric:tabular-nums;text-align:right;color:var(--dim);font-size:.9rem}
+.macro .ends{display:flex;justify-content:space-between;font-size:.7rem;color:var(--faint);font-stretch:85%;margin-top:-2px}
+input[type=range]{width:100%;margin:0;accent-color:#e9e8e4;height:22px}
+.macro-help{font-size:.82rem;color:var(--dim);margin:0;max-width:66ch}
+
+.tablewrap{overflow-x:auto}
+table.env{border-collapse:collapse;font-size:.88rem;font-variant-numeric:tabular-nums;min-width:440px;width:100%}
+.env th,.env td{padding:5px 8px;text-align:right;border-bottom:1px solid var(--rule);white-space:nowrap}
+.env th{font-weight:600;font-stretch:78%;color:var(--faint);font-size:.76rem}
+.env th:first-child,.env td:first-child{text-align:left}
+.env td.off{color:var(--faint)}
+.sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:7px;vertical-align:1px}
+
+/* step grid */
+.gridpanel{display:grid;gap:8px}
+.gridhead{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:baseline}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:.85rem;color:var(--dim)}
+.gridwrap{overflow-x:auto;background:var(--panel);border-radius:8px;padding:12px}
+.grid{display:grid;grid-template-columns:58px repeat(32,minmax(14px,1fr));gap:2px;min-width:620px}
+.rl{font-size:.74rem;font-stretch:75%;font-weight:600;color:var(--dim);display:flex;align-items:center;white-space:nowrap}
+.rl i{font-style:normal;color:var(--faint);margin-left:4px}
+.c{background:#34353a;border-radius:2px;min-height:11px}
+.c.long{min-height:20px}
+.c.beat{box-shadow:inset 2px 0 0 #55565c}
+.c.barline{box-shadow:inset 2px 0 0 #8a8b91}
+.c.ph{outline:2px solid #7dffa2;outline-offset:-1px}
+.sn{font-size:.62rem;font-stretch:70%;color:var(--faint);text-align:left;font-variant-numeric:tabular-nums}
+
+/* banks + loading */
+.banks{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:22px 28px}
+.bank{display:grid;gap:6px;align-content:start;border-top:1px solid var(--rule);padding-top:12px}
+.bank h3{font-size:1.3rem;font-weight:800;font-stretch:118%}
+.bank .scene{color:var(--faint);font-size:.85rem;font-stretch:88%}
+.bank p{margin:0;font-size:.93rem;color:#cfd0d4}
+.bank p strong{color:var(--ink);font-weight:600}
+.section-title{font-size:1.5rem;font-weight:800;font-stretch:118%}
+.intro{margin:.4em 0 0;color:var(--dim);max-width:70ch}
+ol.load{margin:0;padding-left:1.3em;display:grid;gap:8px;max-width:72ch}
+ol.load li::marker{color:var(--faint);font-weight:700}
+</style>
+
+<div class="page">
+  <header>
+    <h1>Techno banks</h1>
+    <p class="lede">Sixteen SEQ patterns in four banks, built on how Berlin, Detroit, club and warehouse techno place their drums. Each pattern is a recipe: the rhythm is fixed, which bar a hit lands on is drawn at random, and five macros bend it into variations. Type another bar layout to see the same recipe on a different rig.</p>
+  </header>
+
+  <section class="stage" aria-label="Rig preview">
+    <canvas id="rig" role="img" aria-label="Preview of the LED bars"></canvas>
+    <div class="transport">
+      <button class="btn" id="play" aria-pressed="false">Play</button>
+      <div class="bpm"><label for="bpm">BPM</label><input id="bpm" type="number" min="60" max="200" step="1" value="134"></div>
+      <div class="seg" role="group" aria-label="Light colour">
+        <button id="mode-white" aria-pressed="true">White</button>
+        <button id="mode-track" aria-pressed="false">Track colours</button>
+      </div>
+      <div class="pos" id="pos" aria-live="off">R1 Pump <span>stopped</span></div>
+      <span id="copy-note" role="status"></span>
+      <button class="btn" id="copy">Copy YAML</button>
+    </div>
+    <div class="rigrow">
+      <label for="rigtext">Rig</label>
+      <input id="rigtext" value="S D S S D S S D S" spellcheck="false" aria-describedby="rig-desc" aria-invalid="false">
+      <div class="chips">
+        <button class="btn small" data-rig="S D S S D S S D S">Mine: 3 long + 6 short</button>
+        <button class="btn small" data-rig="U4">4 alike</button>
+        <button class="btn small" data-rig="U12">12 alike</button>
+        <button class="btn small" data-rig="S D S D S S D S D S S D S S D S">16, 6 long</button>
+        <button class="btn small" data-rig="U24">24 alike</button>
+        <button class="btn small" data-rig="D D S S">2 long left, 2 short right</button>
+      </div>
+      <div id="rig-desc"></div>
+    </div>
+    <div class="fallback" id="fallback" hidden>
+      <textarea id="yaml-out" readonly aria-label="techno_banks.yaml"></textarea>
+      <p>Copying isn't available here. The text is selected: press Cmd+C and paste it into techno_banks.yaml.</p>
+    </div>
+  </section>
+
+  <section class="deck">
+    <div>
+      <div class="label">Patterns on the Push</div>
+      <div class="pushrows" id="pushrows"></div>
+    </div>
+    <div class="detail" aria-live="polite">
+      <div class="chips" id="chips"></div>
+      <h2 id="pname">R1 Pump</h2>
+      <p id="pidea"></p>
+      <p class="facts" id="pfacts"></p>
+      <div class="row">
+        <button class="btn" id="reshuffle">Reshuffle bars</button>
+        <span class="seed" id="seed"></span>
+      </div>
+      <div class="macros" id="macros">
+        <header>
+          <span class="label">Macros of this pattern</span>
+          <button class="btn small" id="macro-reset">Reset</button>
+          <button class="btn small" id="macro-all">Copy to all 16</button>
+        </header>
+        <div id="macro-rows"></div>
+        <p class="macro-help" id="macro-help"></p>
+      </div>
+      <div class="tablewrap"><table class="env" id="env"></table></div>
+    </div>
+  </section>
+
+  <section class="gridpanel" aria-label="Steps of the selected pattern">
+    <div class="gridhead">
+      <div class="label">32 steps at grid 1/16, pads left to right</div>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div class="gridwrap"><div class="grid" id="grid"></div></div>
+  </section>
+
+  <section>
+    <h2 class="section-title">What each bank takes from the music</h2>
+    <p class="intro">Left to right inside every bank: minimal, groove, peak, and kick out. When the DJ pulls the kick, jump to column 4; when it comes back, go to 2 or 3. The pattern switches on the next bar, like on the Push. D means a dominant (long) bar, S a secondary (short) one; on a rig where all bars are alike, about a third of them take the D role, spaced out and mirrored.</p>
+    <div class="banks" id="banks" style="margin-top:18px"></div>
+  </section>
+
+  <section>
+    <h2 class="section-title">Loading them into SEQ</h2>
+    <ol class="load" style="margin-top:14px">
+      <li>Type your rig, left to right, as you see it from the front: <code>D</code> for a long bar, <code>S</code> for a short one, or <code>U9</code> for nine alike bars. Pads 1–N have to be your bars in that order; Show pads on Bar Chaser displays the numbers.</li>
+      <li>Set the macros and reshuffle until each pattern looks right, then Copy YAML and paste it over <code>techno_banks.yaml</code>.</li>
+      <li>Stop the bridge (it rewrites <code>chases.yaml</code> on every edit), run <code>python merge_banks.py</code> next to <code>push_resolume_bridge.py</code>, start the bridge. Row 5 holds P1–P8, Shift + row 5 holds P9–P16. Set Scale to 1/16.</li>
+      <li>Put Bar Chaser on four layers set to Track 1–4. A flat white or slow gradient clip suits T1 and T2; give T3 and T4 something with movement.</li>
+      <li>The <code>source</code> line on each pattern (recipe, seed, macros) is for the bridge's coming re-fit feature; today's bridge ignores it.</li>
+    </ol>
+  </section>
+</div>
+
+<script>
+// SEQ Techno bank, version 2: recipes in role space (D = dominant / long, S = secondary / short),
+// realised onto any rig of 4–24 pads, with five macros for variations.
+// Rhythm never depends on the rig or the macros; placement, envelope shape, hit count and
+// levels do. Same recipe + rig + seed + macros → same pattern.
+(function (root) {
+  const STEPS = 32;
+  const BEATS = [0, 4, 8, 12, 16, 20, 24, 28];
+  const OFF = [2, 6, 10, 14, 18, 22, 26, 30];
+  const NONBEAT = [...Array(STEPS).keys()].filter(s => s % 4);
+  const A_STEPS = NONBEAT.filter(s => s % 4 === 3);
+  const CLAVE = [[0, 'low'], [3, 'hi'], [7, 'hi'], [10, 'hi'], [12, 'hi'],
+                 [18, 'low'], [20, 'hi'], [24, 'hi'], [27, 'hi'], [31, 'hi']];
+  const ENV = {                                   // attack, decay, sustain, release (beats / 0-1)
+    kick: [0, 0.12, 0.2, 0.2], hard: [0, 0.08, 0.3, 0.12], rumble: [0.2, 0, 1, 0.3],
+    tick: [0, 0.05, 0.4, 0.15], closed: [0, 0.03, 0.3, 0.06], open: [0, 0.05, 0.6, 0.3],
+    ride: [0, 0.05, 0.5, 0.2], clap: [0, 0.1, 0.35, 0.45], tom: [0, 0.08, 0.4, 0.3],
+    stab: [0, 0.15, 0.4, 0.5], dub: [0, 0.1, 0.5, 0.6], roll: [0, 0.04, 0.3, 0.05],
+    bounce: [0, 0.06, 0.3, 0.1], strobe: [0, 0.02, 0.1, 0.04], glow: [0.25, 0, 1, 1.5],
+    swell: [0.25, 0, 1, 0.3], none: [0, 0, 1, 0.1],
+  };
+  const MACROS = { strobe: 0.5, density: 0.5, speed: 0.5, spread: 0.5, accent: 0.5 };
+  const MACRO_INFO = {
+    strobe:  { label: 'Strobe',  low: 'soft, fluent',      high: 'hard, blinking',        what: 'Envelope shape of every track: attack, decay, sustain, release and gate.' },
+    density: { label: 'Density', low: 'only the backbone', high: 'everything, wider hits', what: 'Below the middle it drops ornaments, then grooves. Above, each hit lights more bars.' },
+    speed:   { label: 'Speed',   low: 'hits stay put',     high: 'every hit moves',       what: 'How often a voice moves to another bar. Low holds a bar for several hits; high also splits full-rig hits.' },
+    spread:  { label: 'Spread',  low: 'walks to neighbours', high: 'jumps across',        what: 'How far the next bar is from the last one. Middle is free random.' },
+    accent:  { label: 'Accent',  low: 'flat',              high: 'strong dynamics',       what: 'Contrast between loud and soft hits, and how much levels vary.' },
+  };
+
+  // ---------------------------------------------------------------- rig
+  function virtualCount(n) {
+    const c = [];
+    for (let k = 1; k <= n / 2; k++) if (k % 2 === n % 2) c.push(k);
+    if (!c.length) c.push(1);
+    return c.reduce((b, k) => (Math.abs(k - n / 3) < Math.abs(b - n / 3) - 1e-9 ? k : b), c[0]);
+  }
+  function virtualPositions(n) {
+    const k = virtualCount(n), pos = new Set();
+    for (let i = 0; i < Math.floor(k / 2); i++) { const p = Math.floor((i + 0.5) * n / k); pos.add(p); pos.add(n - 1 - p); }
+    if (k % 2) pos.add(Math.floor((n - 1) / 2));
+    return [...pos].sort((a, b) => a - b);
+  }
+  function makeRig(text) {
+    const t = String(text || '').trim().toUpperCase();
+    let roles = null, N;
+    if (/^U\s*\d+$/.test(t)) N = +t.replace(/\D/g, '');
+    else { roles = t.split(/[\s,]+/).filter(Boolean).map(x => (x[0] === 'D' || x[0] === 'L') ? 'D' : 'S'); N = roles.length; }
+    if (!(N >= 4 && N <= 24)) throw new Error(`SEQ banks need 4–24 pads, found ${N}`);
+    let virtual = false;
+    if (!roles || roles.every(r => r === 'D') || roles.every(r => r === 'S')) {
+      const vp = new Set(virtualPositions(N));
+      roles = [...Array(N).keys()].map(i => vp.has(i) ? 'D' : 'S');
+      virtual = true;
+    }
+    const pads = [...Array(N).keys()].map(i => i + 1);
+    const rig = { pads, roles, virtual, N };
+    rig.pos = p => p - 1;
+    rig.D = pads.filter((p, i) => roles[i] === 'D');
+    rig.S = pads.filter((p, i) => roles[i] === 'S');
+    rig.ALL = pads.slice();
+    rig.sat = d => {
+      const i = rig.pos(d), out = [];
+      for (const j of [i - 1, i + 1]) if (j >= 0 && j < N && roles[j] === 'S') out.push(pads[j]);
+      if (!out.length) out.push(rig.S.reduce((b, s) => (Math.abs(rig.pos(s) - i) < Math.abs(rig.pos(b) - i) ? s : b), rig.S[0]));
+      return out;
+    };
+    rig.pairs = [];
+    for (let i = 0; i < Math.ceil(rig.S.length / 2); i++) { const j = rig.S.length - 1 - i; rig.pairs.push(i === j ? [rig.S[i]] : [rig.S[i], rig.S[j]]); }
+    rig.outer_d = [...new Set([rig.D[0], rig.D[rig.D.length - 1]])];
+    const flat = prs => [...new Set(prs.flat())].sort((a, b) => a - b);
+    rig.s_high = flat(rig.pairs.slice(0, Math.ceil(rig.pairs.length / 2)));
+    rig.s_mid = flat(rig.pairs.slice(Math.floor(rig.pairs.length / 2)));
+    rig.signature = () => pads.map((p, i) => `${p}${roles[i]}`).join(' ') + (virtual ? ' v' : '');
+    rig.describe = () => `${N} pads: ${rig.D.length} D / ${rig.S.length} S` + (virtual ? ' (all alike, D by position)' : '');
+    return rig;
+  }
+
+  // ---------------------------------------------------------------- random placement
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+  class Draw {
+    constructor(rig, seed, m) { this.rig = rig; this.r = mulberry32(seed); this.m = m; this.prev = {}; this.cnt = {}; }
+    rand() { return this.r(); }
+    hold() { const s = this.m.speed; return s >= 0.5 ? 1 : s >= 0.35 ? 2 : s >= 0.2 ? 4 : 8; }
+    mult() { const d = this.m.density; return d < 0.5 ? 0.5 + d : 1 + (d - 0.5) * 2; }
+    allow(tier) { const d = this.m.density; return tier <= 1 || (tier === 2 && d >= 0.15) || (tier === 3 && d >= 0.4); }
+    accentLevel(lv) { const a = this.m.accent; const v = a <= 0.5 ? 0.85 + (lv - 0.85) * a * 2 : Math.pow(lv, 1 + (a - 0.5) * 4); return clamp(v, 0.05, 1); }
+    hum(lv, amt = 0.15) { return lv * (1 - amt * 2 * this.m.accent * this.rand()); }
+    static few(pool) { return Math.max(1, Math.floor((pool.length + 4) / 8)); }
+    static share(pool, f, lo = 1, hi) { hi = hi == null ? pool.length : hi; return Math.max(lo, Math.min(hi, Math.floor(f * pool.length + 0.5))); }
+    pick(cands, anchor, pads) {
+      const s = this.m.spread, k = Math.abs(s - 0.5) * 2 * 3;
+      if (!pads || k === 0 || anchor == null) return cands[Math.floor(this.rand() * cands.length)];
+      const N = this.rig.N, p0 = this.rig.pos(anchor);
+      const w = cands.map(c => { const dist = Math.abs(this.rig.pos(c) - p0) / Math.max(1, N - 1); return Math.pow(s > 0.5 ? 0.15 + dist : 1.15 - dist, k); });
+      let x = this.rand() * w.reduce((a, b) => a + b, 0);
+      for (let i = 0; i < cands.length; i++) { x -= w[i]; if (x <= 0) return cands[i]; }
+      return cands[cands.length - 1];
+    }
+    subset(cands, n, anchor, pads) {
+      const pool = cands.slice(), out = [];
+      let a = anchor;
+      while (out.length < n && pool.length) { const c = this.pick(pool, a, pads); pool.splice(pool.indexOf(c), 1); out.push(c); if (a == null) a = c; }
+      return out.sort((x, y) => x - y);
+    }
+    // n random items from pool: not the previous pick of this stream (n = 1: not the same pad; n > 1:
+    // not the same set), not in avoid. Speed holds the previous pick for several calls; density scales
+    // n (pads only, unless raw); spread biases the distance from the previous pick.
+    hop(pool, n, stream, opts = {}) {
+      const { avoid = [], pads = true, raw = false } = opts;
+      n = pads && !raw ? Math.max(1, Math.min(pool.length, Math.round(n * this.mult()))) : Math.max(1, Math.min(n, pool.length));
+      const prev = this.prev[stream];
+      const cnt = (this.cnt[stream] = (this.cnt[stream] || 0) + 1);
+      if (prev && (cnt - 1) % this.hold() !== 0 && prev.length === n && !prev.some(p => avoid.includes(p)) && prev.every(p => pool.includes(p))) return prev;
+      const anchor = prev ? prev[Math.floor(prev.length / 2)] : null;
+      let choice = pool.slice(0, n);
+      for (const cands of [pool.filter(p => !avoid.includes(p) && (n > 1 || !(prev || []).includes(p))), pool.filter(p => !avoid.includes(p)), pool.slice()]) {
+        if (cands.length >= n) {
+          choice = this.subset(cands, n, anchor, pads);
+          for (let i = 0; i < 8 && n > 1 && prev && choice.join() === prev.join() && cands.length > n; i++) choice = this.subset(cands, n, anchor, pads);
+          break;
+        }
+      }
+      this.prev[stream] = choice;
+      return choice;
+    }
+    // a hit on a whole pool (all D, all S, everything); high speed splits it into a moving part
+    block(pool, stream) {
+      const s = this.m.speed;
+      if (s <= 0.5 || pool.length < 2) return pool.slice();
+      return this.hop(pool, Math.max(1, Math.round(pool.length * (1 - (s - 0.5)))), stream, { raw: true });
+    }
+  }
+
+  class Pat {
+    constructor(d) { this.d = d; this.tracks = [0, 1, 2, 3].map(() => ({ env: 'none', gate: 0.5, level: 1, steps: {} })); }
+    track(t, env, gate, level) { Object.assign(this.tracks[t], { env, gate, level }); }
+    hit(t, pads, step, lv, tier = 2) {
+      if (!this.d.allow(tier)) return;
+      const v = Math.round(this.d.accentLevel(lv) * 100) / 100;
+      for (const p of pads) { const st = (this.tracks[t].steps[p] = this.tracks[t].steps[p] || {}); st[step] = Math.max(st[step] || 0, v); }
+    }
+  }
+
+  const uniq = a => [...new Set(a)].sort((x, y) => x - y);
+  const kickN = rig => rig.D.length <= 4 ? 1 : Draw.share(rig.D, 1 / 3);
+  function pairPick(d, stream) {
+    const prs = d.rig.pairs;
+    const idx = d.hop([...Array(prs.length).keys()], Math.max(1, Math.round(prs.length / 3)), stream, { pads: false });
+    return uniq(idx.flatMap(i => prs[i]));
+  }
+
+  // ---------------------------------------------------------------- building blocks
+  function kickRumble(P, d) {
+    const rig = d.rig;
+    P.track(0, 'kick', 0.5, 1); P.track(3, 'rumble', 1, 0.45);
+    for (const b of BEATS) {
+      const pads = d.hop(rig.D, kickN(rig), 'kick');
+      P.hit(0, pads, b, 1, 1);
+      P.hit(3, uniq(pads.flatMap(p => rig.sat(p))), b + 1, d.hum(0.9, 0.1), 2);
+    }
+  }
+  function perc316(P, d, t) { const S = d.rig.S; for (let s = 2; s < STEPS; s += 3) P.hit(t, d.hop(S, Draw.few(S), 'p316'), s, s % 4 === 2 ? d.hum(1, 0.1) : d.hum(0.55), 2); }
+  function dubThrow(P, d, t, start, n) { const A = d.rig.ALL; [1, 0.6, 0.35, 0.2].slice(0, n).forEach((lv, i) => P.hit(t, d.hop(A, Draw.few(A), 'dub'), start + 3 * i, lv, i ? 3 : 2)); }
+  function kick909(P, d) {
+    const rig = d.rig;
+    for (const b of BEATS) {
+      if (b % 16 === 0) { P.hit(0, d.block(rig.D, 'kick-block'), b, 1, 1); d.prev.kick = null; }
+      else P.hit(0, d.hop(rig.D, kickN(rig), 'kick'), b, 0.85, 1);
+    }
+  }
+  function hats16(P, d, t, scale = 1, pool) {
+    pool = pool || d.rig.S;
+    for (const s of NONBEAT) { const base = s % 4 === 2 ? 0.9 : s % 4 === 1 ? 0.35 : 0.55; P.hit(t, d.hop(pool, Draw.few(pool), 'hats'), s, d.hum(base * scale), s % 4 === 2 ? 2 : 3); }
+  }
+  function claps(P, d, t) { for (const s of [4, 12, 20, 28]) P.hit(t, d.rig.outer_d, s, 0.9, 1); }
+  function clave(P, d, t, kickAt = {}, pool, tier = 2) {
+    for (const [s, kind] of CLAVE) { const pl = pool || (kind === 'low' ? d.rig.D : d.rig.S); P.hit(t, d.hop(pl, Draw.few(pl), 'clave', { avoid: kickAt[s] || [] }), s, d.hum(kind === 'low' ? 0.95 : 0.8), tier); }
+  }
+  function ride(P, d, t, frac, lv) { const S = d.rig.S; for (const s of OFF) P.hit(t, d.hop(S, Draw.share(S, frac), 'ride'), s, d.hum(lv), 2); }
+
+  // ---------------------------------------------------------------- the 16 recipes
+  const REC = {
+    R1(P, d) { kickRumble(P, d); P.track(1, 'tick', 0.3, 0.7); const S = d.rig.S; for (const s of [3, 9, 14, 19, 25, 30]) P.hit(1, d.hop(S, Draw.few(S), 'tick'), s, d.hum(0.7), 2); },
+    R2(P, d) { kickRumble(P, d); P.track(1, 'tick', 0.3, 0.8); perc316(P, d, 1); },
+    R3(P, d) { kickRumble(P, d); P.track(1, 'closed', 0.3, 0.65); hats16(P, d, 1, 0.9); P.track(2, 'dub', 0.5, 0.9); dubThrow(P, d, 2, 6, 4); dubThrow(P, d, 2, 22, 4); },
+    R4(P, d) {
+      P.track(1, 'tick', 0.3, 0.8); perc316(P, d, 1);
+      P.track(3, 'glow', 1, 0.6); for (const s of [0, 8, 16, 24]) P.hit(3, d.hop(d.rig.D, kickN(d.rig), 'glow'), s, d.hum(0.95, 0.1), 1);
+      P.track(2, 'dub', 0.5, 0.8); dubThrow(P, d, 2, 14, 4);
+    },
+    D1(P, d) { P.track(0, 'kick', 0.5, 1); kick909(P, d); P.track(1, 'open', 0.5, 0.75); for (const s of OFF) P.hit(1, pairPick(d, 'open'), s, d.hum(0.85), 2); P.track(2, 'clap', 0.5, 0.9); claps(P, d, 2); },
+    D2(P, d) { P.track(0, 'kick', 0.5, 1); kick909(P, d); P.track(1, 'closed', 0.3, 0.7); hats16(P, d, 1); P.track(2, 'clap', 0.5, 0.9); claps(P, d, 2); P.hit(2, d.hop(d.rig.S, 1, 'ghost'), 31, 0.4, 3); },
+    D3(P, d) {
+      P.track(0, 'kick', 0.5, 1); kick909(P, d); P.track(1, 'closed', 0.3, 0.6); hats16(P, d, 1); P.track(2, 'clap', 0.5, 0.9); claps(P, d, 2);
+      P.track(3, 'stab', 0.5, 0.8); const A = d.rig.ALL; for (const s of [3, 6, 14, 19, 22, 26, 29]) P.hit(3, d.hop(A, Draw.share(A, 1 / 3), 'stab'), s, d.hum(0.85), 2);
+    },
+    D4(P, d) {
+      const rig = d.rig; P.track(1, 'closed', 0.3, 0.55); hats16(P, d, 1); P.track(2, 'clap', 0.5, 0.9); claps(P, d, 2);
+      P.track(3, 'tom', 0.5, 0.85); const pools = { low: rig.D, mid: rig.s_mid, high: rig.s_high };
+      for (const [s, kind] of [[3, 'low'], [6, 'mid'], [10, 'high'], [19, 'low'], [22, 'mid'], [26, 'high'], [28, 'high'], [29, 'high'], [30, 'mid'], [31, 'low']])
+        P.hit(3, d.hop(pools[kind], Draw.few(pools[kind]), 'tom'), s, d.hum(0.85), s >= 28 ? 3 : 2);
+    },
+    G1(P, d) {
+      const rig = d.rig; P.track(0, 'kick', 0.5, 1); for (const b of BEATS) P.hit(0, d.block(rig.D, 'kick-block'), b, b % 16 === 0 ? 1 : 0.85, 1);
+      P.track(1, 'ride', 0.4, 0.75); ride(P, d, 1, 2 / 3, 0.8); for (const s of A_STEPS) P.hit(1, d.hop(rig.S, Draw.few(rig.S), 'ping'), s, 0.3, 3);
+    },
+    G2(P, d) {
+      const rig = d.rig; P.track(0, 'kick', 0.5, 1); const kickAt = {};
+      for (const b of BEATS) { kickAt[b] = d.hop(rig.D, kickN(rig), 'kick'); P.hit(0, kickAt[b], b, 1, 1); }
+      P.track(2, 'tom', 0.5, 0.85); clave(P, d, 2, kickAt); P.track(1, 'ride', 0.4, 0.7); ride(P, d, 1, 1 / 3, 0.6);
+    },
+    G3(P, d) {
+      const rig = d.rig; P.track(0, 'kick', 0.5, 1); for (const b of BEATS) P.hit(0, d.block(rig.D, 'kick-block'), b, 1, 1);
+      P.track(3, 'roll', 0.4, 0.5); for (const s of NONBEAT) P.hit(3, d.block(rig.D, 'roll'), s, d.hum(s % 4 === 2 ? 0.6 : s % 4 === 1 ? 0.35 : 0.45, 0.1), s % 4 === 2 ? 2 : 3);
+      P.track(1, 'ride', 0.4, 0.75); ride(P, d, 1, 1 / 2, 0.75); P.track(2, 'tom', 0.5, 0.7); clave(P, d, 2, {}, rig.S);
+    },
+    G4(P, d) {
+      const A = d.rig.ALL; P.track(1, 'closed', 0.3, 0.7); hats16(P, d, 1); P.track(2, 'tom', 0.5, 0.9); clave(P, d, 2, {}, A, 1);
+      for (const [s, lv] of [[28, 0.5], [29, 0.65], [30, 0.8], [31, 1]]) P.hit(2, d.hop(A, Draw.few(A), 'clave'), s, lv, 3);
+    },
+    W1(P, d) {
+      const A = d.rig.ALL; P.track(0, 'hard', 0.5, 1); const size = Draw.share(A, 2 / 9, 1, A.length - 1);
+      for (const b of BEATS) { const hole = d.hop(A, size, 'hole', { raw: true }); P.hit(0, A.filter(p => !hole.includes(p)), b, 1, 1); }
+      P.track(1, 'strobe', 0.25, 1); for (const s of OFF) P.hit(1, d.hop(A, Draw.few(A), 'glint'), s, 0.35, 3);
+    },
+    W2(P, d) {
+      const rig = d.rig; P.track(0, 'hard', 0.5, 1); for (const b of BEATS) P.hit(0, d.block(rig.D, 'kick-block'), b, 1, 1);
+      P.track(1, 'bounce', 0.4, 0.9);
+      for (const half of [0, 16]) { const odd = half + 2 + 4 * Math.floor(d.rand() * 4); for (const s of OFF.filter(x => x >= half && x < half + 16)) P.hit(1, s === odd ? pairPick(d, 'bounce') : d.block(rig.S, 'bounce-block'), s, 0.95, 2); }
+      P.track(2, 'strobe', 0.25, 0.9);
+      for (const half of [0, 16]) for (const s of d.hop([3, 7, 11, 15].map(x => x + half), 2, 'stutter-steps', { pads: false })) P.hit(2, d.hop(rig.ALL, Draw.few(rig.ALL), 'stutter'), s, 0.7, 3);
+    },
+    W3(P, d) {
+      const rig = d.rig; P.track(0, 'hard', 0.5, 1); for (const b of BEATS) P.hit(0, d.block(rig.D, 'kick-block'), b, 1, 1);
+      P.track(1, 'strobe', 0.25, 1); for (const s of NONBEAT) P.hit(1, d.hop(rig.ALL, Draw.few(rig.ALL), 'scatter'), s, 0.5 + 0.5 * d.rand(), s % 4 === 2 ? 2 : 3);
+    },
+    W4(P, d) {
+      const rig = d.rig, A = rig.ALL; P.track(1, 'strobe', 0.25, 1);
+      for (const s of d.hop([...Array(16).keys()].filter(x => x % 4), 5, 'stray-steps', { pads: false })) P.hit(1, d.hop(A, Draw.few(A), 'stray'), s, 0.3 + 0.3 * d.rand(), 3);
+      const roll = [[16, 1], [20, 1], [24, 1], [26, 2], [28, 2], [29, 3], [30, 3], [31, 4]];
+      roll.forEach(([s, n9], i) => P.hit(1, d.hop(A, Draw.share(A, n9 / 9), 'roll'), s, 0.4 + 0.6 * i / (roll.length - 1), 1));
+      P.track(3, 'swell', 1, 0.8); for (let s = 16; s < 32; s++) P.hit(3, d.block(rig.D, 'swell'), s, 0.05 + 0.65 * (s - 16) / 15, 2);
+    },
+  };
+
+  const BANKS = [
+    { key: 'R', name: 'Rumble', scene: 'Berlin', bpm: 134, swing: 0.1 },
+    { key: 'D', name: 'Machine funk', scene: 'Detroit', bpm: 128, swing: 0.3 },
+    { key: 'G', name: 'Hard groove', scene: 'Club / tribal', bpm: 142, swing: 0.2 },
+    { key: 'W', name: 'Warehouse', scene: 'Hard / industrial', bpm: 155, swing: 0 },
+  ];
+  const COLS = ['Minimal', 'Groove', 'Peak', 'Kick out'];
+  const DEFS = [
+    { id: 'R1', name: 'Pump', idea: 'Kick hops between the long bars; the rumble swells on the short bars beside it and peaks on the offbeat. Sparse ticks on an uneven cycle.' },
+    { id: 'R2', name: '3/16', idea: 'Pump plus a hit every third 16th: a 3-over-4 cycle that lands somewhere new on each beat and scatters over the short bars.' },
+    { id: 'R3', name: 'Dub', idea: 'Pump under 16th ticks, plus two dub throws: a stab on the and-of-2 whose dotted-8th echoes jump to new bars and fade out.' },
+    { id: 'R4', name: 'No kick', idea: 'When the kick drops: the 3/16 percussion keeps turning, long bars glow up one at a time, one dub throw per two bars.' },
+    { id: 'D1', name: '909', idea: '909 kick with an accented downbeat on all long bars, clap on 2 and 4 on the outer long bars, open hat on every offbeat on a mirrored pair of short bars.' },
+    { id: 'D2', name: 'Shuffle', idea: 'Swung 16th hats with 909 accents (loud offbeat, soft e and a) hopping over the short bars. Clap on 2 and 4, a ghost clap before the loop turns.' },
+    { id: 'D3', name: 'Stabs', idea: 'Shuffle plus syncopated chord stabs ahead of the beat, call in bar 1 and answer in bar 2, each lighting a third of the rig.' },
+    { id: 'D4', name: 'No kick', idea: 'Hats and claps carry on. 909 toms answer at the end of each bar: low on the long bars, mid and high on the short ones, with a roll into the loop.' },
+    { id: 'G1', name: 'Ride', idea: 'Kick on every long bar; the offbeat ride shimmers over two thirds of the short bars, a different set each time.' },
+    { id: 'G2', name: 'Tribal', idea: 'Kick hops between long bars. Toms play a rumba clave (3-2, then 2-3): low tom on a long bar the kick is not using, the rest over the short bars.' },
+    { id: 'G3', name: 'Rolling', idea: 'A rolling 16th bassline flickers on the long bars between the kicks, so they never go fully dark. Ride and clave toms on the short bars.' },
+    { id: 'G4', name: 'No kick', idea: 'Swung 16th hats and the clave toms, now free to land on any bar, with a four-hit tom roll into the next loop.' },
+    { id: 'W1', name: 'Stomp', idea: 'Full-rig kick on every beat with a dark hole that moves each time. One faint glint on the offbeat.' },
+    { id: 'W2', name: 'Bounce', idea: 'Kick on the long bars, offbeat bass on all short bars: a hard on/off bounce. Once per bar the offbeat shrinks to one mirrored pair, and single strobes stutter on the a.' },
+    { id: 'W3', name: 'Scatter', idea: 'Kick on the long bars and a hard strobe on every 16th in between, each on a random bar at a random level. Peak-time chaos, still locked to the grid.' },
+    { id: 'W4', name: 'Tension', idea: 'Negative space before the drop: a few stray flickers in bar 1, then a snare-roll strobe that thickens while the long bars swell up. Drop into W1 or W3.' },
+  ];
+  const DEFAULT_SEEDS = [11, 23, 37, 41, 53, 67, 71, 83, 97, 101, 113, 127, 131, 149, 157, 163];
+
+  // ---------------------------------------------------------------- envelope morph (Strobe)
+  const r3 = v => Math.round(v * 1000) / 1000;
+  function morph(name, gate, strobe) {
+    let [A, D, S, R] = ENV[name] || ENV.none, G = gate;
+    const t = (strobe - 0.5) * 2;
+    if (t <= 0) { const u = -t; A += 0.25 * u; D *= 1 + u; S += (1 - S) * u; R *= 1 + 3 * u; G += (1 - G) * u * 0.5; }
+    else { A *= 1 - t; D *= 1 - 0.7 * t; S *= 1 - 0.8 * t; R = Math.max(0.05, R * (1 - 0.85 * t)); G = Math.max(0.15, G * (1 - 0.6 * t)); }
+    return { attack: r3(A), decay: r3(D), sustain: r3(S), release: r3(R), gate: r3(G) };
+  }
+
+  // ---------------------------------------------------------------- realise
+  function realize(i, rig, seed, macros) {
+    const m = { ...MACROS, ...(macros || {}) };
+    const bank = BANKS[Math.floor(i / 4)], def = DEFS[i], col = i % 4;
+    const d = new Draw(rig, seed, m), P = new Pat(d);
+    REC[def.id](P, d);
+    const tracks = P.tracks.map(tr => { const e = morph(tr.env, tr.gate, m.strobe); return { used: tr.env !== 'none', envName: tr.env, env: { attack: e.attack, decay: e.decay, sustain: e.sustain, release: e.release }, gate: e.gate, level: tr.level, steps: tr.steps }; });
+    let hits = 0; const lit = new Set();
+    for (const tr of tracks) for (const p in tr.steps) { lit.add(p); hits += Object.keys(tr.steps[p]).length; }
+    return { index: i, n: i + 1, id: def.id, seed, bank: bank.name, bankKey: bank.key, scene: bank.scene, col: COLS[col],
+             name: `${def.id} ${def.name}`, idea: def.idea, bpm: bank.bpm, length: STEPS, direction: 'forward', swing: bank.swing,
+             macros: m, tracks, hits, litPads: lit.size };
+  }
+  function realizeAll(rig, seeds, macrosList) { return DEFS.map((_, i) => realize(i, rig, (seeds || DEFAULT_SEEDS)[i], macrosList ? macrosList[i] : null)); }
+
+  function toYaml(pats, rig) {
+    const num = v => (Number.isInteger(v) ? v.toFixed(1) : String(v));
+    const mac = m => `{strobe: ${num(m.strobe)}, density: ${num(m.density)}, speed: ${num(m.speed)}, spread: ${num(m.spread)}, accent: ${num(m.accent)}}`;
+    const out = [
+      '# SEQ Techno bank, realised for one rig. Grid 1/16, 32 steps each.',
+      `# Rig: ${rig.describe()}. Pads left -> right: ${rig.signature()}`,
+      '# Row 5 on the Push: P1-4 R Rumble (Berlin), P5-8 D Machine funk (Detroit); Shift + row 5: P9-12 G Hard groove, P13-16 W Warehouse.',
+      '# Columns: 1 minimal, 2 groove, 3 peak, 4 kick out. Tracks: T1 kick, T2 hats, T3 accent, T4 movement.',
+      '# `source` records recipe, seed and macros so the bridge can re-fit the pattern to another rig (see the banks spec).',
+      `bank: {id: techno, rig: "${rig.signature()}"}`,
+      'patterns:',
+    ];
+    for (const p of pats) {
+      out.push(`  # P${p.n} ${p.bank} / ${p.col}: ${p.idea}`);
+      out.push(`  - name: ${p.name}`, `    source: {bank: techno, recipe: ${p.id}, seed: ${p.seed}, macros: ${mac(p.macros)}}`,
+               `    length: ${p.length}`, `    direction: ${p.direction}`, `    swing: ${num(p.swing)}`, '    tracks:');
+      for (const tr of p.tracks) {
+        const e = tr.env;
+        out.push('      - texture: null', `        envelope: {attack: ${num(e.attack)}, decay: ${num(e.decay)}, sustain: ${num(e.sustain)}, release: ${num(e.release)}}`, `        gate: ${num(tr.gate)}`, `        level: ${num(tr.level)}`);
+        const pads = Object.keys(tr.steps).map(Number).sort((a, b) => a - b);
+        if (!pads.length) { out.push('        steps: {}'); continue; }
+        out.push('        steps:');
+        for (const b of pads) { const st = Object.entries(tr.steps[b]).map(([s, v]) => [+s, v]).sort((a, b) => a[0] - b[0]); out.push(`          pad ${b}: [${st.map(([s, v]) => `[${s}, ${num(v)}, null]`).join(', ')}]`); }
+      }
+    }
+    return out.join('\n') + '\n';
+  }
+
+  const api = { BANKS, COLS, DEFS, DEFAULT_SEEDS, MACROS, MACRO_INFO, ENV, makeRig, virtualPositions, realize, realizeAll, toYaml, morph };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.TechnoBanks = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+(function(){
+const B = window.TechnoBanks;
+const TRACKS = [
+  {n:'T1', role:'kick', cssv:'--t1', rgb:[31,210,255]},
+  {n:'T2', role:'hats', cssv:'--t2', rgb:[255,69,212]},
+  {n:'T3', role:'accent', cssv:'--t3', rgb:[255,143,31]},
+  {n:'T4', role:'movement', cssv:'--t4', rgb:[76,240,124]},
+];
+const BANK_TEXT = {
+  R: {music:'A 4/4 kick whose reverb tail is squashed into a sub rumble that pumps between the kicks. Sparse percussion on odd cycles (3/16), dub delay throws, almost straight timing. 130–138 BPM.',
+      bars:'The kick lands on one D bar at a time, the rumble swells on the S bars beside it, ticks never repeat their spot.'},
+  D: {music:'TR-909 kick, clap on 2 and 4, open hat on every offbeat, accented 16th hats with shuffle around 57 %, toms answering, syncopated chord stabs. 125–132 BPM.',
+      bars:'Downbeat on all D bars, open hats on mirrored S pairs, claps on the outer D bars. Swing 0.3 is saved in the pattern.'},
+  G: {music:'Loop-driven and percussive: ride on the offbeat, toms and congas in clave cycles, a rolling 16th bassline between kicks, light shuffle. 138–148 BPM.',
+      bars:'Kick on every D bar, the ride shimmers over the S bars, toms hop. Swing 0.2.'},
+  W: {music:'150–165 BPM, a distorted kick that carries the bass, offbeat bounce, 16th percussion, and silence used as pressure before the drop.',
+      bars:'Full-rig slams with a moving hole, D/S bounce, scatter strobes, and a blackout that rolls into the drop.'},
+};
+const MK = ['strobe','density','speed','spread','accent'];
+const $ = id => document.getElementById(id);
+
+let rig = B.makeRig('S D S S D S S D S');
+let seeds = B.DEFAULT_SEEDS.slice();
+let macros = B.DEFS.map(() => ({...B.MACROS}));
+let pats = B.realizeAll(rig, seeds, macros);
+let cur = 0, pending = null;
+let playing = false, bpm = pats[0].bpm, t0 = 0, startBeat = 0, lastStep = null, lastBarIdx = null;
+let white = true;
+const voices = new Map();
+const rebuild = i => { pats[i] = B.realize(i, rig, seeds[i], macros[i]); };
+const isTweaked = i => MK.some(k => Math.abs(macros[i][k] - 0.5) > 1e-9);
+
+// ---------- Push pads ----------
+const rows = [[0,1],[2,3]], rowNames = ['Row 5', 'Shift + row 5'], padEls = [];
+rows.forEach((banks, r) => {
+  const row = document.createElement('div'); row.className = 'pushrow';
+  row.innerHTML = `<div class="label">${rowNames[r]}</div>`;
+  const two = document.createElement('div'); two.className = 'banks2';
+  banks.forEach(bi => {
+    const bank = B.BANKS[bi];
+    const q = document.createElement('div'); q.className = 'quad';
+    q.innerHTML = `<h3>${bank.key} ${bank.name} <span>${bank.scene}</span></h3>`;
+    const grid = document.createElement('div'); grid.className = 'pads';
+    for (let c = 0; c < 4; c++) {
+      const i = bi * 4 + c, b = document.createElement('button');
+      b.className = 'pad'; b.type = 'button'; b.setAttribute('aria-pressed', 'false');
+      b.innerHTML = `<span class="pn">P${i+1}</span><span class="mk" title="macros changed"></span><b>${B.DEFS[i].id}</b><small>${B.DEFS[i].name}</small>`;
+      b.setAttribute('aria-label', `P${i+1} ${pats[i].name}, ${B.COLS[c]}`);
+      b.addEventListener('click', () => choose(i));
+      padEls[i] = b; grid.appendChild(b);
+    }
+    q.appendChild(grid); two.appendChild(q);
+  });
+  row.appendChild(two); $('pushrows').appendChild(row);
+});
+$('banks').innerHTML = B.BANKS.map(b => `<article class="bank"><h3>${b.key} ${b.name}</h3>
+  <div class="scene">${b.scene}, around ${b.bpm} BPM</div>
+  <p><strong>In the music.</strong> ${BANK_TEXT[b.key].music}</p>
+  <p><strong>On the bars.</strong> ${BANK_TEXT[b.key].bars}</p></article>`).join('');
+$('legend').innerHTML = TRACKS.map(t => `<span><i class="sw" style="background:var(${t.cssv})"></i>${t.n} ${t.role}</span>`).join('');
+
+// ---------- macros UI ----------
+const sliders = {};
+$('macro-rows').innerHTML = MK.map(k => { const inf = B.MACRO_INFO[k]; return `<div class="macro">
+  <label class="name" for="m-${k}">${inf.label}</label>
+  <div><input type="range" id="m-${k}" min="0" max="1" step="0.05" value="0.5" data-k="${k}"><div class="ends"><span>${inf.low}</span><span>${inf.high}</span></div></div>
+  <output for="m-${k}" id="o-${k}">0.50</output></div>`; }).join('');
+MK.forEach(k => {
+  const el = $('m-' + k); sliders[k] = el;
+  el.addEventListener('input', () => { macros[cur][k] = +el.value; rebuild(cur); renderDetail(false); if (!playing) still(); });
+  el.addEventListener('focus', () => { $('macro-help').textContent = B.MACRO_INFO[k].what; });
+  el.addEventListener('pointerenter', () => { $('macro-help').textContent = B.MACRO_INFO[k].what; });
+});
+$('macro-help').textContent = 'Move a macro to see what it changes. Macros are saved per pattern in the YAML.';
+$('macro-reset').addEventListener('click', () => { macros[cur] = {...B.MACROS}; rebuild(cur); renderDetail(); if (!playing) still(); });
+$('macro-all').addEventListener('click', () => { for (let i = 0; i < 16; i++) { macros[i] = {...macros[cur]}; rebuild(i); } renderDetail(); if (!playing) still(); });
+
+// ---------- detail + grid ----------
+const fmt = v => (Math.round(v*100)/100).toString();
+function renderDetail(syncSliders = true){
+  const p = pats[cur];
+  $('chips').innerHTML = `<span class="chip">P${p.n}</span><span class="chip">${p.bank}, ${p.scene}</span><span class="chip">Column ${p.index%4+1}: ${p.col}</span>`;
+  $('pname').textContent = p.name;
+  $('pidea').textContent = p.idea;
+  $('pfacts').textContent = `Around ${p.bpm} BPM, swing ${p.swing}. ${p.hits} hits per loop on ${p.litPads} of ${rig.N} pads.`;
+  $('seed').textContent = `Seed ${p.seed}`;
+  if (syncSliders) MK.forEach(k => { sliders[k].value = macros[cur][k]; });
+  MK.forEach(k => { $('o-' + k).textContent = macros[cur][k].toFixed(2); });
+  $('env').innerHTML = `<thead><tr><th>Track</th><th>K1 Attack</th><th>K2 Decay</th><th>K3 Sustain</th><th>K4 Release</th><th>K5 Gate</th><th>K8 Level</th></tr></thead><tbody>` +
+    p.tracks.map((t, i) => t.used
+      ? `<tr><td><i class="sw" style="background:var(${TRACKS[i].cssv})"></i>${TRACKS[i].n} ${TRACKS[i].role}</td><td>${fmt(t.env.attack)} b</td><td>${fmt(t.env.decay)} b</td><td>${Math.round(t.env.sustain*100)} %</td><td>${fmt(t.env.release)} b</td><td>${Math.round(t.gate*100)} %</td><td>${Math.round(t.level*100)} %</td></tr>`
+      : `<tr><td class="off"><i class="sw" style="background:var(${TRACKS[i].cssv});opacity:.3"></i>${TRACKS[i].n} ${TRACKS[i].role}</td><td class="off" colspan="6">not used</td></tr>`).join('') + '</tbody>';
+  padEls.forEach((el, i) => { el.setAttribute('aria-pressed', i === cur ? 'true' : 'false'); el.classList.toggle('queued', i === pending); el.classList.toggle('tweaked', isTweaked(i)); });
+  renderGrid();
+}
+function renderGrid(){
+  const p = pats[cur];
+  let h = '<div></div>';
+  for (let s = 0; s < 32; s++) h += `<div class="sn">${s % 4 === 0 ? s/4+1 : ''}</div>`;
+  rig.pads.forEach((bar, bi) => {
+    const long = rig.roles[bi] === 'D';
+    h += `<div class="rl">pad ${bar}<i>${rig.roles[bi]}</i></div>`;
+    for (let s = 0; s < 32; s++) {
+      const hits = [];
+      p.tracks.forEach((t, ti) => { const d = t.steps[bar]; if (d && d[s] !== undefined) hits.push([ti, d[s]]); });
+      let bg = '';
+      if (hits.length) {
+        const seg = hits.map(([ti, lv]) => `color-mix(in srgb, var(${TRACKS[ti].cssv}) ${Math.round(25 + 75*lv)}%, #34353a)`);
+        const w = 100 / seg.length;
+        bg = seg.length === 1 ? `background:${seg[0]}` : `background:linear-gradient(to bottom,${seg.map((c, i) => `${c} ${i*w}% ${(i+1)*w}%`).join(',')})`;
+      }
+      h += `<div class="c${long && !rig.virtual ? ' long' : ''}${s === 16 ? ' barline' : s % 4 === 0 ? ' beat' : ''}" data-s="${s}"${bg ? ` style="${bg}"` : ''}></div>`;
+    }
+  });
+  $('grid').innerHTML = h;
+  markPlayhead(null);
+}
+let phCells = [];
+function markPlayhead(s){
+  phCells.forEach(c => c.classList.remove('ph'));
+  phCells = s === null ? [] : [...$('grid').querySelectorAll(`.c[data-s="${s}"]`)];
+  phCells.forEach(c => c.classList.add('ph'));
+}
+
+// ---------- engine (same maths as sequencer.py) ----------
+function envValue(env, t, gate, from){
+  t = Math.max(0, t);
+  const held = t => {
+    if (t < env.attack) return from + (1 - from) * t / env.attack;
+    const t2 = t - env.attack;
+    if (t2 < env.decay) return 1 + (env.sustain - 1) * t2 / env.decay;
+    return env.sustain;
+  };
+  if (t < gate) return held(t);
+  if (env.release <= 0) return null;
+  const r = (t - gate) / env.release;
+  return r >= 1 ? null : held(gate) * (1 - r);
+}
+const SB = 0.25;
+function nowBeat(){ return (performance.now()/1000 - t0) * bpm / 60; }
+function absStep(bt){
+  let k = Math.floor((bt - startBeat) / SB);
+  if (k % 2 === 1 && bt < startBeat + k*SB + pats[cur].swing * SB / 2) k -= 1;
+  return Math.max(0, k);
+}
+function trigger(s, bt){
+  const p = pats[cur];
+  p.tracks.forEach((t, ti) => {
+    for (const bar in t.steps) {
+      const lv = t.steps[bar][s];
+      if (lv === undefined) continue;
+      const key = ti + '_' + bar, old = voices.get(key);
+      const from = old ? Math.min(1, envValue(old.env, bt - old.start, old.gate, old.from) || 0) : 0;
+      voices.set(key, {ti, bar: +bar, start: bt, level: lv, gate: t.gate * SB, env: t.env, tl: t.level, from});
+    }
+  });
+}
+function barLevels(bt){
+  const out = {};
+  for (const b of rig.pads) out[b] = [0, 0, 0];
+  for (const [key, v] of voices) {
+    const e = envValue(v.env, bt - v.start, v.gate, v.from);
+    if (e === null) { voices.delete(key); continue; }
+    if (!out[v.bar]) continue;
+    const val = e * v.level * v.tl, rgb = white ? [255, 255, 255] : TRACKS[v.ti].rgb;
+    for (let c = 0; c < 3; c++) out[v.bar][c] += rgb[c] * val;
+  }
+  return out;
+}
+
+// ---------- drawing ----------
+const cv = $('rig'), cx = cv.getContext('2d');
+let restFrame = null;
+function draw(levels){
+  const W = cv.clientWidth, H = cv.clientHeight, dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(W*dpr) || cv.height !== Math.round(H*dpr)) { cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr); }
+  cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cx.fillStyle = '#000'; cx.fillRect(0, 0, W, H);
+  const N = rig.N, gap = W / N, bw = Math.max(4, Math.min(18, gap * 0.2));
+  rig.pads.forEach((bar, bi) => {
+    const long = rig.roles[bi] === 'D';
+    const h = rig.virtual ? H * 0.7 : long ? H * 0.92 : H * 0.46, n = rig.virtual ? 48 : long ? 64 : 32;
+    const x = gap * (bi + 0.5) - bw / 2, y = (H - h) / 2, sh = h / n;
+    const [r, g, b] = (levels[bar] || [0,0,0]).map(v => Math.min(255, v));
+    const on = Math.max(r, g, b) / 255;
+    if (on > 0.02) { cx.shadowColor = `rgba(${r|0},${g|0},${b|0},${Math.min(1, on)})`; cx.shadowBlur = 26 * on; }
+    cx.fillStyle = on > 0.02 ? `rgb(${Math.max(22, r)|0},${Math.max(22, g)|0},${Math.max(22, b)|0})` : '#161616';
+    for (let i = 0; i < n; i++) cx.fillRect(x, y + i * sh + 0.5, bw, Math.max(0.6, sh - 1.1));
+    cx.shadowBlur = 0;
+    if (rig.virtual && long) { cx.fillStyle = '#3a3b40'; cx.fillRect(x, y + h + 6, bw, 2); }
+  });
+}
+function still(){
+  voices.clear();
+  const p = pats[cur];
+  let s0 = 0;
+  for (let s = 0; s < 32; s++) if (p.tracks.some(t => Object.values(t.steps).some(d => d[s] !== undefined))) { s0 = s; break; }
+  trigger(s0, 0);
+  restFrame = barLevels(0.03);
+  voices.clear();
+  draw(restFrame);
+  $('pos').innerHTML = `${pats[cur].name} <span>stopped</span>`;
+}
+function frame(){
+  if (!playing) return;
+  const bt = nowBeat(), barIdx = Math.floor(bt / 4);
+  if (pending !== null && lastBarIdx !== null && barIdx > lastBarIdx) { cur = pending; pending = null; startBeat = barIdx * 4; lastStep = null; renderDetail(); }
+  lastBarIdx = barIdx;
+  const k = absStep(bt);
+  if (k !== lastStep) {
+    lastStep = k;
+    const s = k % pats[cur].length;
+    trigger(s, bt); markPlayhead(s);
+    $('pos').innerHTML = `${pats[cur].name} <span>beat ${Math.floor(s/4)+1} of 8, step ${s+1}</span>`;
+  }
+  draw(barLevels(bt));
+  requestAnimationFrame(frame);
+}
+
+// ---------- controls ----------
+function setBpm(v){
+  v = Math.max(60, Math.min(200, Math.round(+v || 130)));
+  const bt = playing ? nowBeat() : 0;
+  bpm = v; $('bpm').value = v;
+  if (playing) t0 = performance.now()/1000 - bt * 60 / bpm;
+}
+function choose(i){
+  const bankChange = Math.floor(i/4) !== Math.floor(cur/4);
+  if (playing) {
+    if (i === pending || (i === cur && pending === null)) { cur = i; pending = null; startBeat = Math.floor(nowBeat()/4)*4; lastStep = null; voices.clear(); }
+    else pending = i;
+  } else { cur = i; pending = null; }
+  if (bankChange) setBpm(pats[i].bpm);
+  renderDetail();
+  if (!playing) still();
+}
+$('play').addEventListener('click', () => {
+  playing = !playing;
+  $('play').setAttribute('aria-pressed', String(playing));
+  $('play').textContent = playing ? 'Stop' : 'Play';
+  if (playing) { voices.clear(); t0 = performance.now()/1000; startBeat = 0; lastStep = null; lastBarIdx = null; requestAnimationFrame(frame); }
+  else { if (pending !== null) { cur = pending; pending = null; renderDetail(); } markPlayhead(null); still(); }
+});
+$('bpm').addEventListener('change', e => setBpm(e.target.value));
+function setMode(w){ white = w; $('mode-white').setAttribute('aria-pressed', String(w)); $('mode-track').setAttribute('aria-pressed', String(!w)); if (!playing) still(); }
+$('mode-white').addEventListener('click', () => setMode(true));
+$('mode-track').addEventListener('click', () => setMode(false));
+$('reshuffle').addEventListener('click', () => { seeds[cur] = 1 + Math.floor(Math.random() * 99999); rebuild(cur); renderDetail(); if (!playing) still(); });
+
+function applyRig(text){
+  const inp = $('rigtext'), desc = $('rig-desc');
+  try {
+    const r = B.makeRig(text);
+    rig = r; inp.setAttribute('aria-invalid', 'false'); desc.className = ''; desc.textContent = rig.describe() + ' · pads ' + rig.signature();
+    for (let i = 0; i < 16; i++) rebuild(i);
+    voices.clear(); renderDetail(); if (!playing) still();
+  } catch (e) { inp.setAttribute('aria-invalid', 'true'); desc.className = 'err'; desc.textContent = e.message + '. Use D and S per bar, or U plus a count.'; }
+}
+$('rigtext').addEventListener('change', e => applyRig(e.target.value));
+$('rigtext').addEventListener('keydown', e => { if (e.key === 'Enter') applyRig(e.target.value); });
+document.querySelectorAll('[data-rig]').forEach(b => b.addEventListener('click', () => { $('rigtext').value = b.dataset.rig; applyRig(b.dataset.rig); }));
+
+$('copy').addEventListener('click', () => {
+  const text = B.toYaml(pats, rig), note = $('copy-note');
+  const fallback = () => { $('fallback').hidden = false; const ta = $('yaml-out'); ta.value = text; ta.focus(); ta.select(); note.textContent = ''; };
+  try { navigator.clipboard.writeText(text).then(() => { $('fallback').hidden = true; note.textContent = 'Copied techno_banks.yaml'; setTimeout(() => { note.textContent = ''; }, 2500); }, fallback); }
+  catch (e) { fallback(); }
+});
+window.addEventListener('resize', () => { if (!playing) draw(restFrame); });
+
+applyRig($('rigtext').value);
+})();
+</script>

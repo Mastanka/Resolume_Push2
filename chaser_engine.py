@@ -6,10 +6,16 @@ chosen in the effect's own panel (`Pad n` dropdowns) and read back here for the 
 from __future__ import annotations
 
 import time
+from collections import deque
+
 from resolume_api import is_param, text
+from rig import parse_geometry
 
 MIN_DT = 0.02          # s between two sends of the same layer (50/s); 30/s when many change
 MANY = 16
+ROUTING_DT = 0.005     # s: set_level re-checks the routing at most this often (flush checks every tick)
+IN_FLIGHT = 0.3        # s: a write younger than this may not show in a composition yet (no resend)
+N_TRACKS = 4           # tracks a level can come from (the sequencer's T1-T4)
 
 
 # --------------------------------------------------------------------------- #
@@ -71,9 +77,17 @@ class PluginEngine:
         self.rest, self.get_comp, self.refresh, self.send_level = rest, get_comp, refresh, send_level
         self.store = store             # has .pad_config [24 names] and .save()
         self.send_param = send_param   # (param id, body) -> None
-        self._last = {}            # level param id -> (time, quantised value)
-        self._cache_comp = None
-        self._cache = []
+        self._last = {}            # level param id -> (time, value) last sent
+        self._pending = {}         # level param id -> value held back by the rate limit, sent by flush()
+        self._levels = {}          # (track, pad index) -> level the sequencer wants now (> 0 only)
+        self._feeds = {}           # level param id -> (pad index, tracks whose levels it shows)
+        self._routing = None       # what _feeds was built for: ((effect id, track), …), fold
+        self._routing_t = -1.0     # when routing was last checked (set_level checks at most every ROUTING_DT)
+        self._by_source = {}       # (track, pad index) -> [level param ids it reaches]
+        self._sends = deque()      # times of recent sends, for the rate limit's "busy" test
+        self._reported = None      # {level param id: value} from the newest full composition, checked in flush
+        self.fold = True           # a track without a Bar Chaser layer plays on its partner's (config sequencer.fold_tracks)
+        self._cache = (None, [])   # (composition, [(layer, clip, effect)]): one tuple, so threads see a matching pair
         self._known = {}           # effect id -> (pads we expect, our writes pending until)
         self._comp_id = object()   # composition identity (its master param id): new id = loaded composition
         self._fx_cache = (None, None, [])   # (composition, track, fixture list)
@@ -81,42 +95,78 @@ class PluginEngine:
     # ---- finding instances ------------------------------------------------ #
     @staticmethod
     def _effects_of(comp):
-        """(layer index, clip index or None, effect json) for every effect in the composition."""
+        """(layer index, clip index or None, effect json, clip json or None) for every effect."""
         for L, layer in enumerate(comp.get("layers") or [], 1):
             for fx in (layer.get("video") or {}).get("effects") or []:
-                yield L, None, fx
+                yield L, None, fx, None
             for C, clip in enumerate(layer.get("clips") or [], 1):
                 for fx in ((clip or {}).get("video") or {}).get("effects") or []:
-                    yield L, C, fx
+                    yield L, C, fx, clip
+
+    @staticmethod
+    def _playing(clip):
+        """A Bar Chaser on a clip only renders while that clip plays."""
+        v = (clip.get("connected") or {}).get("value") if isinstance(clip, dict) else None
+        return str(text(v) if isinstance(v, dict) else v or "").startswith("Connected")
 
     def instances(self, comp=None):
-        """[{'track': 0-based, 'layer': L, 'clip': C or None, 'fx': effect json}] for every Bar Chaser."""
+        """[{'track': 0-based, 'layer': L, 'clip': C or None, 'fx': effect json, 'live': bool}] for every
+        Bar Chaser. live = it renders: on a layer, or on a clip that plays. Where the effects are is
+        cached per composition; Track and the clip state are read live, because Arena reports their
+        changes as parameter updates patched into the same composition."""
         comp = comp or self.get_comp() or {}
-        if comp is self._cache_comp:
-            return self._cache
+        cached, found = self._cache
+        if cached is not comp:
+            found = [(L, C, fx, clip) for L, C, fx, clip in self._effects_of(comp) if fx.get("name") == EFFECT]
+            self._cache = (comp, found)
         out = []
-        for L, C, fx in self._effects_of(comp):
-            if fx.get("name") != EFFECT:
-                continue
-            track = (fx.get("params") or {}).get("Track") or {}
-            t = str(track.get("value", "1"))
-            out.append({"track": int(t) - 1 if t.isdigit() else 0, "layer": L, "clip": C, "fx": fx})
-        self._cache_comp, self._cache = comp, out
+        for L, C, fx, clip in found:
+            v = ((fx.get("params") or {}).get("Track") or {}).get("value", "1")
+            t = str(text(v) if isinstance(v, dict) else v)
+            out.append({"track": int(t) - 1 if t.isdigit() else 0, "layer": L, "clip": C, "fx": fx,
+                        "live": C is None or self._playing(clip)})
         return out
 
+    MANAGED = ("Track", "Preset", "Reload", "Geometry")
+
+    def managed_ids(self):
+        """Ids of the Bar Chaser params the bridge drives (Level n, Pad n, Track, Preset, Reload, Geometry):
+        kept off the knobs, where a turn would fight the sequencer and bury Master / Edge / Outside / Mode."""
+        out = set()
+        for i in self.instances():
+            for name, p in (i["fx"].get("params") or {}).items():
+                if is_param(p) and (name in self.MANAGED or name.startswith(("Level ", "Pad "))):
+                    out.add(p["id"])
+        return out
+
+    @staticmethod
+    def has_fixtures(inst):
+        """False when the effect could not read its Advanced Output preset: only "—" on offer."""
+        opts = (((inst["fx"].get("params") or {}).get("Pad 1") or {}).get("options")) or []
+        return any(o != UNASSIGNED for o in opts)
+
     def ready(self, track):
-        return any(i["track"] == track for i in self.instances())
+        """The track has a Bar Chaser that renders (a clip's only while the clip plays)."""
+        return any(i["track"] == track and i["live"] for i in self.instances())
+
+    def parked(self, track):
+        """The track's only Bar Chasers sit on clips that are not playing."""
+        insts = [i for i in self.instances() if i["track"] == track]
+        return bool(insts) and not any(i["live"] for i in insts)
 
     def layers_of(self, track):
-        return sorted({i["layer"] for i in self.instances() if i["track"] == track})
+        return sorted({i["layer"] for i in self.instances() if i["track"] == track and i["live"]})
 
     def _first(self, track):
-        return next((i for i in self.instances() if i["track"] == track), None)
+        mine = [i for i in self.instances() if i["track"] == track]
+        return next((i for i in mine if i["live"]), mine[0] if mine else None)
 
     def _reference(self, comp=None):
-        """The instance whose mapping counts when instances disagree: T1's first, else the first."""
+        """The instance whose mapping counts when instances disagree: T1's first, else the first;
+        instances whose effect offers fixtures go first (one that lost its preset knows no mapping)."""
         insts = self.instances(comp)
-        return next((i for i in insts if i["track"] == 0), insts[0] if insts else None)
+        good = [i for i in insts if self.has_fixtures(i)] or insts
+        return next((i for i in good if i["track"] == 0), good[0] if good else None)
 
     def mapping(self):
         """The shared pad mapping: 24 fixture names, '' = no fixture."""
@@ -131,6 +181,15 @@ class PluginEngine:
         p = ((inst["fx"].get("params") or {}).get("Preset") or {}) if inst else {}
         v = p.get("value", "")
         return text(v) if isinstance(v, dict) else str(v or "")
+
+    def geometry(self):
+        """(width, height, {name: rect}) from the reference instance's `Geometry` parameter, which the
+        Bar Chaser effect (2026-09-28 or later) fills from the Advanced Output preset *it* reads, on
+        Arena's machine. None with an older effect: the bridge then reads the preset file itself."""
+        inst = self._reference()
+        p = ((inst["fx"].get("params") or {}).get("Geometry") or {}) if inst else {}
+        v = p.get("value", "")
+        return parse_geometry(text(v) if isinstance(v, dict) else str(v or ""))
 
     def pad_name(self, track, k):
         """The fixture pad k lights ('' = none). The mapping is shared; the track's own instance is
@@ -190,7 +249,10 @@ class PluginEngine:
                 self._known[inst["fx"]["id"]] = (self.pads_of(inst), now + PENDING)
             done = True
         if done and self.store is not None:
-            self.store.pad_config = self.pads_of(self._reference())
+            cfg = list(self.store.pad_config or self.pads_of(self._reference()))
+            cfg = (cfg + [UNASSIGNED] * NPADS)[:NPADS]
+            cfg[k] = name                                       # even when the reference effect lacks it
+            self.store.pad_config = cfg
             self.store.save()
         return done
 
@@ -224,9 +286,72 @@ class PluginEngine:
         return True
 
     # ---- levels ------------------------------------------------------------ #
-    def _pids(self, track, k):
-        return [p["id"] for i in self.instances() if i["track"] == track
-                for p in [((i["fx"].get("params") or {}).get(f"Level {k + 1}") or {})] if is_param(p)]
+    # The sequencer reports a level per (track, pad) when it changes. What a Level parameter shows is
+    # the maximum of the tracks routed to its instance (its own track, plus tracks without a layer
+    # folded onto it). Routing changes (an effect added or removed, a Track changed, a composition
+    # opened) re-push every parameter, so nothing stays lit on a layer that no longer plays it, and
+    # parameters that no longer exist are never written.
+    def route(self, track):
+        """The track whose layers show `track`: its own when it has a Bar Chaser, else (fold on) its
+        partner (T1 ↔ T2, T3 ↔ T4), else the lowest track that has one. None = nowhere."""
+        return self._route(track, {i["track"] for i in self.instances() if i["live"]})
+
+    def _route(self, track, have):
+        if track in have:
+            return track
+        if not self.fold or not have:
+            return None
+        partner = track ^ 1
+        return partner if partner in have else min(have)
+
+    def _sync_routing(self, now):
+        self._routing_t = now
+        insts = self.instances()
+        key = (tuple((i["fx"].get("id"), i["track"], i["live"]) for i in insts), self.fold)
+        if key == self._routing:
+            return False
+        have = {i["track"] for i in insts if i["live"]}
+        tracks = set(range(N_TRACKS)) | {t for t, _ in self._levels}
+        feeds_of = {t: [s for s in tracks if self._route(s, have) == t] for t in have}
+        feeds = {}
+        for inst in insts:
+            params = inst["fx"].get("params") or {}
+            srcs = feeds_of[inst["track"]] if inst["live"] else []     # a clip that does not play: dark
+            for k in range(NPADS):
+                p = params.get(f"Level {k + 1}")
+                if is_param(p):
+                    feeds[p["id"]] = (k, srcs)
+        for pid in [p for p in self._last if p not in feeds]:     # gone with its effect or composition
+            self._last.pop(pid, None)
+            self._pending.pop(pid, None)
+        by_source = {}
+        for pid, (k, srcs) in feeds.items():
+            for t in srcs:
+                by_source.setdefault((t, k), []).append(pid)
+        self._feeds, self._by_source, self._routing = feeds, by_source, key
+        for pid in feeds:
+            self._push(pid, now, quiet=True)
+        return True
+
+    def _push(self, pid, now, quiet=False):
+        """Send what parameter `pid` should show now, within the rate limit (held back, never dropped).
+        quiet: a parameter we never wrote is left alone when it should show 0."""
+        k, tracks = self._feeds[pid]
+        out = max((self._levels.get((t, k), 0.0) for t in tracks), default=0.0)
+        last = self._last.get(pid)
+        if (last is None and quiet and out == 0.0) or (last is not None and last[1] == out):
+            self._pending.pop(pid, None)
+            return
+        if last is not None and out != 0.0 and now - last[0] < self._window(now):
+            self._pending[pid] = out
+            return
+        self._pending.pop(pid, None)
+        self._send(pid, out, now)
+
+    def _send(self, pid, value, now):
+        self._last[pid] = (now, value)
+        self._sends.append(now)
+        self.send_level(pid, value)
 
     def set_level(self, track, pad, value, now=None):
         k = pad_from_key(pad)
@@ -234,15 +359,71 @@ class PluginEngine:
             return
         now = now or time.time()
         q = round(max(0.0, min(1.0, float(value))) * 255) / 255
-        busy = sum(1 for t, _ in self._last.values() if now - t < 0.1) > MANY
-        for pid in self._pids(track, k):
+        if q > 0:
+            self._levels[(track, k)] = q
+        else:
+            self._levels.pop((track, k), None)
+        if now - self._routing_t >= ROUTING_DT or (track, k) not in self._by_source:
+            self._sync_routing(now)
+        for pid in self._by_source.get((track, k), ()):
+            self._push(pid, now)
+
+    def _window(self, now):
+        while self._sends and now - self._sends[0] > 0.1:
+            self._sends.popleft()
+        return 0.033 if len(self._sends) > MANY else MIN_DT
+
+    def observe(self, comp):
+        """A full composition arrived (connect, refresh, another composition): note what Arena shows for
+        every Level param. The next flush sends again where that differs from what it should show: a
+        set lost with a dropped socket, a bar left lit by a crash or saved lit in the composition."""
+        rep = {}
+        for inst in self.instances(comp):
+            for name, p in (inst["fx"].get("params") or {}).items():
+                if name.startswith("Level ") and is_param(p):
+                    rep[p["id"]] = p.get("value")
+        self._reported = rep
+
+    def _reconcile(self, now):
+        rep, self._reported = self._reported, None
+        if not rep:
+            return
+        for pid, v in rep.items():
+            if pid not in self._feeds:
+                continue
+            k, tracks = self._feeds[pid]
+            out = max((self._levels.get((t, k), 0.0) for t in tracks), default=0.0)
+            try:
+                v = float(v or 0.0)
+            except (TypeError, ValueError):
+                v = 0.0
             last = self._last.get(pid)
+            if abs(v - out) <= 0.5 / 255 or (last is not None and now - last[0] < IN_FLIGHT):
+                continue
+            self._pending.pop(pid, None)
+            self._send(pid, out, now)
+
+    def flush(self, now=None):
+        """Every clock tick: follow routing changes, repair what a full composition showed wrong, and
+        send the levels set_level held back because their parameter was written too recently (a flash
+        13 ms after the last one is delayed, not lost)."""
+        now = now or time.time()
+        self._sync_routing(now)
+        self._reconcile(now)
+        if not self._pending:
+            return
+        window = self._window(now)
+        for pid, q in list(self._pending.items()):
+            last = self._last.get(pid)
+            if pid not in self._feeds:
+                del self._pending[pid]
+                continue
+            if last and now - last[0] < window:
+                continue
+            del self._pending[pid]
             if last and last[1] == q:
                 continue
-            if last and q != 0.0 and now - last[0] < (0.033 if busy else MIN_DT):
-                continue
-            self._last[pid] = (now, q)
-            self.send_level(pid, q)
+            self._send(pid, q, now)
 
     # ---- pad memory --------------------------------------------------------- #
     @staticmethod
@@ -281,17 +462,24 @@ class PluginEngine:
         if loaded:
             self._comp_id, self._known = cid, {}
         insts = [i for i in self.instances(comp) if i["fx"].get("id") is not None]
+        sources = [i for i in insts if self.has_fixtures(i)]     # one that lost its preset knows no mapping
         want, new = self.store.pad_config, None
-        if loaded and insts:
+        if loaded and sources:
             new = self.pads_of(self._reference(comp))
-        else:
-            for inst in insts:                                     # a pad changed in Arena on any instance
-                prev = self._known.get(inst["fx"]["id"])
-                if prev is not None and now >= prev[1] and self.pads_of(inst) != prev[0]:
-                    new = self.pads_of(inst)
+        elif not loaded:
+            for inst in sources:                                   # a pad changed in Arena on any instance:
+                prev = self._known.get(inst["fx"]["id"])           # only the pads that changed are taken
+                if prev is None or now < prev[1]:
+                    continue
+                pads = self.pads_of(inst)
+                changed = [k for k in range(NPADS) if pads[k] != prev[0][k]]
+                if changed:
+                    new = list(want) if want else list(pads)
+                    for k in changed:
+                        new[k] = pads[k]
                     break
-            if new is None and want is None and insts:
-                new = self.pads_of(insts[0])
+            if new is None and want is None and sources:
+                new = self.pads_of(sources[0])
         if new is not None and new != want:
             self.store.pad_config = want = list(new)
             self.store.save()
@@ -299,6 +487,9 @@ class PluginEngine:
         for inst in insts:                                         # every instance gets the mapping
             fid = inst["fx"]["id"]
             seen.add(fid)
+            if not self.has_fixtures(inst):                        # forgotten: when its preset is back, its
+                self._known.pop(fid, None)                         # default pads are not taken for an edit
+                continue
             pads, prev = self.pads_of(inst), self._known.get(fid)
             if not want or pads == want:
                 self._known[fid] = (pads, 0.0)
@@ -311,10 +502,11 @@ class PluginEngine:
         return loaded
 
     def all_dark(self):
+        self._levels.clear()
+        self._pending.clear()
         for inst in self.instances():
             for k in range(NPADS):
                 p = (inst["fx"].get("params") or {}).get(f"Level {k + 1}")
                 if is_param(p):
-                    self._last.pop(p["id"], None)
                     self.send_level(p["id"], 0.0)
                     self._last[p["id"]] = (time.time(), 0.0)
